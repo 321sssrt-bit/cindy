@@ -1,8 +1,15 @@
 /**
- * 插件后台隐藏任务(sessions.hidden_at)在本机任务列表上的口径回归:
+ * 决定「这个任务要不要发提醒」的两列 per-session 标记在本机列表与通知链路上的口径回归:
+ *
+ * sessions.hidden_at(插件后台隐藏):
  * - local-db:sessions:list 排除隐藏任务,单任务读取仍返回(带 hiddenAt);
  * - setSessionHidden 是唯一宿主写入口:隐藏广播 hiddenAt patch 并收起灵动岛,
  *   恢复显示清列、刷新 updatedAt 并发「新建」推送让侧栏整体重拉。
+ *
+ * sessions.notifications_muted(消息免打扰):
+ * - 经 local-db:sessions:update 写(strict 白名单外的通用入口),广播 patch 供多窗口收敛;
+ * - 不 bump updated_at（纯偏好,不该把任务顶到列表最前）；
+ * - 同步登记进 sessionFlagRegistry,供原生/系统通知路径免查库判定。
  */
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -54,7 +61,7 @@ vi.mock('../../../security/trustedAppRenderer.js', () => ({ assertTrustedAppRend
 
 import { registerSessionIpc } from '../sessions';
 import { setSessionHidden } from '../sessionHidden';
-import { isSessionHiddenSync, resetHiddenSessionRegistryForTesting } from '../../hiddenSessionRegistry';
+import { isSessionHiddenSync, isSessionNotificationsMutedSync, resetSessionFlagRegistryForTesting } from '../../sessionFlagRegistry';
 
 function createDb(): void {
   h.sqlite?.close();
@@ -83,6 +90,7 @@ function createDb(): void {
       cleared_at INTEGER,
       pinned_at INTEGER,
       hidden_at INTEGER,
+      notifications_muted INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       agent_kind TEXT NOT NULL DEFAULT 'cc',
@@ -151,11 +159,17 @@ function readRow(id: string): { hidden_at: number | null; updated_at: number } {
   };
 }
 
+function readMute(id: string): { notifications_muted: number; updated_at: number } {
+  return h.sqlite!.prepare('SELECT notifications_muted, updated_at FROM sessions WHERE id = ?').get(id) as {
+    notifications_muted: number; updated_at: number;
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.handlers.clear();
   createDb();
-  resetHiddenSessionRegistryForTesting();
+  resetSessionFlagRegistryForTesting();
   registerSessionIpc();
 });
 
@@ -207,5 +221,47 @@ describe('plugin background tasks in the local task list', () => {
     await list();
     await vi.waitFor(() => expect(isSessionHiddenSync('background')).toBe(true));
     expect(isSessionHiddenSync('visible')).toBe(false);
+  });
+});
+
+describe('per-task notification mute (sessions.notifications_muted)', () => {
+  const update = (id: string, patch: Record<string, unknown>) =>
+    h.handlers.get('local-db:sessions:update')!({}, id, patch);
+
+  it('persists the mute, broadcasts it and keeps the task where it was', async () => {
+    const updated = (await update('visible', { notificationsMuted: true })) as {
+      notificationsMuted: boolean;
+    };
+
+    expect(updated.notificationsMuted).toBe(true);
+    expect(readMute('visible')).toEqual({ notifications_muted: 1, updated_at: 30 });
+    expect(h.tapWindowBroadcast).toHaveBeenCalledWith('local-db:sessions:patched', {
+      sessionId: 'visible',
+      patch: { notificationsMuted: true },
+    });
+    expect(isSessionNotificationsMutedSync('visible')).toBe(true);
+  });
+
+  it('clears the mute and broadcasts the new value to every window', async () => {
+    await update('visible', { notificationsMuted: true });
+    h.tapWindowBroadcast.mockClear();
+
+    await update('visible', { notificationsMuted: false });
+
+    expect(readMute('visible')).toEqual({ notifications_muted: 0, updated_at: 30 });
+    expect(h.tapWindowBroadcast).toHaveBeenCalledWith('local-db:sessions:patched', {
+      sessionId: 'visible',
+      patch: { notificationsMuted: false },
+    });
+    expect(isSessionNotificationsMutedSync('visible')).toBe(false);
+  });
+
+  it('loads mutes set before this process from the database', async () => {
+    h.sqlite!.prepare('UPDATE sessions SET notifications_muted = 1 WHERE id = ?').run('plugin-visible');
+
+    await list();
+
+    await vi.waitFor(() => expect(isSessionNotificationsMutedSync('plugin-visible')).toBe(true));
+    expect(isSessionNotificationsMutedSync('visible')).toBe(false);
   });
 });

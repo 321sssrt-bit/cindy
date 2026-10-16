@@ -29,6 +29,7 @@ import * as path from 'node:path';
 import { markSessionNeedsAttention } from './appBadgeService';
 import { getMobileNotifyGeneration, sendMobileSessionNotify } from './device-link';
 import { notificationPreview } from './notificationPreview';
+import { isSessionNotificationsMutedSync } from './localDb/sessionFlagRegistry';
 import { readSessionNotificationPreview, type SessionNotificationPreview } from './localDb/sessionNotificationPreview';
 import { drainSessionActiveTurnWrites, getSessionNotificationTurnSignal } from './localDb/sessionActiveTurn';
 import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
@@ -238,6 +239,9 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
       const wantDesktop = channels?.desktop ?? true;
       const wantFeishu = channels?.feishu === true;
       if (markAttention) markSessionNeedsAttention(sessionId);
+      // 「消息免打扰」任务不再走任何外向提醒通道（系统 toast / 灵动岛 / 手机 / 飞书）；
+      // 未读与角标已在上一行照常记账，任务内的提醒不受影响。
+      if (isSessionNotificationsMutedSync(sessionId)) return;
 
       // Action/error desktop notices have no transcript preview and must be immediate.
       if (wantDesktop && kind !== 'done') {

@@ -1,21 +1,26 @@
-import { isNotNull } from 'drizzle-orm';
+import { eq, isNotNull, or } from 'drizzle-orm';
 import type { DbClient } from './client/DbClient.js';
 import * as currentDb from './client/current.js';
 import { sessions } from './schema.js';
 import { createLogger } from '../logger.js';
 
-const log = createLogger('hidden-session-registry');
+const log = createLogger('session-flag-registry');
 
 /**
- * 插件后台隐藏任务（`sessions.hidden_at` 非空）的进程内同步索引。
+ * 决定「这个任务要不要发提醒」的两列 per-session 标记的进程内同步索引：
+ * - `sessions.hidden_at` 非空：插件后台隐藏任务；
+ * - `sessions.notifications_muted` 为真：用户开了「消息免打扰」。
  *
  * Agent 灵动岛、菜单栏运行状态与系统通知走同步事件路径，不能每个事件都查库；
- * 这里按当前账号数据库缓存一份隐藏任务 id。数据库仍是唯一事实来源：
- * - 账号数据库切换后首次访问会重新加载（加载前按「未隐藏」处理，宁可多显示一次）；
- * - 宿主写入 hidden_at 的唯一入口（创建 / setHidden / 卸载显示）同步调用 {@link noteSessionHidden}。
+ * 这里按当前账号数据库缓存这两份 id 集合。数据库仍是唯一事实来源：
+ * - 账号数据库切换后首次访问会重新加载（加载前按「未隐藏 / 未静音」处理，
+ *   宁可多提醒一次）；
+ * - 宿主写入这两列的唯一入口同步调用 {@link noteSessionHidden} /
+ *   {@link noteSessionNotificationsMuted}。
  */
 let owner: DbClient | null = null;
 let hiddenIds = new Set<string>();
+let mutedIds = new Set<string>();
 let loaded = false;
 let loading: Promise<void> | null = null;
 /** 加载期间已被宿主显式改动的 id：加载结果不得覆盖这些更新的事实。 */
@@ -37,14 +42,15 @@ function adopt(client: DbClient): void {
   if (owner === client) return;
   owner = client;
   hiddenIds = new Set();
+  mutedIds = new Set();
   loaded = false;
   loading = null;
   touchedDuringLoad = new Set();
   failedAt = 0;
 }
 
-/** 当前账号数据库的隐藏任务索引尚未加载时启动一次加载；已加载或加载中直接复用。 */
-export function ensureHiddenSessionRegistryLoaded(): Promise<void> {
+/** 当前账号数据库的标记索引尚未加载时启动一次加载；已加载或加载中直接复用。 */
+export function ensureSessionFlagRegistryLoaded(): Promise<void> {
   const client = currentClient();
   if (!client) return Promise.resolve();
   adopt(client);
@@ -55,18 +61,24 @@ export function ensureHiddenSessionRegistryLoaded(): Promise<void> {
   pending = (async () => {
     try {
       const rows = await client.drizzle
-        .select({ id: sessions.id })
+        .select({
+          id: sessions.id,
+          hiddenAt: sessions.hiddenAt,
+          notificationsMuted: sessions.notificationsMuted,
+        })
         .from(sessions)
-        .where(isNotNull(sessions.hiddenAt));
+        .where(or(isNotNull(sessions.hiddenAt), eq(sessions.notificationsMuted, true)));
       if (owner !== client) return;
       for (const row of rows) {
-        if (!touchedDuringLoad.has(row.id)) hiddenIds.add(row.id);
+        if (touchedDuringLoad.has(row.id)) continue;
+        if (row.hiddenAt != null) hiddenIds.add(row.id);
+        if (row.notificationsMuted) mutedIds.add(row.id);
       }
       loaded = true;
       touchedDuringLoad = new Set();
     } catch (error) {
       if (owner === client) failedAt = Date.now();
-      log.warn('load hidden sessions failed', {
+      log.warn('load session flags failed', {
         err: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -81,8 +93,16 @@ export function ensureHiddenSessionRegistryLoaded(): Promise<void> {
 export function isSessionHiddenSync(sessionId: string): boolean {
   const client = currentClient();
   if (!client) return false;
-  if (owner !== client || !loaded) void ensureHiddenSessionRegistryLoaded();
+  if (owner !== client || !loaded) void ensureSessionFlagRegistryLoaded();
   return owner === client && hiddenIds.has(sessionId);
+}
+
+/** 同步判断：当前账号下该任务是否开了「消息免打扰」。未加载时触发加载并按未静音处理。 */
+export function isSessionNotificationsMutedSync(sessionId: string): boolean {
+  const client = currentClient();
+  if (!client) return false;
+  if (owner !== client || !loaded) void ensureSessionFlagRegistryLoaded();
+  return owner === client && mutedIds.has(sessionId);
 }
 
 /** 宿主写入 hidden_at 后同步登记（hidden=true 隐藏，false 恢复可见）。 */
@@ -92,13 +112,28 @@ export function noteSessionHidden(sessionId: string, hidden: boolean, client = c
   if (!loaded) touchedDuringLoad.add(sessionId);
   if (hidden) hiddenIds.add(sessionId);
   else hiddenIds.delete(sessionId);
-  if (!loaded) void ensureHiddenSessionRegistryLoaded();
+  if (!loaded) void ensureSessionFlagRegistryLoaded();
+}
+
+/** 宿主写入 notifications_muted 后同步登记。 */
+export function noteSessionNotificationsMuted(
+  sessionId: string,
+  muted: boolean,
+  client = currentClient(),
+): void {
+  if (!client || client !== currentClient()) return;
+  adopt(client);
+  if (!loaded) touchedDuringLoad.add(sessionId);
+  if (muted) mutedIds.add(sessionId);
+  else mutedIds.delete(sessionId);
+  if (!loaded) void ensureSessionFlagRegistryLoaded();
 }
 
 /** 仅供测试。 */
-export function resetHiddenSessionRegistryForTesting(): void {
+export function resetSessionFlagRegistryForTesting(): void {
   owner = null;
   hiddenIds = new Set();
+  mutedIds = new Set();
   loaded = false;
   loading = null;
   touchedDuringLoad = new Set();

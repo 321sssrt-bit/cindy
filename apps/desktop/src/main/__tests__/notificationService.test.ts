@@ -234,6 +234,24 @@ describe('notificationService — channels 分发', () => {
     expect(feishuIm.sendMarkdownText).toHaveBeenCalledOnce();
   });
 
+  it('re-checks the mute after preview enrichment so muting during the wait still suppresses', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    // 交接判定是发出去之前的最后一个 await，就在那里把免打扰打开。
+    const check = vi.fn(async () => {
+      isSessionNotificationsMutedSync.mockReturnValue(true);
+      return false;
+    });
+    initNotificationService({ ...baseDeps(feishuIm), isCompletionHandledByTeammate: check });
+    getSessionNotificationTurnSignal.mockReturnValue({ id: 'turn:1:2', fallbackEventId: 'turn:1:2', ended: true });
+
+    await invokeHandler({ sessionId: 's1', title: 'Mid-flight', kind: 'done', channels: { desktop: true, feishu: true, mobile: true } });
+
+    expect(check).toHaveBeenCalled();
+    expect(notificationCtor).not.toHaveBeenCalled();
+    expect(feishuIm.sendMarkdownText).not.toHaveBeenCalled();
+  });
+
   it('hands off delegated completion on every external channel while preserving task attention and consuming retries', async () => {
     const { initNotificationService } = await freshService();
     const feishuIm = makeFeishuIm('owner');

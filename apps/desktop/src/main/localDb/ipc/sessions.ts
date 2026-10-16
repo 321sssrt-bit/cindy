@@ -2049,6 +2049,11 @@ export async function updateSessionInDb(
     // 「消息免打扰」是通知面专用标记:同步给进程内索引,免得通知/灵动岛路径逐事件查库。
     if (p.notificationsMuted !== undefined) {
       noteSessionNotificationsMuted(sid, updated.notificationsMuted === true, dbClient);
+      // 已经上岛的任务现在才被静音:后面的事件（含终态）都被门挡住，得先把它从岛上收走，
+      // 否则卡片会永远停在「运行中」。
+      if (updated.notificationsMuted === true) {
+        notifyAgentIslandSessionPatch(sid, { notificationsMuted: true });
+      }
     }
     const projectTargetChanged = p.workspaceKind !== undefined || p.workingDir !== undefined;
     const settingsChanged = Object.keys(p).some((key) => REMOTE_PERSIST_FIELDS.has(key));

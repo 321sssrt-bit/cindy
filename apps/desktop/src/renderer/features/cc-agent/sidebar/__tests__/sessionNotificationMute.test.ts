@@ -2,22 +2,37 @@
  * 会话级「消息免打扰」的乐观更新与回滚。
  *
  * 点下去侧栏必须先切文案（否则要等一次 IPC 往返才更新），写库失败必须翻回来——
- * 留着一个没落库的「已静音」会让用户以为不会被打扰，实际照旧。
+ * 留着一个没落库的「已静音」会让用户以为不会被打扰，实际照旧。但回滚本身不能盖掉
+ * 期间别处刚写进来的新值。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/lib/ccAgent.types';
 
-const m = vi.hoisted(() => ({ patchLocal: vi.fn(), patchMeta: vi.fn() }));
-vi.mock('@/lib/sessionsStore', () => ({ sessionsStore: { patchLocal: m.patchLocal } }));
+const m = vi.hoisted(() => ({
+  patchLocal: vi.fn(),
+  patchMeta: vi.fn(),
+  findById: vi.fn(),
+}));
+vi.mock('@/lib/sessionsStore', () => ({
+  sessionsStore: { patchLocal: m.patchLocal, findById: m.findById },
+}));
 vi.mock('@/lib/sessionService', () => ({ patchMeta: m.patchMeta }));
 
 import { setSessionNotificationsMuted } from '../sessionNotificationMute';
 
 const session = { id: 'task', title: 'Task' } as Session;
 
+/** 让 mock 的 store 有真实语义：patchLocal 写进去，findById 读得到。 */
+let stored: Session;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  stored = { ...session };
   m.patchMeta.mockResolvedValue(session);
+  m.patchLocal.mockImplementation((_id: string, patch: Partial<Session>) => {
+    stored = { ...stored, ...patch };
+  });
+  m.findById.mockImplementation(() => stored);
 });
 
 describe('setSessionNotificationsMuted', () => {
@@ -37,5 +52,18 @@ describe('setSessionNotificationsMuted', () => {
 
     expect(m.patchLocal).toHaveBeenCalledWith('task', { notificationsMuted: false });
     expect(m.patchLocal).toHaveBeenLastCalledWith('task', { notificationsMuted: true });
+  });
+
+  it('does not roll back over a newer value another window wrote meanwhile', async () => {
+    m.patchMeta.mockImplementation(async () => {
+      // 等这一趟的过程中另一个窗口把值改回去了。
+      stored = { ...stored, notificationsMuted: false };
+      throw new Error('write failed');
+    });
+
+    await expect(setSessionNotificationsMuted(session, true)).rejects.toThrow('write failed');
+
+    expect(m.patchLocal).toHaveBeenCalledTimes(1);
+    expect(m.patchLocal).toHaveBeenCalledWith('task', { notificationsMuted: true });
   });
 });

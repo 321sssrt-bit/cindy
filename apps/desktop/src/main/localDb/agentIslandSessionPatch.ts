@@ -6,6 +6,8 @@ export interface AgentIslandSessionPatch {
   workspaceKind?: unknown;
   /** 插件后台隐藏时刻；非空 = 任务转入后台，灵动岛与菜单栏收起该任务。 */
   hiddenAt?: unknown;
+  /** 开了「消息免打扰」；灵动岛收起该任务。 */
+  notificationsMuted?: unknown;
 }
 
 /** 把本地 session 归档/删除/转入后台和 metadata 更新同步给 Agent Island。 */
@@ -20,7 +22,8 @@ export function notifyAgentIslandSessionPatch(
       if (
         patch.status === 'archived' ||
         patch.status === 'deleted' ||
-        (patch.hiddenAt !== undefined && patch.hiddenAt !== null)
+        (patch.hiddenAt !== undefined && patch.hiddenAt !== null) ||
+        patch.notificationsMuted === true
       ) {
         service.handleSessionClosed(sessionId);
         return;

@@ -23,8 +23,9 @@ let hiddenIds = new Set<string>();
 let mutedIds = new Set<string>();
 let loaded = false;
 let loading: Promise<void> | null = null;
-/** 加载期间已被宿主显式改动的 id：加载结果不得覆盖这些更新的事实。 */
-let touchedDuringLoad = new Set<string>();
+/** 加载期间已被宿主显式改动的 id（按字段分开记）：加载结果不得覆盖这些更新的事实。 */
+let touchedHiddenDuringLoad = new Set<string>();
+let touchedMutedDuringLoad = new Set<string>();
 /** 加载失败后的重试冷却：同步判定在每个 Agent 事件上调用，不能把失败放大成逐事件查库。 */
 const RETRY_AFTER_FAILURE_MS = 30_000;
 let failedAt = 0;
@@ -45,7 +46,8 @@ function adopt(client: DbClient): void {
   mutedIds = new Set();
   loaded = false;
   loading = null;
-  touchedDuringLoad = new Set();
+  touchedHiddenDuringLoad = new Set<string>();
+  touchedMutedDuringLoad = new Set<string>();
   failedAt = 0;
 }
 
@@ -70,12 +72,14 @@ export function ensureSessionFlagRegistryLoaded(): Promise<void> {
         .where(or(isNotNull(sessions.hiddenAt), eq(sessions.notificationsMuted, true)));
       if (owner !== client) return;
       for (const row of rows) {
-        if (touchedDuringLoad.has(row.id)) continue;
-        if (row.hiddenAt != null) hiddenIds.add(row.id);
-        if (row.notificationsMuted) mutedIds.add(row.id);
+        // 两列各管各的：只跳过加载期间真被改过的那个字段，否则「加载中顺手把
+        // 另一个字段改一下」会连带丢掉这一行原有的另一个标记。
+        if (!touchedHiddenDuringLoad.has(row.id) && row.hiddenAt != null) hiddenIds.add(row.id);
+        if (!touchedMutedDuringLoad.has(row.id) && row.notificationsMuted) mutedIds.add(row.id);
       }
       loaded = true;
-      touchedDuringLoad = new Set();
+      touchedHiddenDuringLoad = new Set<string>();
+      touchedMutedDuringLoad = new Set<string>();
     } catch (error) {
       if (owner === client) failedAt = Date.now();
       log.warn('load session flags failed', {
@@ -109,7 +113,7 @@ export function isSessionNotificationsMutedSync(sessionId: string): boolean {
 export function noteSessionHidden(sessionId: string, hidden: boolean, client = currentClient()): void {
   if (!client || client !== currentClient()) return;
   adopt(client);
-  if (!loaded) touchedDuringLoad.add(sessionId);
+  if (!loaded) touchedHiddenDuringLoad.add(sessionId);
   if (hidden) hiddenIds.add(sessionId);
   else hiddenIds.delete(sessionId);
   if (!loaded) void ensureSessionFlagRegistryLoaded();
@@ -123,7 +127,7 @@ export function noteSessionNotificationsMuted(
 ): void {
   if (!client || client !== currentClient()) return;
   adopt(client);
-  if (!loaded) touchedDuringLoad.add(sessionId);
+  if (!loaded) touchedMutedDuringLoad.add(sessionId);
   if (muted) mutedIds.add(sessionId);
   else mutedIds.delete(sessionId);
   if (!loaded) void ensureSessionFlagRegistryLoaded();
@@ -136,6 +140,7 @@ export function resetSessionFlagRegistryForTesting(): void {
   mutedIds = new Set();
   loaded = false;
   loading = null;
-  touchedDuringLoad = new Set();
+  touchedHiddenDuringLoad = new Set<string>();
+  touchedMutedDuringLoad = new Set<string>();
   failedAt = 0;
 }

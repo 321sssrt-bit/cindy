@@ -61,7 +61,12 @@ vi.mock('../../../security/trustedAppRenderer.js', () => ({ assertTrustedAppRend
 
 import { registerSessionIpc } from '../sessions';
 import { setSessionHidden } from '../sessionHidden';
-import { isSessionHiddenSync, isSessionNotificationsMutedSync, resetSessionFlagRegistryForTesting } from '../../sessionFlagRegistry';
+import {
+  isSessionHiddenSync,
+  isSessionNotificationsMutedSync,
+  noteSessionHidden,
+  resetSessionFlagRegistryForTesting,
+} from '../../sessionFlagRegistry';
 
 function createDb(): void {
   h.sqlite?.close();
@@ -240,11 +245,17 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
       patch: { notificationsMuted: true },
     });
     expect(isSessionNotificationsMutedSync('visible')).toBe(true);
+    // 已经上岛的任务被静音时要顺手把它从岛上收走，否则后面的事件（含终态）都被挡住，
+    // 卡片会永远停在「运行中」。
+    expect(h.notifyAgentIslandSessionPatch).toHaveBeenCalledWith('visible', {
+      notificationsMuted: true,
+    });
   });
 
   it('clears the mute and broadcasts the new value to every window', async () => {
     await update('visible', { notificationsMuted: true });
     h.tapWindowBroadcast.mockClear();
+    h.notifyAgentIslandSessionPatch.mockClear();
 
     await update('visible', { notificationsMuted: false });
 
@@ -254,6 +265,8 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
       patch: { notificationsMuted: false },
     });
     expect(isSessionNotificationsMutedSync('visible')).toBe(false);
+    // 关闭静音不动岛态（同一函数在每次 update 上还会转发标题/目录等元数据，
+    // 所以这里不断言整体未调用，只由 agentIslandSessionPatch.test.ts 钉「关静音不收岛」）。
   });
 
   it('loads mutes set before this process from the database', async () => {
@@ -263,5 +276,17 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
 
     await vi.waitFor(() => expect(isSessionNotificationsMutedSync('plugin-visible')).toBe(true));
     expect(isSessionNotificationsMutedSync('visible')).toBe(false);
+  });
+
+  it('keeps a stored mute when another flag is written while the index is still loading', async () => {
+    h.sqlite!.prepare('UPDATE sessions SET notifications_muted = 1 WHERE id = ?').run('plugin-visible');
+    // 触发加载但不等它完成:紧接着的 hidden 写入落在加载窗口内。
+    expect(isSessionHiddenSync('plugin-visible')).toBe(false);
+    noteSessionHidden('plugin-visible', false);
+
+    await list();
+
+    // 这一行被 hidden 改过，不得连带丢掉它原有的静音标记。
+    await vi.waitFor(() => expect(isSessionNotificationsMutedSync('plugin-visible')).toBe(true));
   });
 });

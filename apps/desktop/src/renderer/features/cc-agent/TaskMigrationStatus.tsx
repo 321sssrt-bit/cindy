@@ -14,29 +14,71 @@ export function useTaskMigrationStatus(session: Session) {
   const [status, setStatus] = useState<TaskMigrationView | null>(null);
   useEffect(() => {
     setStatus(null);
-    if (session.remoteHostId || isSharedTaskPeer(session.deviceLinkDeviceId ?? '')) return;
+    if (
+      session.remoteHostId ||
+      isSharedTaskPeer(session.deviceLinkDeviceId ?? '') ||
+      (session.deviceLinkDeviceId && session.deviceLinkConnectionStatus === 'disconnected')
+    )
+      return;
     const owner = getDataOwnerGeneration();
     let disposed = false,
       timer: ReturnType<typeof setTimeout> | undefined;
-    const refresh = async () => {
+    let online = false;
+    let connectionGeneration = 0;
+    let receivedStatusPush = false;
+    const current = () => !disposed && isDataOwnerGenerationCurrent(owner);
+    const canPoll = (generation: number) =>
+      current() && online && generation === connectionGeneration;
+    const refresh = async (generation: number) => {
+      if (!canPoll(generation)) return;
       try {
         const next = await window.electronAPI.deviceLink.taskMigration(
           session.deviceLinkDeviceId ?? null,
           { action: 'status', sessionId: session.id },
         );
-        if (!disposed && isDataOwnerGenerationCurrent(owner)) setStatus(next);
+        if (canPoll(generation)) setStatus(next);
       } catch {
         /* Old or disconnected hosts keep their existing connection UI. */
       }
-      if (!disposed && isDataOwnerGenerationCurrent(owner))
-        timer = setTimeout(() => void refresh(), 10_000);
+      if (canPoll(generation)) timer = setTimeout(() => void refresh(generation), 10_000);
     };
-    void refresh();
+    const updateConnection = (nextOnline: boolean) => {
+      if (!current() || online === nextOnline) return;
+      online = nextOnline;
+      connectionGeneration += 1;
+      clearTimeout(timer);
+      if (online) void refresh(connectionGeneration);
+      else setStatus(null);
+    };
+    // Local mode has a machine ID but no relay identity. Observe readiness before
+    // querying task-copy, and let pushes win over a delayed initial snapshot.
+    const offStatus = window.electronAPI.deviceLink.onStatusChanged(({ status }) => {
+      receivedStatusPush = true;
+      updateConnection(status === 'online');
+    });
+    const readConnection = async () => {
+      if (!current() || receivedStatusPush) return;
+      try {
+        const state = await window.electronAPI.deviceLink.getState();
+        if (!receivedStatusPush) updateConnection(state.linkStatus === 'online');
+      } catch {
+        // Retry only the readiness read if bootstrap failed; never assume online.
+        if (current() && !receivedStatusPush)
+          timer = setTimeout(() => void readConnection(), 10_000);
+      }
+    };
+    void readConnection();
     return () => {
       disposed = true;
+      offStatus();
       clearTimeout(timer);
     };
-  }, [session.id, session.deviceLinkDeviceId, session.remoteHostId]);
+  }, [
+    session.id,
+    session.deviceLinkDeviceId,
+    session.deviceLinkConnectionStatus,
+    session.remoteHostId,
+  ]);
   return status;
 }
 

@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { sharedTaskHostPeer, type TaskMigrationView } from '@cindy/device-link';
 import type { Session } from '@/lib/ccAgent.types';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
-import { useTaskMigrationStatus } from '../TaskMigrationStatus';
+import { TaskMigrationStatus, useTaskMigrationStatus } from '../TaskMigrationStatus';
 
-// Exercise the production observer without loading the separate copy editor.
-vi.mock('../sidebar/TaskMigrationDialog', () => ({ TaskMigrationDialog: () => null }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('@/features/device-link/remoteProjectsStore', () => ({ remoteProjectsStore: {} }));
 
 type LinkStatus = 'stopped' | 'connecting' | 'online';
 type Listener = (event: { status: LinkStatus }) => void;
@@ -50,6 +51,7 @@ beforeEach(() => {
       deviceLink: {
         getState,
         taskMigration,
+        listDevices: async () => ({ devices: [] }),
         onStatusChanged: (listener: Listener) => {
           listeners.add(listener);
           return () => {
@@ -158,6 +160,7 @@ it('pauses only the disconnected remote task while another target keeps polling'
   const second = renderHook(() => useTaskMigrationStatus(remote('B', 'connected')));
   await advance(0);
   first.rerender({ task: remote('A', 'disconnected') });
+  expect(first.result.current).toEqual(complete);
   taskMigration.mockClear();
   await advance();
   expect(taskMigration).toHaveBeenCalledExactlyOnceWith('B', { action: 'status', sessionId: 'B' });
@@ -167,6 +170,50 @@ it('pauses only the disconnected remote task while another target keeps polling'
   expect(taskMigration).toHaveBeenLastCalledWith('A', { action: 'status', sessionId: 'A' });
   expect(first.result.current).toEqual(complete);
 });
+
+// #6362 review: hook-only tests missed the open dialog being unmounted on disconnect.
+// Unit: open the real header/dialog, interrupt either connection, and retain its DOM/focus/scroll.
+it.each(['relay', 'remote task'] as const)(
+  'keeps the open progress dialog mounted across a %s disconnect and reconnect',
+  async (connection) => {
+    const task: Session =
+      connection === 'relay'
+        ? session
+        : {
+            ...session,
+            deviceLinkDeviceId: 'A',
+            deviceLinkConnectionStatus: 'connected',
+          };
+    const view = (currentTask: Session) => (
+      <MemoryRouter>
+        <TaskMigrationStatus session={currentTask} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(view(task));
+    await advance(0);
+    fireEvent.click(screen.getByRole('button', { name: 'taskMigration.stages.complete' }));
+    await advance(0);
+    const dialog = screen.getByRole('dialog');
+    const close = screen.getByRole('button', { name: 'taskMigration.close' });
+    close.focus();
+    dialog.scrollTop = 42;
+
+    if (connection === 'relay') await push('connecting');
+    else rerender(view({ ...task, deviceLinkConnectionStatus: 'disconnected' }));
+    expect(screen.queryByRole('dialog')).toBe(dialog);
+    expect(document.activeElement).toBe(close);
+    expect(dialog.scrollTop).toBe(42);
+
+    if (connection === 'relay') await push('online');
+    else rerender(view(task));
+    await advance(0);
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    expect(document.activeElement).toBe(close);
+    expect(dialog.scrollTop).toBe(42);
+    fireEvent.click(close);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  },
+);
 
 it.each([
   { remoteHostId: 'ssh-host' },
@@ -198,6 +245,9 @@ it('does not let a previous task response overwrite the newly selected task', as
     action: 'status',
     sessionId: 'next',
   });
+  taskMigration.mockReturnValue(new Promise(() => {}));
+  rerender({ task: { ...session, id: 'another' } });
+  expect(result.current).toBeNull();
 });
 
 it('does not dispatch a queued poll after the data owner changes', async () => {

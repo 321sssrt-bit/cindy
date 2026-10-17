@@ -14,6 +14,8 @@ export function useTaskMigrationStatus(session: Session) {
   const [status, setStatus] = useState<TaskMigrationView | null>(null);
   useEffect(() => {
     setStatus(null);
+  }, [session.id, session.deviceLinkDeviceId, session.remoteHostId]);
+  useEffect(() => {
     if (
       session.remoteHostId ||
       isSharedTaskPeer(session.deviceLinkDeviceId ?? '') ||
@@ -48,7 +50,7 @@ export function useTaskMigrationStatus(session: Session) {
       connectionGeneration += 1;
       clearTimeout(timer);
       if (online) void refresh(connectionGeneration);
-      else setStatus(null);
+      // Retain the last snapshot so a transient disconnect cannot unmount an open dialog.
     };
     // Local mode has a machine ID but no relay identity. Observe readiness before
     // querying task-copy, and let pushes win over a delayed initial snapshot.

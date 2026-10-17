@@ -23,6 +23,8 @@ import { FailedScheduleNotice } from '@/session/FailedScheduleNotice';
 import { shouldShowFailedScheduleNotice, type FailedScheduleRunSnapshot } from '@cindy/maker-shared/schedule-model';
 import type { TokenSpeedSnapshot } from '@cindy/maker-shared/usage-format';
 import { CompanionHeader } from '@/session/CompanionHeader';
+import { CloudHomeUnreachableNotice, useSustained } from '@/session/CloudHomeUnreachableNotice';
+import { useCloudCompanionHome } from '@/chat/useCloudCompanion';
 import { CHAT_HEADER_BLUR_FADE_INSIDE } from '@/session/ChatIdentityHeader';
 import { useHiddenHistoryChase } from '@/session/hiddenHistoryChase';
 import { collectCompanionPluginInvocations } from '@/session/pluginInvocations';
@@ -2357,6 +2359,15 @@ function SessionScreenContent() {
     connectionIssue,
     isDeviceUnresponsive,
   );
+  // A cloud companion on its main computer (cloud-companions.md §3.1): like an IM chat, a briefly
+  // unreachable computer does not interrupt reading; only a message that cannot get through for a
+  // while offers to continue on another computer.
+  const cloudHome = useCloudCompanionHome(!!companionResource);
+  const cloudHomeActor = cloudHome.supported && companionResource
+    ? cloudHome.actors.find(actor => actor.kind === 'bot' && actor.externalId === companionResource.ref.id && actor.homeDeviceId === deviceId) ?? null
+    : null;
+  const cloudHomeUnreachable = useSustained(!!cloudHomeActor && outboxItems.length > 0 && outboxConnectionDispatchBlocked);
+  const quietConnection = !!cloudHomeActor;
   const hasCurrentSession = currentSession !== null;
   const currentAgentKind = useMemo(
     () => currentSession ? agentKindForSession(currentSession) : null,
@@ -2969,21 +2980,25 @@ function SessionScreenContent() {
         hasFastModeCap: capabilities?.hasFastMode === true,
       });
   const composerRuntimeLabel = composerRuntimeSummary
-    ? agentSwitchIntent
-      ? t(composerSwitchesAgent ? 'session.screen.nextAgentSwitch' : 'session.screen.nextModelSelection', {
-          agent: mobileAgentLabel(agentSwitchIntent.targetAgentKind),
-          model: composerRuntimeSummary.modelSummary,
-        })
+    ? agentSwitchIntent && composerSwitchesAgent
+      ? `${mobileAgentLabel(agentSwitchIntent.targetAgentKind)} · ${composerRuntimeSummary.modelSummary}`
       : composerRuntimeSummary.modelSummary
     : '';
+  // 按钮省去时机前缀，读屏仍说明待生效选择，避免被误认为当前运行配置。
+  const composerRuntimeAccessibilitySummary = composerRuntimeSummary && agentSwitchIntent
+    ? t(composerSwitchesAgent ? 'session.screen.nextAgentSwitch' : 'session.screen.nextModelSelection', {
+        agent: mobileAgentLabel(agentSwitchIntent.targetAgentKind),
+        model: composerRuntimeSummary.modelSummary,
+      })
+    : composerRuntimeLabel;
   // 下一条消息时 Agent 所在的另一台电脑名(药丸带远程标记,读屏一并读出);目录在缺名时以 deviceId
   // 兜底,那种情况不读出来。
   const nextAgentDeviceName = nextAgentDeviceId
     ? remoteAgentCatalogs.find((item) => item.deviceId === nextAgentDeviceId)?.name ?? null
     : null;
   const composerRuntimeAccessibilityLabel = nextAgentDeviceName && nextAgentDeviceName !== nextAgentDeviceId
-    ? [composerRuntimeLabel, nextAgentDeviceName].filter(Boolean).join(', ')
-    : composerRuntimeLabel;
+    ? [composerRuntimeAccessibilitySummary, nextAgentDeviceName].filter(Boolean).join(', ')
+    : composerRuntimeAccessibilitySummary;
   // 换电脑确认里的被控电脑名;路由参数缺设备名时会以 deviceId 兜底,那不是给人看的名字。
   const controlledComputerName = (() => {
     const name = currentSession?.deviceLinkDeviceName?.trim();
@@ -9700,7 +9715,14 @@ function SessionScreenContent() {
           <View style={[styles.sessionChromeContent, { paddingTop: horizontalSystemHeader ? nativeHeaderHeight : insets.top + (paneLayout.persistent ? spacing.lg : 0) }, companionChat && Platform.OS !== 'ios' && { backgroundColor: colors.surface }]}>
             {headerNode}
 
-            {!isSharedTaskAccessRevoked && (showConnectionBanner || showCachedHistoryNotice) ? (
+            {cloudHomeActor && cloudHomeUnreachable ? (
+              <CloudHomeUnreachableNotice deviceName={deviceName} onSwitch={() => router.push({
+                pathname: '/companions/cloud/[actorId]',
+                params: { actorId: cloudHomeActor.id, botId: cloudHomeActor.externalId, deviceId, deviceName,
+                  title: resolveRemoteText(companionResource!.display.title, i18nInstance.language) },
+              })} />
+            ) : null}
+            {!isSharedTaskAccessRevoked && !quietConnection && (showConnectionBanner || showCachedHistoryNotice) ? (
               <ConnectionBanner
                 density="compact"
                 cachedOnly={showCachedHistoryNotice}

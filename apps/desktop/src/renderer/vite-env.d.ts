@@ -3778,6 +3778,7 @@ interface ElectronAPI {
       success: boolean;
       error?: string;
       blobs: { totalCount: number; totalBytes: number; cacheCount: number; cacheBytes: number };
+      remoteMedia?: { bytes: number; fileCount: number };
       legacy: { bytes: number; fileCount: number };
       fixedCaches: {
         legacyImages: { bytes: number; fileCount: number };
@@ -3792,7 +3793,7 @@ interface ElectronAPI {
         eligible: boolean;
       }>;
     }>;
-    scan: (params: { draftUrls: string[] }) => Promise<{
+    scan: (params: { draftUrls: string[]; scope?: 'remote-media' }) => Promise<{
       success: boolean;
       error?: string;
       zeroRef: { count: number; bytes: number; hashes: string[]; protectedCount: number };
@@ -3815,6 +3816,7 @@ interface ElectronAPI {
     }>;
     cleanup: (params: {
       draftUrls: string[];
+      scope?: 'remote-media';
       zeroRefHashes: string[];
       evictCacheHashes: string[];
       deadDirNames: string[];
@@ -4858,7 +4860,8 @@ interface ElectronAPI {
           botId: string,
           path: string,
         ) => Promise<{ ok: true } | { ok: false; errorCode: 'NOT_A_DIRECTORY' | 'TOO_MANY' }>;
-        removeDirectory: (botId: string, path: string) => Promise<void>;
+        /** `deviceId`: the folder is on that computer (cloud companions); absent for this computer's. */
+        removeDirectory: (botId: string, path: string, deviceId?: string) => Promise<void>;
         readTask: (
           botId: string,
           taskId: string,
@@ -5433,9 +5436,13 @@ interface ElectronAPI {
     ) => () => void;
     getCompanionCloudState: () => Promise<import('../shared/companionCloud').CompanionCloudSnapshot>;
     takeOverCompanion: (botId: string) => Promise<import('../shared/companionCloud').CompanionCloudActionResult>;
-    transferCompanion: (botId: string, targetDeviceId: string) => Promise<import('../shared/companionCloud').CompanionCloudActionResult>;
+    switchCompanionHome: (botId: string, targetDeviceId: string, options?: import('../shared/companionCloud').CompanionSwitchOptions) => Promise<import('../shared/companionCloud').CompanionCloudActionResult>;
     getCompanionTranscript: (botId: string, before?: string) => Promise<import('../shared/companionCloud').CompanionTranscriptPage>;
-    listCompanionTransferTargets: () => Promise<import('../shared/companionCloud').CompanionTransferTarget[]>;
+    getCompanionHomeChoices: (botId: string) => Promise<import('../shared/companionCloud').CompanionHomeChoices>;
+    listCindyCopies: () => Promise<import('../shared/companionCloud').CompanionCindyCopy[]>;
+    mergeCindy: (keepBotId: string, fromBotIds: string[]) => Promise<import('../shared/companionCloud').CompanionMergeResult>;
+    getCompanionAttachment: (botId: string, mediaId: string) => Promise<import('../shared/botGroupChat').BotGroupAttachment>;
+    resolveCompanionAvatar: (request: { avatar: string; deviceId?: string | null; fetch?: boolean }) => Promise<string | null>;
     onCompanionCloudChanged: (
       cb: (
         payload: import('../shared/companionCloud').CompanionCloudSnapshot,
@@ -6958,6 +6965,8 @@ interface ElectronAPI {
           fetchedAt: number;
         } | null) => void,
       ) => () => void;
+      onCodexAccountAuthReady: (cb: () => void, providerId: string) => () => void;
+      onCodexAccountAuthStarted: (cb: () => void, providerId: string) => () => void;
       onCodexAccountChanged: (
         cb: (p: {
           limitId?: string | null;

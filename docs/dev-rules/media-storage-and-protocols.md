@@ -73,6 +73,22 @@
   不直接删除共享 blob；物理回收由 `recycler.ts` 根据账本统一处理。
 - `isCache: true` 只用于可以重新获取或重新生成的缓存。缓存一旦成为聊天历史、作品或其他
   不可再生用户内容，必须沿用现有 pin／引用流程转为不可按缓存回收。
+- 远程文件的长期复用（2026-10-16 用户要求）不以短 TTL 清空：媒体经 `ingestMedia` /
+  `integration-cache` 持久入仓，`remote-file` 命名空间按现有缓存预算自动 LRU 回收。
+  预算用量统计整个媒体仓的 cache 字节，但排除手动管理的 `remote-media` 长期副本；
+  命名空间只限制逐出候选，不另分配一份额度。
+  消费者持有独立副本，新写入的仓内缓存同样可逐出；其他缓存已占满额度时不强留新副本。
+  自动清理只接受该命名空间独占且仍为 `isCache` 的字节；扫描和条件删除都检查其他
+  引用与 pin，不能清理聊天附件或其他集成的共享字节。其他媒体清理维持原手动流程。
+  普通 HTML 等非媒体仍走 `remote-file-cache`。完整身份、复验与平台清理策略见
+  [`protocol-compatibility.md`](protocol-compatibility.md)「远程文件连接复用与版本缓存」。
+- 桌面聊天的不可变远程图片通过 `device-link/remoteMediaPersistentCache.ts` 复用媒体总仓，
+  `remote-media` 索引包含账号、来源设备和原始地址。先查内存、再查磁盘，缓存命中不取件；
+  重启和断连不清理，不增加自动到期或容量淘汰。设置中的「远程图片缓存」复用账本扫描和
+  条件删除，只清该命名空间独占的缓存，保护草稿、已保存附件及其他集成共享字节。
+  普通路径不按 URL 永久缓存：继续由主机复核版本，完整中转下载也可写入已有版本缓存；
+  音视频仍走流式播放。旧主机不返回版本时不把可修改文件登记为长期有效。
+  回归见 `remoteMediaPersistentCache.test.ts`、`remoteMediaProtocol.test.ts` 与 `storageIpc.test.ts`。
 - 零引用入仓只适用于已有草稿或生成结果提交链路。新增零引用窗口时，必须证明内容在消息
   落库前不会被回收，并用测试覆盖成功、失败、取消和重试。
 - 三款官方壁纸改为 OSS/CDN 按需分发（2026-10-15 用户裁决，替代此前全部随包的决定）。
@@ -94,6 +110,13 @@
   对象名为 `wallpapers/<sha256>.webp` / `.mp4`；缩略图可用
   `node scripts/prepare-wallpaper-previews.mjs` 从原始图片重建，总预算 300 KiB。
   清单见 Desktop 的 `src/shared/wallpaper-video-manifest.json`。
+- 伙伴头像的本机副本（2026-10-17 用户裁决：读过的头像在本机缓存一份，显示前先读缓存）：另一台电脑上
+  伙伴的 `cindy-media://blobs/…` 头像与云端伙伴身份的 `https://` 公开头像，经 `companion-cloud/avatarCache.ts`
+  复用集成缓存的索引（`integration-cache` 引用行，键 `companion-avatar:…`，`isCache: true`）入仓，由回收器按
+  总量上限与 LRU 统一回收，不另建目录、store 或协议。本机已有同指纹 blob 时直接使用，不再复制。只保存主机按
+  字节识别为图片、且不超过头像上限（5 MB）的内容；公开头像走共用的受控公网图片下载。两种地址各自不可变
+  （blob 地址即内容指纹，云端换头像会生成新地址），命中不需要重新校验。Renderer 经
+  `maker:companion-avatar:resolve` 先查本机副本，未命中时照常显示原地址并在后台保存一份。
 - 可再生 HTML 临时快照缓存是独立副本的例外：仅在快照已物化自己的文件、HTTP 服务不依赖
   媒体仓 blob、且该缓存不作为持久附件提交时，使用 `isCache: true` 和空引用入仓。
   必须验证媒体仓缓存不可用时快照仍可读取，以及重复打开、失败、取消和重试不新增业务引用；

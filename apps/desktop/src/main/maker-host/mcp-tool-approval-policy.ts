@@ -231,8 +231,15 @@ export function getDesktopMcpToolApprovalPolicy(
       return 'prompt-each-time';
     }
     if (action === 'move_session' || action === 'publish_skill') return 'prompt-each-time';
+    // Moving a teammate hands its running to another computer: the task's permission mode decides.
+    if (action === 'move_teammate_home') return 'prompt-each-time';
     // 发给另一台电脑上的任务：作用范围越出本机，交给当前任务的权限档，不走可信 server 的静默放行。
     if (action === 'send_to_session' && targetsAnotherComputer(sessionIdDevice(args?.target_session_id))) {
+      return 'prompt-each-time';
+    }
+    if ((action === 'archive_sessions' || action === 'unarchive_sessions') &&
+      (!Array.isArray(args?.session_ids) || args.session_ids.some((id) =>
+        typeof id !== 'string' || targetsAnotherComputer(sessionIdDevice(id))))) {
       return 'prompt-each-time';
     }
   }

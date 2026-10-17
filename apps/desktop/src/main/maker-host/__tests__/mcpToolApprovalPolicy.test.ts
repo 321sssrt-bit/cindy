@@ -347,6 +347,13 @@ describe('helper task workspace and SkillHub publication authorization', () => {
     expect(getDesktopClaudeReadOnlyAllowedTools()).not.toContain('mcp__cindy_helper__call_tool');
   });
 
+  it('lets the task permission mode decide moving a teammate to another computer, but not reading its home', () => {
+    const move = { name: 'move_teammate_home', args: { teammate_id: 'mia', target_device_id: 'laptop' } };
+    expect(policy('call_tool', move)).toBe('prompt-each-time');
+    expect(policy('move_teammate_home', move.args)).toBe('prompt-each-time');
+    expect(policy('call_tool', { name: 'get_teammate_home', args: { teammate_id: 'mia' } })).not.toBe('prompt-each-time');
+  });
+
   it('does not infer a safe helper action from missing or malformed evidence', () => {
     for (const params of [undefined, null, [], 'invalid JSON', {}, { name: '' }, { name: 42 }]) {
       expect(policy('call_tool', params)).toBe('prompt-each-time');
@@ -436,6 +443,24 @@ describe('teammate pre-run command approval', () => {
 });
 
 describe('cross-device actions use the task permission mode', () => {
+  it.each(['archive_sessions', 'unarchive_sessions'])('reviews remote %s in direct and progressive calls', (name) => {
+    for (const session_ids of [['studio::s1'], ['s1', 'studio::s2']]) {
+      const args = { session_ids };
+      for (const context of [
+        { toolName: name, toolParams: args },
+        { toolName: 'call_tool', toolParams: { name, args } },
+        { toolParams: { name, args } },
+        { toolName: 'call_tool', toolParams: JSON.stringify({ name, args: JSON.stringify(args) }) },
+      ]) {
+        expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', ...context })).toBe('prompt-each-time');
+      }
+    }
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName: 'call_tool',
+      toolParams: { name, args: { session_ids: ['s1'] } } })).toBe('auto-approve');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_helper', toolName: 'call_tool',
+      toolParams: { name, args: { session_ids: ['local::s1'] } } })).toBe('auto-approve');
+  });
+
   const scheduler = (name: string, args: Record<string, unknown>, toolName: string | undefined = 'call_tool') =>
     getDesktopMcpToolApprovalPolicy({
       serverName: 'cindy_scheduler',

@@ -176,7 +176,7 @@ known 是消息 ID 与主机提供的 SHA-256 正文指纹对。支持的主机�
 
 控制端 `invoke` payload 可选携带 `transfer: { gzip?: 1, ifNoneMatch?: string }`：注入了解压
 能力就声明 `gzip: 1`；本机持有同一被控端、同一 channel 与 args 的上一份大结果时，带上它的
-内容标签。被控端照常执行 handler，只改写发出的 ok 结果：序列化后不小于 4 KiB 的结果附带
+内容标签。被控端照常执行 handler，只改写发出的 ok 结果：序列化后不小于 4096 个 UTF-16 code unit 的结果附带
 `transfer.tag`（SHA-256）；标签与 `ifNoneMatch` 相同时回 `{ result: null, transfer: { tag,
 notModified: true } }`；否则在控制端声明可解且压缩确有收益时回 `{ result: null, transfer:
 { tag, gzipBase64 } }`。共享 DeviceLinkClient 在交给调用方之前还原成普通结果，并只用发请求
@@ -192,6 +192,13 @@ handler 每次都执行，`notModified` 只省略字节完全相同的结果，�
 relay 不解析隧道 payload，无服务端改动、数据库 migration 或部署顺序要求。实现见
 `packages/device-link/src/invokeTransfer.ts`，回归见同目录 `__tests__/invokeTransfer.test.ts`
 与 `client.test.ts`「invoke 结果传输编码」。
+
+Desktop 的压缩保持 gzip level 4 与同步发送／错误处理契约，手机与电脑、电脑与电脑
+共用这一实现。收益按 gzip 的 base64 长度与原始 JSON 的 UTF-8 **字节数**比较，缩小超过
+10% 才采用；大小门槛、解压上限与缓存预算仍按原有字符数计。Node 编解码及数字统计复用
+`@cindy/device-link/node-compression` 独立入口，跨平台主入口与 Mobile 不加载 Node 模块。
+DEBUG 统计只记原始／gzip／wire 字节与压缩耗时，不记录正文或凭证。
+回归见 Desktop `device-link/__tests__/transferCodec.test.ts`（实际 zlib／pako 解码）。
 
 ## 群执行终态与错误展示
 
@@ -405,12 +412,43 @@ handler 完成后复核可见性与账号失败（`[NOT_FOUND] Session does not 
 
 **审批。** `cindy_scheduler` 与 `cindy_helper` 是整体静默的可信 server；跨电脑写操作
 （`schedule_update` / `pause` / `resume` / `delete` / `run_now` 带非本机 `device`，以及
-`send_to_session` 的 `deviceId::sessionId` 目标）在 `mcp-tool-approval-policy.ts` 里按内层动作
+`send_to_session` 的 `deviceId::sessionId` 目标，以及 `archive_sessions` / `unarchive_sessions`
+含非本机设备前缀的 ID）在 `mcp-tool-approval-policy.ts` 里按内层动作
 判为逐次审批，交给任务权限档；本机调用与跨电脑读取仍静默。
 
 手机与 IM 通过所在电脑的 Agent 使用这些能力，无新增界面。实现与回归见
 `packages/lizi-mcps/src/scheduler/_devices.ts`、`mcp-integrations/schedulerDevices.ts`、
 `mcp-integrations/sessionHandoffRemote.ts`、`maker-ipc/sessionHandoffIpc.ts` 及各自的测试。
+
+### Agent 跨电脑归档与取消归档
+
+`archive_sessions` / `unarchive_sessions` 原位接受 `deviceId::sessionId`。本机批次仍调用
+`setSessionsStatusInDb`，保持原子性；`local::sessionId` 是本机别名，先规范化再检查重复和当前任务保护，
+不允许嵌套设备前缀。远程复用已有 `local-db:sessions:patch-meta(id, { status })`
+与目标电脑的 `patchSessionMetaInDb` 生命周期服务，状态仅为 `archived` / `active`。没有新 channel、
+allowlist、数据库 migration 或第三台电脑转发。复合 ID 不交给本机服务，无本机回退。
+
+最小批次合同：一次只能指定同一台电脑，混合本机/远程或多设备批次写入前返回 `INVALID_ARGS`。
+远程按输入顺序执行，首次失败停止，无回滚、无自动重放。失败 `data` 中 `changed` 为已确认完成项，
+`failed_session_id` 为失败或结果未知项，`remaining_session_ids` 为未执行项；各 ID 保留设备前缀。
+`partial` 表示已有确认完成项或失败项结果未知，不能把整个远程批次当作事务。
+
+沿用同账号远控、双方允许控制、owner 检查与目标可见性。跨电脑写入进入当前任务权限档，
+本机操作保持原样。离线、禁用、撤权、不支持分别明确返回；旧宿主拒绝 `patch-meta` 时返回
+`REMOTE_UNSUPPORTED`。已支持这个 channel 和生命周期保护的旧宿主无需新增协议即可执行。
+目标服务的不存在与已删除/专属生命周期限制返回 `NOT_FOUND` / `PRECONDITION_FAILED`；
+隧道在处理后复核账号/可见性的 NOT_FOUND、超时、在途断连、错误回执与内部错误均按
+`REMOTE_RESULT_UNKNOWN`，说明该项可能已生效，调用方先查状态再决定是否重试。
+本机发送前的 `BACKPRESSURE` 返回 `REMOTE_UNAVAILABLE`；目标返回的 `BACKPRESSURE` 或
+无法确认为写入前拒绝的 `PRECONDITION_FAILED` 也返回 `REMOTE_RESULT_UNKNOWN`，因为写入后的
+回执查询可能失败（后者可能由 worktree mutation 包装查询错误）。即使 `changed` 为空也标记 `partial: true`。
+同一账号快照覆盖整个远程批次，切账号后停止并不返回旧账号的标题/目录。
+
+取消归档不发送旧消息、不启动任务执行、不恢复暂停自动化。成功后另调既有 `send_to_session`
+继续投递；该通道仍按目标当前状态与已保存权限执行。手机/IM 经执行电脑的 Agent 使用同一工具，
+没有新增 UI；SSH 工作目录任务仍由其所属 Desktop 管理状态，不将 SSH 主机视为 device-link 设备。
+不改变共享连接的重试、超时或恢复策略。回归见 `archiveSessionsTool.test.ts`、
+`sessionStatusRemote.test.ts`、`sessionsUpdate.test.ts` 和 `mcpToolApprovalPolicy.test.ts`。
 
 ## Desktop 设备互联 Review
 
@@ -779,6 +817,53 @@ link-accept 双向声明，不改 relay）。Desktop 控制端在本机没有订
 
 ## 图片交付与缺失源文件
 
+### 远程文件连接复用与版本缓存
+
+`device-link:file-peer` 的 `caps` 追加可选 `idleMs`、`sessionBound: true`。新控制端
+仅在 Host 明确声明后，于 `offer` 携带 `sessionBound: true`，双方取消空闲倒计时，
+按远程会话生命周期释放独立文件连接。不主动预热：普通读取只复用已建立的文件通道，
+首次需要传文件时才建立。运行时断开通知宿主回收，下次取件按需重建，不新增应用层心跳。
+传输期间的路径采样独立于调试记录开关，供慢链路回退使用；关闭调试只省略详细进度日志。
+采样随传输结束停止，不在空闲文件连接上循环探测。
+Desktop 显式断链、账号变化、共享连接离线，以及 Mobile 退后台、设备切换、断链时释放。
+取消同时覆盖排队与尚未拿到连接 ID 的请求；迟到的协商结果不能重新建立连接或触发 OSS。
+Desktop 取件取消后仍允许原账号发送已有 `close` 清理通知，包括迟到的 offer 回包与
+已完成读取留下的空闲连接；其他请求继续受取消和设备代次限制。切账号后旧通知不发送，
+不借新账号清理旧连接，不增加重试、心跳或共享 relay 重连。
+
+旧控制端未发送 `sessionBound` 时，新 Host 仍按 5 分钟空闲关闭；新控制端面对未声明
+该能力的 Host，按 `idleMs` 提前一个命令预算（15 秒）关闭，最长 4 分 45 秒，未声明
+`idleMs` 时仍按 30 秒处理。正在传输的源文件仍保持 60 秒无进展清理，
+不因延长空闲复用而延长。服务端无需改动，不更改旧端必填字段或 Mobile 原生指纹。
+
+`device-link:media:fetch` 的 `prepareOnly` 结果和文件 `open` 结果追加可选 `version`
+（64 位十六进制摘要）。Host 每次先走原授权解析，再从打开的文件句柄取
+dev/ino/size/mtime/ctime，连同解析后的路径生成不透明版本。SSH 的不可变本地副本
+例外：由 materializer 用远端主机、工作目录、相对路径及远端 size/mtime 生成源版本，
+prepare/open 复用该源版本并校验副本大小，不使用带登录代次的本地路径或 LRU 时间。
+缓存仍按稳定账号隔离，原有代次取消校验保留；不把版本当作授权凭据。
+新版控制端只有两次版本一致且传输成功才保留私有缓存副本；读取缓存前仍执行
+prepare 授权与版本查询。缺失／非法版本的旧端不启用此缓存，旧控制端忽略新增字段。
+缓存按稳定账号、目标设备、完整媒体 URL 隔离（含 SSH 与目录约束），跨重启保留，
+不设时间 TTL、16 MiB 单文件门槛或条目数门槛。账号代次用于拒绝迟到结果，不能进入
+持久缓存键。Desktop 图片等媒体复用 `cindy-media` 的 `integration-cache` 索引和
+既有 512 MiB 缓存预算，真实文件探测后流式入仓；超过预算的单份媒体不额外缓存。
+手动清理的 `remote-media` 不可变图片副本不占此自动回收预算，包括与其他集成共享的字节。
+只对 `remote-file` 独占的可再生缓存按 LRU 自动回收，SQL 删除时复验 pin 和其他引用。
+HTML 等普通文件复用 `remote-file-cache` 的 4 GiB 总量上限、LRU 与启动残片清扫；
+同源新版本成功保存后清旧版本，不在媒体目录另存字节。
+
+Mobile 复用 `remote-media` 磁盘缓存，放入 realm/账号 SHA-256 命名空间；无固定容量
+门槛，仅在现有传输空间预留不足时按 LRU 清理（保留 256 MiB，并考虑下载与消费者副本）。
+访问顺序落盘、版本不同删除旧条目；版本进入物理文件名，避免异步复制撞上覆盖写。
+系统清掉目录后，下一次取件自动重建。两端消费者均拿独立副本，清缓存不删正在预览的副本。
+强制刷新只跳过旧副本的读取，成功后仍更新缓存，避免下次普通打开又命中损坏副本。
+已有 OSS 和流式媒体缓存维持原生命周期；此缓存只保存已完成的 peer 整文件下载。
+
+网络帧仍是旧版可读的 16 KiB，不增加 wire 通道。新版接收运行时仅在本地桥接声明
+批量写入时，把已到达帧合为至多 256 KiB 后串行写盘；仍按实际写入块数归还流控额度，
+EOF 必须等全部写入完成。桌面与手机使用同一实现；不改 Mobile 原生指纹。
+
 媒体取件沿用既有 `MEDIA_FETCH_FAILED` 错误包；源图片不存在时，Host 在消息中附加
 `[MEDIA_SOURCE_MISSING]` 稳定标记，不回传本机路径。新版 Mobile 据此提示重新导入，
 旧版继续按通用加载失败处理；新版连接旧 Host 时也保留通用失败回退。不改变 relay、
@@ -921,6 +1006,9 @@ handler 无 sender 依赖；不加入共享任务访客白名单，不进入自�
   JSON 标量/独立数组不自动提供路径语义；无字段名的字符串只有在完整值对应 A 上已存在的文件或目录时才整体转换，否则逐路径 token 投影，避免改写正文中的 `/api/v1` 或相对参数。明确的路径字段不依赖文件存在性，仍支持尚未创建的目标。
   普通输出和文件正文无论引号内外都逐个路径 token 投影，不把以路径开头的整段当成单一路径；命令只安全引用替换的目录前缀，保留后缀的变量和命令替换语义。
   命令后缀按执行端 shell 的引号与转义边界扫描；转义引号前的反斜杠不得变成路径分隔符。权限检查继续使用映射后实际执行的命令。
+  分隔符按路径写法认：Mac / Linux 路径只认 `/`，Windows 文本里的 `\Users`、`C:/Users` 不是 A 上的 `/Users`，不得再投影。
+  B 是 Windows 时，Agent 在 bash 命令与正文里写的转义分隔符 `\\` 同样还原(bash 里它就是一个反斜杠)；后面不是目录名的 `\\`
+  仍按转义原样保留。
   Agent 取到的当前目录可直接用于后续工具，A 的任务语境、执行 cwd 与权限检查始终使用真实目录。
   B 回传的工具文件路径、文本文件链接与图片源路径在 A 的事件落库和广播前还原，文件卡及预览读取 A 的真实文件。
   行内代码含空白时，只有完整引用对应 A 上已存在的文件或目录才整体还原；否则逐路径 token 投影，保留命令参数。明确的链接目标与结构化路径不依赖文件存在性。
@@ -1407,6 +1495,8 @@ G 与 O 之间不变。受邀者能调用的 channel 不变(仍是 `maker:remote
   - C 侧：任务此刻所在电脑与供应商和绑定那台对得上才算经组(绑定没清掉的空档里不报)；每轮记进按账号的账本(`group` 行，
     只用来报告，不算进 C 自己的供应商)，防抖 5s 报从那天起的一份；启动(账号确定)
     后整份报一次补上次没送到的；送不到按 30s 起、最长 10 分钟退避重报，不截断单日或未报告的旧日期。
+  - 日期归一：`day` 是报告端本地日期，但接收端按 `lastAt` 在自己的时区重新计算日期；增量请求和替换时各多带两天，
+    避免跨时区的午夜边界漏掉或重复历史。
 - **超出单次 3000 行或 UTF-8 字节预算时用新动作 `usage-part` 分批传完整报告**：
   - 请求 `{ action: 'usage-part', seq, sinceDay, offset, total, rows }`；每批仍最多 3000 行，整份最多 20000 行，
     同时按实际 JSON 序列化后的 UTF-8 字节数切批（包含转义开销），请求预算取可靠消息/普通帧上限的较小值再预留 64 KiB 给 invoke 头；offset 按实际批次行数推进。
@@ -1444,8 +1534,16 @@ G 与 O 之间不变。受邀者能调用的 channel 不变(仍是 `maker:remote
 - **`provider-group:remote` 新增 `action: 'manage-group'` / `'manage-share'`**(同一 channel、同一同账号 allowlist，
   受邀者与共享任务访客照旧 `CHANNEL_NOT_ALLOWED`)：请求 `{ action, command }`，`command` 与本机命令同构，结构与校验在
   `apps/desktop/src/shared/providerManagement.ts`。`manage-group` 只收 `get` / `candidates` / `save-if-current` / `delete-if-current`；
-  `manage-share` 只收 `owned` / `own-usage` / `create-link` / `approve` / `reject` / `set-member` / `reshare-decide`，其余回
+  `manage-share` 只收 `owned` / `own-usage` / `usage-history` / `create-link` / `approve` / `reject` / `set-member` / `reshare-decide`，其余回
   `[PERMISSION_DENIED]`。回包 `{ result, respondedAt }`，`respondedAt` 只用于把链接有效期换算到 C 的时钟。
+  - `usage-history`(2026-10-17，供应商组 §7)：只读，`{ action, providerId }`，回这个供应商用量的按天明细
+    `{ providerId, todayKey, coverageStart, self, relays, members }`(结构在 `apps/desktop/src/shared/providerShare.ts`)，
+    日期是 O 的本地日期，金额在 O 上估算；`members` 只含 O 上这个供应商的分享里现在的成员。最多 5,000 行，按日期从新到旧
+    截取，最新一天允许只保留一部分，再按实际 UTF-8 JSON 字节数裁剪，均用 `coverageStart` 标出保留下来的最早日期，
+    整包为单帧 2MB 预留 invoke 信封空间。旧 O 不认识该动作，`parseProviderShareCommand` 回
+    `[INVALID_PARAMS] Unknown command`，C 的 Main 把 `manage-share` 的这个回包统一成 `[UNSUPPORTED_CAPABILITY]`(与
+    `unknown provider group action` 同一处)，管理页退回 `own-usage` 与 `owned`(range=all)的所有时间合计并提示更新 O，不重试。
+    旧 C 不发这个动作，照旧读 `own-usage` / `owned`，O 对两者的回包不变。
   - O 在执行前后核对账号未切换；`approve` / `reject` / `set-member` 先刷新快照，申请或成员不在 O 的分享里回 `[NOT_FOUND]`；
     `owned` 的回包只含 `{ ready, shares }`，不带 O 自己的弹窗安排。不再转发给第三台电脑。
   - `reshare-decide` 只修改 O 当前账号的本机转分享记录，写锁内和返回前继续核对账号边界；撤回由 O 停止对应中转任务。
@@ -2036,3 +2134,15 @@ PC 同源 ghostPermissionItems 声明摘要投影并排除 tool，以请求 loca
 请求期间被挡住；取消确认不发起删除。UI 继续复用语义颜色与标准确认弹窗。
 确认删除同时阻止在途冷缓存回填、清理该设备磁盘缓存并作废删除前的目录读取；
 目录暂时不可用时，其他离线设备继续保留缓存。
+
+## 云端伙伴：从任意电脑更换主力电脑
+
+`maker:companion-cloud:caps` 的 `companionCloud` 从 1 升到 2，新增两个同账号 device-link channel：只读的
+`maker:companion-cloud:targets`（主力电脑视角下可接手的电脑）与写入的 `maker:companion-cloud:hand-over`
+（`[botId, targetDeviceId, options?]`，在主力电脑上走原有交出流程；`options.whenBusy` 为 `wait` / `stop`，老主力电脑忽略；隧道超时 7 分钟），以及合并 Cindy 的 `maker:companion-cloud:merge`（`[keepBotId, fromBotIds]`，只在本机运行保留的 Cindy 时执行，隧道超时 10 分钟）和合并前请来源 Cindy 的主力电脑先同步的 `maker:companion-cloud:flush`（`[botId]`，只在本机是它的主力电脑时执行、不改主力电脑，忙碌时 `BUSY`，隧道超时 7 分钟；版本 < 2 或连不上的主力电脑不请求，合并按云端已有内容进行）。接手方仍只要求版本 ≥ 1，
+所以新旧电脑之间照常能互相交出；发起方读到主力电脑版本 < 2 时不提供远程更换，提示先更新那台电脑，
+不退回成直接改服务器上的主力电脑。旧发起方不知道新 channel，行为不变。两个 channel 不进共享任务访客白名单，
+不改 relay 帧、服务端 schema 或 Mobile 指纹。本机 IPC `maker:companion-cloud:transfer` / `:devices` 换成
+`:switch-home` / `:home-choices`，并新增 `:attachment`、`:cindy-copies`、`:merge-cindy` 与 `maker:companion-avatar:resolve`，只在同一个 Desktop 内的 preload 与 Main 之间使用。
+伙伴资料快照 `companion.profile.v1` 新增可选的 `templateId`；新增偏好键 `companion.todo.v1:<id>`、`companion.routine.v1:<id>`、`companion.workbench.v1`，
+旧客户端不认识这些键，接管时忽略。镜像上传的房间消息可带 `media` 块；旧客户端按文件名显示。手机端同样不改原生指纹。

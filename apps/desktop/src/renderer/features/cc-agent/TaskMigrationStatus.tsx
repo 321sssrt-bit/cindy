@@ -12,6 +12,7 @@ import { TaskMigrationDialog } from './sidebar/TaskMigrationDialog';
 /** Observe only mounted task details or open menus/editors, never idle sidebar rows. */
 export function useTaskMigrationStatus(session: Session) {
   const [status, setStatus] = useState<TaskMigrationView | null>(null);
+  // Reset for a different task/source, not a change in connection readiness.
   useEffect(() => {
     setStatus(null);
   }, [session.id, session.deviceLinkDeviceId, session.remoteHostId]);
@@ -49,8 +50,8 @@ export function useTaskMigrationStatus(session: Session) {
       online = nextOnline;
       connectionGeneration += 1;
       clearTimeout(timer);
-      if (online) void refresh(connectionGeneration);
       // Retain the last snapshot so a transient disconnect cannot unmount an open dialog.
+      if (online) void refresh(connectionGeneration);
     };
     // Local mode has a machine ID but no relay identity. Observe readiness before
     // querying task-copy, and let pushes win over a delayed initial snapshot.

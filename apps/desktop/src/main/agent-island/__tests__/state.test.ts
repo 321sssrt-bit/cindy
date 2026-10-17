@@ -158,6 +158,40 @@ describe('Agent Island display state', () => {
     ]);
   });
 
+  it('静音任务的完成卡不回到岛面，也不占 active transient / 揭示队列', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-done', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    setAgentIslandSessionDisplaySuppressed(state, 'muted-done', true);
+
+    applyAgentIslandEvent(state, meta, doneEvent(), 2_000);
+
+    const display = buildAgentIslandDisplayState(state, 2_100);
+    expect(display.sessions).toEqual([]);
+    expect(display.currentSessionId).toBeNull();
+    expect(state.activeTransientSessionId).toBeNull();
+    expect(state.transientRevealQueue).toEqual([]);
+    // 侧栏活动照旧看得到它已经完成。
+    expect(buildAllSessionActivitySnapshots(state)).toEqual([
+      expect.objectContaining({ sessionId: 'muted-done', phase: 'completed' }),
+    ]);
+  });
+
+  it('完成卡已经在岛上时再静音，下一次展示面就不再包含它', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'muted-live', title: 'Muted', agentKind: 'codex' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Working'), 1_000);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions.map((s) => s.sessionId)).toEqual([
+      'muted-live',
+    ]);
+
+    setAgentIslandSessionDisplaySuppressed(state, 'muted-live', true);
+
+    expect(buildAgentIslandDisplayState(state, 1_300).sessions).toEqual([]);
+    expect(buildAgentIslandDisplayState(state, 1_300).currentSessionId).toBeNull();
+  });
+
   it('does not complete the island on claimed SDK boundary events', () => {
     const state = createAgentIslandState();
     const meta = { sessionId: 'continuing', title: 'Continuing', agentKind: 'codex' };

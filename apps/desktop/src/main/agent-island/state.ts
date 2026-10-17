@@ -582,6 +582,8 @@ function restoreSessionScopedReveal(
   session: AgentIslandSessionState,
   now: number,
 ): void {
+  // 静音任务的卡不该重新活过来（展示面才有的概念，活动快照不受影响）。
+  if (state.displaySuppressedSessionIds.has(session.sessionId)) return;
   const sessionId = session.sessionId;
   const wantsActive = session.revealUntil != null
     && session.revealUntil > now
@@ -1839,6 +1841,15 @@ function enqueueTransientReveal(
   now: number,
   dwellMs: number,
 ): void {
+  // 静音任务的完成 / 错误卡不揭示：它不该在岛面上出现，也不该带提示音。
+  // 活动快照与未读账本另路，静音不影响。
+  if (state.displaySuppressedSessionIds.has(session.sessionId)) {
+    session.revealUntil = null;
+    session.deferredReveal = false;
+    session.deferredRevealReason = null;
+    removeQueuedTransientReveal(state, session.sessionId);
+    return;
+  }
   removeQueuedTransientReveal(state, session.sessionId);
   if (state.activeTransientSessionId === session.sessionId) {
     session.revealUntil = now + dwellMs;
@@ -1889,6 +1900,7 @@ function promoteNextTransientReveal(
     if (!nextSessionId) continue;
     const next = state.sessions.get(nextSessionId);
     if (!next || !isSessionVisible(next, now)) continue;
+    if (state.displaySuppressedSessionIds.has(next.sessionId)) continue;
     if (shouldSmartSuppressSession(state, next)) {
       deferSessionReveal(state, next, 'visible-session');
       continue;
@@ -1904,6 +1916,9 @@ function promoteNextTransientReveal(
 function getActiveTransientSession(state: AgentIslandState, now: number): AgentIslandSessionState | null {
   const activeSessionId = state.activeTransientSessionId;
   if (!activeSessionId) return null;
+  // 静音任务即使被排成 active transient 也不上展示面：否则它会绕开
+  // shouldDisplaySession 的过滤被 prepend 回列表（完成/错误卡 + 提示音）。
+  if (state.displaySuppressedSessionIds.has(activeSessionId)) return null;
   const active = state.sessions.get(activeSessionId);
   if (!active?.revealUntil || active.revealUntil <= now) return null;
   return active;

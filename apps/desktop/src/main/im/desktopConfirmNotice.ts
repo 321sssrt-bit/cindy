@@ -75,6 +75,9 @@ export function createDesktopConfirmNotifier(
       try {
         const openId = await deps.getFeishuOpenId(sessionId);
         if (!openId) return;
+        // 解析 openId 要查库,期间用户可能刚开了免打扰:真正发之前再确认一次
+        // (与 notificationService 在异步富化后、发送前的那道判定同口径)。
+        if (deps.isSuppressed?.(sessionId)) return;
         await deps.sendFeishuText(openId, buildText(what));
       } catch (err) {
         deps.logWarn?.(

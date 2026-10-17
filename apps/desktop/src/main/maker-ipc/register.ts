@@ -3070,6 +3070,9 @@ function notifyInputHandoffOwner(sessionId: string, snapshot: InputHandoffSnapsh
         readSessionTitle(sessionId),
         readSessionNotificationPreview(sessionId, false).catch(() => undefined),
       ]);
+      // 读标题/预览是异步的:等它回来时用户可能刚开了免打扰,真正发之前再确认一次
+      // (手机推送另有 sendMobileSessionNotify 内的同一道判定)。
+      if (isSessionNotificationsMutedSync(sessionId)) return;
       // An IM-driven task gets one text pointer per request, not one per screen.
       if (!inputHandoffImNotified.has(snapshot.requestId)) {
         inputHandoffImNotified.add(snapshot.requestId);
@@ -4872,9 +4875,9 @@ function handleAgentIslandSessionStopped(
 function shouldNotifyAgentIslandForSession(sessionId: string): boolean {
   // 插件后台隐藏任务不在灵动岛/菜单栏展示运行中，也不提醒(显示到任务列表后恢复)。
   if (isSessionHiddenSync(sessionId)) return false;
-  // 「消息免打扰」任务不上岛、不播提示音(岛态不进入即无声)，其它提醒面见
-  // notificationService / device-link / scheduler-host 的同名判定。
-  if (isSessionNotificationsMutedSync(sessionId)) return false;
+  // 「消息免打扰」**不在这里挡**：它只退出展示面(岛面/菜单栏/提示音，见
+  // agent-island state 的 displaySuppressedSessionIds)。事件必须继续进状态机，
+  // 否则侧栏卡片的实时活动与等待交互态会跟着一起消失，而这不该是静音的效果。
   return shouldNotifyAgentIslandForSessionByPolicy(
     AGENT_ISLAND_DISPLAY_CONFIG,
     isKnownOrcaWorkerSession(sessionId),

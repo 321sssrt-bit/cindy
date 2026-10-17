@@ -66,4 +66,25 @@ describe('setSessionNotificationsMuted', () => {
     expect(m.patchLocal).toHaveBeenCalledTimes(1);
     expect(m.patchLocal).toHaveBeenCalledWith('task', { notificationsMuted: true });
   });
+
+  it('does not roll back over a newer same-direction write that is still in flight', async () => {
+    // 两个窗口（或连点两下）都在「关静音」：后发起的那次成功，先发起的那次稍后失败。
+    // 只比布尔值分不出这种情况——失败的那次看到的仍是自己写进去的 false。
+    let failFirst: (error: Error) => void = () => {};
+    m.patchMeta
+      .mockImplementationOnce(
+        () => new Promise((_resolve, reject) => { failFirst = reject; }),
+      )
+      .mockImplementationOnce(async () => ({}));
+
+    const first = setSessionNotificationsMuted({ ...session, notificationsMuted: true }, false);
+    const second = setSessionNotificationsMuted({ ...session, notificationsMuted: true }, false);
+    await second;
+    failFirst(new Error('write failed'));
+    await expect(first).rejects.toThrow('write failed');
+
+    // 只有两次发起的乐观写，没有回滚写回 true。
+    expect(m.patchLocal).toHaveBeenCalledTimes(2);
+    expect(m.patchLocal).not.toHaveBeenLastCalledWith('task', { notificationsMuted: true });
+  });
 });

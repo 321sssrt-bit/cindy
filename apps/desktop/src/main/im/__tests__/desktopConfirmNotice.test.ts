@@ -64,6 +64,23 @@ describe('createDesktopConfirmNotifier', () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it('解析 openId 期间开启免打扰 → 真正发送前重新判定并放弃', async () => {
+    const send = vi.fn(async () => ({}));
+    let muted = false;
+    const notify = createDesktopConfirmNotifier({
+      getFeishuOpenId: async () => {
+        // 查库期间用户点了「消息免打扰」。
+        muted = true;
+        return 'ou_123';
+      },
+      sendFeishuText: send,
+      isSuppressed: () => muted,
+    });
+    notify('s1', '「提交 GitHub issue」的确认卡');
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('查询/发送失败 → 只落 warn,不抛出(不影响确认流程)', async () => {
     const warn = vi.fn();
     const notify = createDesktopConfirmNotifier({

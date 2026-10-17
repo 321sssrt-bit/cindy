@@ -245,8 +245,8 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
       patch: { notificationsMuted: true },
     });
     expect(isSessionNotificationsMutedSync('visible')).toBe(true);
-    // 已经上岛的任务被静音时要顺手把它从岛上收走，否则后面的事件（含终态）都被挡住，
-    // 卡片会永远停在「运行中」。
+    // 岛面要收起它（静音只挡展示面，事件摄取照旧）；具体口径由
+    // agentIslandSessionPatch.test.ts 钉。
     expect(h.notifyAgentIslandSessionPatch).toHaveBeenCalledWith('visible', {
       notificationsMuted: true,
     });
@@ -265,8 +265,10 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
       patch: { notificationsMuted: false },
     });
     expect(isSessionNotificationsMutedSync('visible')).toBe(false);
-    // 关闭静音不动岛态（同一函数在每次 update 上还会转发标题/目录等元数据，
-    // 所以这里不断言整体未调用，只由 agentIslandSessionPatch.test.ts 钉「关静音不收岛」）。
+    // 取消静音也要重发一次展示面，否则被抑制的任务回不来。
+    expect(h.notifyAgentIslandSessionPatch).toHaveBeenCalledWith('visible', {
+      notificationsMuted: false,
+    });
   });
 
   it('loads mutes set before this process from the database', async () => {
@@ -288,5 +290,15 @@ describe('per-task notification mute (sessions.notifications_muted)', () => {
 
     // 这一行被 hidden 改过，不得连带丢掉它原有的静音标记。
     await vi.waitFor(() => expect(isSessionNotificationsMutedSync('plugin-visible')).toBe(true));
+  });
+
+  it('rejects a non-boolean mute instead of storing it as true', async () => {
+    // renderer payload 不可信:字符串 "false" 进了 mapper 的 `!!` 会变成「已静音」。
+    const before = readMute('visible');
+    await expect(update('visible', { notificationsMuted: 'false' })).rejects.toThrow(/notificationsMuted/);
+
+    // 非法写入不得落库,也不得推进 updated_at。
+    expect(readMute('visible')).toEqual(before);
+    expect(isSessionNotificationsMutedSync('visible')).toBe(false);
   });
 });

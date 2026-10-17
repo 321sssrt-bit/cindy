@@ -43,6 +43,27 @@ describe('createDesktopConfirmNotifier', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('「消息免打扰」任务 → 连 IM 提示也不发,连 openId 都不查(卡仍在桌面)', async () => {
+    const send = vi.fn(async () => ({}));
+    const getFeishuOpenId = vi.fn(async () => 'ou_123');
+    const notify = createDesktopConfirmNotifier({
+      getFeishuOpenId,
+      sendFeishuText: send,
+      isSuppressed: (sessionId) => sessionId === 'muted',
+    });
+    notify('muted', '「提交 GitHub issue」的确认卡');
+    // 代输入指引走同一个工厂:同一条静音判定一起管。
+    notify('muted', '任务名');
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+    expect(getFeishuOpenId).not.toHaveBeenCalled();
+
+    // 同一次装配里未静音的任务不受影响。
+    notify('loud', '「提交 GitHub issue」的确认卡');
+    await flush();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it('查询/发送失败 → 只落 warn,不抛出(不影响确认流程)', async () => {
     const warn = vi.fn();
     const notify = createDesktopConfirmNotifier({

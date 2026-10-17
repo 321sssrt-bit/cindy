@@ -3009,6 +3009,9 @@ const inputHandoffImNotifier = createFeishuDesktopConfirmNotifier(buildInputHand
  * copy: no screen contents, no purpose text, never a value.
  */
 function notifyInputHandoffOwner(sessionId: string, snapshot: InputHandoffSnapshot): void {
+  // 「消息免打扰」任务不提醒主人:这一行的 IM 指引(渠道内一行 / 飞书兜底)与
+  // 手机推送都不发。推送侧另有同一道门,这里同时收掉 IM 一侧。
+  if (isSessionNotificationsMutedSync(sessionId)) return;
   const generation = getMobileNotifyGeneration();
   void (async () => {
     try {

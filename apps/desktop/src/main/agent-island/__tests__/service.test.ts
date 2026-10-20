@@ -152,7 +152,6 @@ vi.mock('../companionIdentity.js', async (importOriginal) => ({
   readAgentIslandCompanion: mocks.readAgentIslandCompanion,
   companionAvatarThumbnail: mocks.companionAvatarThumbnail,
 }));
-}));
 
 vi.mock('../layoutPreferenceStore.js', () => ({
   readAgentIslandDetachedLayoutPreferences: mocks.readDetachedLayoutPreferences,

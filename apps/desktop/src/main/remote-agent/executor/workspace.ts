@@ -545,6 +545,14 @@ export class ExecutorWorkspace {
   }
 
   /**
+   * 连回同一个会话时补进对方新给的映射。已有的保持原来的目标、排在同长度的新映射前面：对话里出现过的
+   * 虚拟路径(含运行中分配的 runtime-*)接回后仍指向同一个本机目录，不会被换成别的目录。
+   */
+  addAliases(aliases: readonly ExecutorPathAlias[]): void {
+    this.setAliases([...this.aliases, ...aliases]);
+  }
+
+  /**
    * 命令沿用 Desktop 的完整环境(与本机 Agent 一致)，虚拟化只作用于 Agent 看到的路径文本。
    * 用户目录与临时目录已有别名；PATH 里其余目录在这里登记，env / which 之类的输出也只露虚拟路径。
    */
@@ -593,11 +601,35 @@ export class ExecutorWorkspace {
 
   /** 影子路径映射回本机路径；不是影子路径时原样返回。 */
   mapAlias(input: string): string {
+    return this.localPathFromAgent(input) ?? input;
+  }
+
+  /** 影子路径对应的本机路径；不是影子路径(Agent 主机自己的路径)时返回 null。 */
+  localPathFromAgent(input: string): string | null {
     for (const alias of this.aliases) {
       const rest = stripAliasPrefix(input, alias.from);
       if (rest !== null) return rest ? path.join(alias.to, ...rest.split('/')) : alias.to;
     }
-    return input;
+    return null;
+  }
+
+  /**
+   * Agent 给的绝对 glob：影子前缀换成本机目录，目录名按字面匹配——通配字符写成字符类(`[` → `[[]`，
+   * 两种路径约定都认)，POSIX 本机目录名里合法的反斜杠写成 `\\`(Codex 在 POSIX 约定下把它当转义符)；
+   * 前缀后面的模式保持 Agent 的写法，POSIX 模式里的反斜杠转义不当成分隔符。
+   */
+  localGlobFromAgent(pattern: string): string | null {
+    const windows = process.platform === 'win32';
+    for (const alias of this.aliases) {
+      if (stripAliasPrefix(pattern, alias.from) === null) continue;
+      const from = alias.from.replace(/[\\/]+$/, '');
+      const rest = pattern.slice(from.length).replace(/^[\\/]/, '');
+      const local = alias.to.replace(windows ? /[\\/]+$/ : /\/+$/, '');
+      const base = (windows ? local : local.replace(/\\/g, '\\\\')).replace(/[*?[\]{}]/g, (char) => `[${char}]`);
+      if (!rest) return base;
+      return `${base}/${WINDOWS_PATH.test(from) ? rest.replace(/\\/g, '/') : rest}`;
+    }
+    return null;
   }
 
   /** 本机真实路径投影到 Agent 主机上的路径；仅匹配完整路径段。 */

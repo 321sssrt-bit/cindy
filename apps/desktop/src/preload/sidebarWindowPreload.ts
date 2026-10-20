@@ -31,6 +31,23 @@ import {
   RSB_WINDOW_VISIBILITY_CHANGED_CHANNEL,
 } from '../shared/rightSidebarWindow';
 import type { RsbWindowTabHandoff } from '../shared/rightSidebarWindow';
+import {
+  SIDEBAR_TAB_WINDOW_ADOPT_TAB_CHANNEL,
+  SIDEBAR_TAB_WINDOW_ASSIGNED_CHANNEL,
+  SIDEBAR_TAB_WINDOW_GET_ASSIGNMENT_CHANNEL,
+  SIDEBAR_TAB_WINDOW_LOCALE_CHANGED_CHANNEL,
+  SIDEBAR_TAB_WINDOW_MERGE_BACK_CHANNEL,
+  SIDEBAR_TAB_WINDOW_CLOSE_REQUESTED_CHANNEL,
+  SIDEBAR_TAB_WINDOW_PRESENTATION_READY_CHANNEL,
+  SIDEBAR_TAB_WINDOW_RENDERER_READY_CHANNEL,
+  SIDEBAR_TAB_WINDOW_VISIBILITY_CHANGED_CHANNEL,
+} from '../shared/sidebarTabWindow';
+import type {
+  SidebarTabWindowAdoptRequest,
+  SidebarTabWindowAssignmentPayload,
+  SidebarTabWindowMergeBackRequest,
+  SidebarTabWindowsState,
+} from '../shared/sidebarTabWindow';
 
 type ApplicationMenuLocale = SupportedLocale;
 
@@ -139,8 +156,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deviceLink: {
     getState: (): Promise<unknown> => ipcRenderer.invoke(DEVICE_LINK_INVOKE.GET_STATE),
     listDevices: (): Promise<unknown> => ipcRenderer.invoke(DEVICE_LINK_INVOKE.LIST_DEVICES),
-    invoke: (deviceId: string, channel: string, args: unknown[]): Promise<unknown> =>
-      ipcRenderer.invoke(DEVICE_LINK_INVOKE.INVOKE, { deviceId, channel, args }),
+    invoke: (deviceId: string, channel: string, args: unknown[], scheduling?: { background?: boolean }): Promise<unknown> =>
+      ipcRenderer.invoke(DEVICE_LINK_INVOKE.INVOKE, { deviceId, channel, args, ...(scheduling ? { scheduling } : {}) }),
     subscribe: (deviceId: string, topics: string[]): Promise<{ ok: true }> =>
       ipcRenderer.invoke(DEVICE_LINK_INVOKE.SUBSCRIBE, { deviceId, topics }),
     unsubscribe: (deviceId: string, topics: string[]): Promise<{ ok: true }> =>
@@ -226,6 +243,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cachePut: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:file-browser:cache-put', params),
     onTransferProgress: (cb: (event: unknown) => void): (() => void) => onPayload('maker:file-browser:transfer', cb),
     previewHtml: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:html-preview:open', params),
+    cancelHtmlPreview: (requestId: string): Promise<{ ok: true }> => ipcRenderer.invoke('maker:html-preview:cancel', requestId),
     chatFetch: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:chat-file:fetch', params),
     chatDownload: (params: unknown): Promise<unknown> => ipcRenderer.invoke('maker:chat-file:download', params),
     chatCancel: (requestId: string): Promise<unknown> => ipcRenderer.invoke('maker:chat-file:cancel', requestId),
@@ -383,6 +401,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 鈹€鈹€ RSB tab 鎸佷箙鍖?杞婚噺,浠?RSB 闇€瑕? 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+  // ── 右侧栏单页签独立窗口(sidebar tab window)─────────────────────────────
+  // 本 preload 同时服务整栏子窗口与单页签弹出窗口(同一工厂 / 同一 renderer 入口,
+  // 按 `?sidebarTabWindow=1` 分流)。弹出窗口只需要:取 / 收指派、双阶段就绪握手、
+  // 合并回侧边栏、响应原生关窗与显隐;状态镜像供其内 store 判断页签归属。
+  sidebarTabWindow: {
+    getState: (): Promise<SidebarTabWindowsState> =>
+      ipcRenderer.invoke('maker:sidebar-tab-window:get-state'),
+    onStateChanged: (cb: (state: SidebarTabWindowsState) => void): (() => void) =>
+      onPayload('maker:sidebar-tab-window:state-changed', cb),
+    /** 聚焦另一扇弹出窗口(本窗口内切到被弹出页签时)。 */
+    focus: (tabId: string): Promise<void> =>
+      ipcRenderer.invoke('maker:sidebar-tab-window:focus', tabId),
+    /** 本窗口承载的页签已被关闭:销毁本窗口,不交回页签。 */
+    closeForTab: (tabId: string): Promise<void> =>
+      ipcRenderer.invoke('maker:sidebar-tab-window:close-for-tab', tabId),
+    getAssignment: (): Promise<SidebarTabWindowAssignmentPayload | null> =>
+      ipcRenderer.invoke(SIDEBAR_TAB_WINDOW_GET_ASSIGNMENT_CHANNEL),
+    onAssigned: (cb: (assignment: SidebarTabWindowAssignmentPayload) => void): (() => void) =>
+      onPayload(SIDEBAR_TAB_WINDOW_ASSIGNED_CHANNEL, cb),
+    rendererReady: (): Promise<void> =>
+      ipcRenderer.invoke(SIDEBAR_TAB_WINDOW_RENDERER_READY_CHANNEL),
+    presentationReady: (): Promise<void> =>
+      ipcRenderer.invoke(SIDEBAR_TAB_WINDOW_PRESENTATION_READY_CHANNEL),
+    /** 把本窗口里的某个页签合并回侧边栏(窗口清空后 main 关窗)。 */
+    mergeBack: (request: SidebarTabWindowMergeBackRequest): Promise<void> =>
+      ipcRenderer.invoke(SIDEBAR_TAB_WINDOW_MERGE_BACK_CHANNEL, request),
+    /** 本窗口里新建的页签归本窗口承载。 */
+    adoptTab: (request: SidebarTabWindowAdoptRequest): Promise<void> =>
+      ipcRenderer.invoke(SIDEBAR_TAB_WINDOW_ADOPT_TAB_CHANNEL, request),
+    onCloseRequested: (cb: () => void): (() => void) =>
+      onPayload(SIDEBAR_TAB_WINDOW_CLOSE_REQUESTED_CHANNEL, cb),
+    onVisibilityChanged: (cb: (payload: { visible: boolean }) => void): (() => void) =>
+      onPayload(SIDEBAR_TAB_WINDOW_VISIBILITY_CHANGED_CHANNEL, cb),
+    onLocaleChanged: (cb: (locale: SupportedLocale) => void): (() => void) =>
+      onPayload(SIDEBAR_TAB_WINDOW_LOCALE_CHANGED_CHANNEL, cb),
+  },
+
   rightSidebarTabs: {
     list: (input: { sessionId: string }): Promise<unknown> =>
       ipcRenderer.invoke('local-db:right-sidebar-tabs:list', input),
@@ -488,6 +543,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       close: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:close', input),
       setActive: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:setActive', input),
       reorder: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:right-sidebar-tabs:reorder', input),
+      /** 其它 renderer 改动了某会话的页签持久化数据(主窗 ↔ 弹出窗口)。 */
+      onChanged: (cb: (payload: { sessionId: string }) => void): (() => void) =>
+        onPayload('maker:right-sidebar-tabs:changed', cb),
     },
     subagentRuns: {
       list: (input: unknown): Promise<unknown> => ipcRenderer.invoke('local-db:subagent-runs:list', input),

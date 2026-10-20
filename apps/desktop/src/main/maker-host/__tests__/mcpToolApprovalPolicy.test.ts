@@ -62,6 +62,9 @@ describe('desktop Claude read-only allowlist', () => {
       'mcp__cindy_memory__list_tools',
       'mcp__cindy_contacts__list_tools',
       'mcp__cindy_slack__slack_status',
+      'mcp__cindy_telegram_bot__get_chat',
+      'mcp__cindy_feishu_bot__get_chat',
+      'mcp__cindy_feishu_bot__get_message',
     ]);
   });
 
@@ -175,7 +178,8 @@ describe('desktop MCP approval policy', () => {
       'cindy_android',
       'cindy_browser',
       'cindy_computer',
-      'cindy_feishu_bot',
+      // cindy_feishu_bot / cindy_telegram_bot 也在 trusted 表里, 但省略 toolName 时按次审批
+      // (都带 call_api; 见下方专项用例)。
       'cindy_slack',
       'cindy_scheduler',
       'cindy_memory',
@@ -380,6 +384,44 @@ describe('helper task workspace and SkillHub publication authorization', () => {
   });
 });
 
+describe('Telegram bot tool authorization', () => {
+  it('keeps per-chat sends silent but reviews arbitrary Bot API methods and deletes each time', () => {
+    for (const toolName of ['send_text', 'send_media', 'send_poll', 'set_reaction', 'download_file', 'pin_message']) {
+      expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_telegram_bot', toolName })).toBe('auto-approve');
+    }
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_telegram_bot', toolName: 'get_chat' })).toBe('auto-approve');
+    expect(
+      getDesktopMcpToolApprovalPolicy({
+        serverName: 'cindy_telegram_bot',
+        toolName: 'call_api',
+        toolParams: { method: 'sendDice' },
+      }),
+    ).toBe('prompt-each-time');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_telegram_bot', toolName: 'delete_message' })).toBe('prompt-each-time');
+    // Codex may omit the tool name; the generic entry must not inherit the trusted shortcut.
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_telegram_bot' })).toBe('prompt-each-time');
+  });
+});
+
+describe('Feishu bot tool authorization', () => {
+  it('silently runs lane sends / reactions / pins, frees read-only lookups, prompts per call for call_api / recall and when the tool name is missing', () => {
+    for (const toolName of ['send_text', 'send_markdown', 'send_file', 'set_reaction', 'remove_reaction', 'pin_message', 'unpin_message', 'list_tools', 'call_tool']) {
+      expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_feishu_bot', toolName })).toBe('auto-approve');
+    }
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_feishu_bot', toolName: 'get_chat' })).toBe('auto-approve');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_feishu_bot', toolName: 'get_message' })).toBe('auto-approve');
+    expect(
+      getDesktopMcpToolApprovalPolicy({
+        serverName: 'cindy_feishu_bot',
+        toolName: 'call_api',
+        toolParams: { method: 'GET', path: '/open-apis/im/v1/chats/oc_1' },
+      }),
+    ).toBe('prompt-each-time');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_feishu_bot', toolName: 'recall_message' })).toBe('prompt-each-time');
+    expect(getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_feishu_bot' })).toBe('prompt-each-time');
+  });
+});
+
 describe('Orca Worker directory authorization', () => {
   const policy = (toolName: string | undefined, toolParams?: unknown) =>
     getDesktopMcpToolApprovalPolicy({ serverName: 'cindy_orca', toolName, toolParams });
@@ -508,5 +550,16 @@ describe('cross-device actions use the task permission mode', () => {
     expect(helper('sess-9')).toBe('auto-approve');
     expect(helper('local::sess-9')).toBe('auto-approve');
     expect(helper(undefined)).toBe('auto-approve');
+    // A follow-up continue into another computer's task is the same cross-computer write.
+    const follow = (taskId: string, toolName: string) => getDesktopMcpToolApprovalPolicy({
+      serverName: 'cindy_helper',
+      toolName,
+      toolParams: toolName === 'call_tool'
+        ? { name: 'continue_workbench_task', args: { task_id: taskId, message: 'continue' } }
+        : { task_id: taskId, message: 'continue' },
+    });
+    expect(follow('mbp::sess-9', 'call_tool')).toBe('prompt-each-time');
+    expect(follow('mbp::sess-9', 'continue_workbench_task')).toBe('prompt-each-time');
+    expect(follow('sess-9', 'continue_workbench_task')).toBe('auto-approve');
   });
 });

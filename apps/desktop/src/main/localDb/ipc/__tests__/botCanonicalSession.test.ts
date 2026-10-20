@@ -216,11 +216,15 @@ vi.mock('../../../appSessionState.js', async (importOriginal) => {
 });
 
 import {
+  archiveBotChannelLanes,
   createBotCanonicalSession,
+  ensureBotChannelLaneSession,
+  findBotChannelLaneSession,
   registerBotIpc,
   updateBotProfile as updateStoredBotProfile,
   getBotRemoteResourceSource,
   listBotRemoteResourceSources,
+  prepareImportedBotInvitation,
 } from '../bots';
 import { tx as runWorkerTx } from '../../worker/opHandlers/tx.js';
 import * as modelSettings from '../../../maker-host/bot-model-chain-settings-store.js';
@@ -1138,6 +1142,37 @@ describe('Bot canonical Session lifecycle', () => {
     ).toBeUndefined();
   });
 
+  it('prepares one original welcome only after a native import has saved its identity', async () => {
+    const invitation = await import('../../../maker-ipc/botInvitation');
+    const queued = vi.spyOn(invitation, 'queueBotInvitation').mockImplementation(() => {});
+    try {
+      await invoke('local-db:bots:create', { id: 'native-welcome', name: 'Native package', identitySource: 'Saved package identity', prepareInvitation: false });
+      expect(queued).not.toHaveBeenCalled();
+      await prepareImportedBotInvitation('native-welcome', 'native-request', 'zh-CN');
+      const profile = await invoke('local-db:bots:get', 'native-welcome');
+      expect(profile.identitySource).toBe('Saved package identity');
+      expect(profile.invitation).toMatchObject({ stage: 'welcome' });
+      const version = h.sqlite!.prepare('SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ? AND version = ?').get('native-welcome', profile.currentVersion) as { capabilities_json: string };
+      expect(JSON.parse(version.capabilities_json).invitation).toMatchObject({ id: 'import-welcome:native-request', stage: 'welcome', locale: 'zh-CN' });
+      expect(queued).toHaveBeenCalledTimes(1);
+      await prepareImportedBotInvitation('native-welcome', 'native-request', 'en');
+      expect(queued).toHaveBeenCalledTimes(1);
+      expect((await invoke('local-db:bots:get', 'native-welcome')).currentVersion).toBe(profile.currentVersion);
+    } finally { queued.mockRestore(); }
+  });
+
+  it('refuses to prepare a native welcome after deletion or archival', async () => {
+    const invitation = await import('../../../maker-ipc/botInvitation');
+    const queued = vi.spyOn(invitation, 'queueBotInvitation').mockImplementation(() => {});
+    try {
+      await expect(prepareImportedBotInvitation('missing-native', 'native-request')).rejects.toThrow('[NOT_FOUND]');
+      await invoke('local-db:bots:create', { id: 'archived-native', name: 'Archived native', prepareInvitation: false });
+      h.sqlite!.prepare("UPDATE bot_profiles SET status = 'archived' WHERE id = ?").run('archived-native');
+      await expect(prepareImportedBotInvitation('archived-native', 'native-request')).rejects.toThrow('[NOT_FOUND]');
+      expect(queued).not.toHaveBeenCalled();
+    } finally { queued.mockRestore(); }
+  });
+
   it('creates a real gallery portrait when the shared tool entry receives only a name', async () => {
     const { createBotProfile } = await import('../bots');
     const created = await createBotProfile({ name: 'Name only' });
@@ -1668,6 +1703,59 @@ describe('Bot canonical Session lifecycle', () => {
       }),
       { sessionSources: null },
     );
+  });
+
+  it('creates one hidden IM channel lane per route key, projects it as `channel` and keeps it out of history search', async () => {
+    const created = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1',
+      expectedCanonicalSessionId: null,
+      expectedProfileVersion: 1,
+    });
+    const routeKey = 'im:telegram:777:g:-100123';
+    const first = await ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: '[TG·群] 100123' });
+    expect(first).toMatchObject({ ok: true, created: true });
+    if (!first.ok) throw new Error(first.message);
+    await expect(ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: 'ignored' }))
+      .resolves.toEqual({ ok: true, sessionId: first.sessionId, created: false });
+    await expect(findBotChannelLaneSession('bot-1', routeKey)).resolves.toBe(first.sessionId);
+    const canonical = h.sqlite!.prepare(
+      'SELECT working_dir AS workingDir, model, permission_mode AS permissionMode FROM sessions WHERE id = ?',
+    ).get(created.session.id);
+    // Same Home workspace, model and permission profile as the canonical chat.
+    expect(h.sqlite!.prepare(
+      `SELECT s.source, s.status, s.title, s.workspace_kind AS workspaceKind, s.working_dir AS workingDir,
+              s.model, s.permission_mode AS permissionMode, l.role, l.route_key AS routeKey
+       FROM sessions s JOIN bot_session_links l ON l.session_id = s.id WHERE s.id = ?`,
+    ).get(first.sessionId)).toEqual({
+      source: 'bot',
+      status: 'active',
+      title: '[TG·群] 100123',
+      workspaceKind: 'dialogue',
+      role: 'channel',
+      routeKey,
+      ...canonical as object,
+    });
+
+    const [profile] = await invoke('local-db:bots:list', undefined);
+    expect(profile.sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.sessionId, kind: 'channel', role: 'channel' }),
+    ]));
+
+    h.searchConversations.mockResolvedValue({
+      query: 'release', results: [], vectorUsed: false, vectorSkipReason: null, poolCapped: false,
+    });
+    await invoke('local-db:bots:search-history', { botId: 'bot-1', query: 'release', limit: 5 });
+    expect(h.searchConversations).toHaveBeenLastCalledWith(
+      expect.objectContaining({ filters: expect.objectContaining({ sessionIds: [created.session.id] }) }),
+      { sessionSources: null },
+    );
+
+    await expect(archiveBotChannelLanes({ routeKeyPrefix: 'im:telegram:777:' }))
+      .resolves.toEqual([first.sessionId]);
+    await expect(findBotChannelLaneSession('bot-1', routeKey)).resolves.toBeNull();
+    const fresh = await ensureBotChannelLaneSession({ botId: 'bot-1', routeKey, title: '[TG·群] 100123' });
+    expect(fresh).toMatchObject({ ok: true, created: true });
+    expect(fresh.ok && fresh.sessionId).not.toBe(first.sessionId);
   });
 
   it('records runtime preparation separately from successful Agent startup', async () => {

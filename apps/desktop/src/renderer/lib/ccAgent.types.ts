@@ -105,6 +105,8 @@ export interface CcMeta {
   botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
   /** Provider text phase, retained to exclude commentary from notification previews. */
   assistantPhase?: string;
+  /** Exact native sampling attempt that failed before response completion. Original text is retained. */
+  failedSamplingAttempt?: { threadId: string; turnId: string; attempt: number; itemId: string; error?: string };
   uuid?: string;
   parentUuid?: string;
   /** Claude transcript chain parent. Do not confuse with parentUuid, which is parent_tool_use_id. */
@@ -284,6 +286,8 @@ export interface CcMeta {
   /** Turn of a Bot's hidden group-chat lane; the group chat surfaces its result and failures. */
   botGroupLane?: boolean;
   botAuthorization?: import('../../shared/botAuthorization').BotAuthorizationCard;
+  /** Market opening: starter choices rendered as buttons below the message until the user speaks. */
+  botStarterOptions?: string[];
   botDirectMessage?: import('../../shared/botDirectMessage').BotDirectMessageMeta;
 
   /**
@@ -526,6 +530,8 @@ export interface AgentSwitchContent {
 }
 
 export interface Message {
+  /** Local durable-push order, retained by the display cache. */
+  cacheReceipt?: import('@cindy/maker-shared/message-window').HistoryCacheReceipt;
   id: string;
   /**
    * SQLite insertion order for DB-backed history rows. Remote controllers use it

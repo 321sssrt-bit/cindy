@@ -35,6 +35,7 @@ import {
   type ToolResultImageDescription,
 } from './ghost.js';
 import { createGroupHistoryMcpServer } from './groupHistoryMcpServer.js';
+import { createTelegramBotMcpServer } from './telegramBotMcpServer.js';
 import { renderHtmlToPdf } from '../doc-tools/htmlPdfRenderer.js';
 import { writeDocsOutput } from '../doc-tools/docsOutputWriter.js';
 import { inspectPdf } from '../doc-tools/pdfInspector.js';
@@ -42,6 +43,10 @@ import { getAndroidMcpDeps } from './android.js';
 import { getBrowserMcpDeps } from './browser.js';
 import { getComputerMcpDeps } from './computer.js';
 import { feishuIm, wechatIm } from '../im';
+import { getBotFeishuTransport } from '../im/shared/botImConnectionRuntime';
+import { createFeishuTransportResolver } from './feishuTransportRouting';
+import { readChannelToolScope } from '../im/shared/channelToolScope';
+import { hasImChannelVendorOptions } from '../../shared/botImConnection.js';
 import { sendFeishuSessionNotification } from '../im/feishu/notificationOrigin';
 import { getSlackToolBridge } from '../hook-control/slackToolBridge.js';
 import { createLogger } from '../logger.js';
@@ -76,12 +81,12 @@ import {
   saveBotSkillForSession,
 } from '../maker-ipc/botSkillService.js';
 import {
-  addBotWorkbenchProjectForCaller,
   captureBotCreatedTaskResponsibility,
-  removeBotWorkbenchProjectForCaller,
   runBotWorkbenchTool,
-  type BotWorkbenchSendDeps,
+  type BotWorkbenchHostDeps,
 } from '../maker-ipc/botWorkbenchTools.js';
+import { createTaskDigestReader } from './taskDigest.js';
+import { createDesktopTaskDigestDeps, createRemoteWorkbenchMessageReader } from './taskDigestHost.js';
 import { createTaskToolCallAuthorizer } from '../maker-ipc/taskToolCallAuthorizer.js';
 import {
   getSessionRowSnapshot,
@@ -161,6 +166,26 @@ export interface DesktopMcpProvidersDeps {
   onToolResultImagesFailed?: (sessionId: string, attemptedCount: number) => void;
 }
 
+/**
+ * 当前 tool-call 所属的飞书逐轮作用域(个人 bot 或伙伴自有连接), 没有就是 null。
+ * 用 sessionId + sessionInstanceId 查租约: 旧实例借不到新实例的权限。
+ */
+function readFeishuTurnScope(
+  session: { sessionId?: string; sessionInstanceId?: string } | undefined,
+) {
+  const scope = readChannelToolScope({
+    sessionId: session?.sessionId,
+    sessionInstanceId: session?.sessionInstanceId,
+  });
+  return scope?.channel === 'feishu' ? scope : null;
+}
+
+const feishuTransportFor = createFeishuTransportResolver({
+  readTurnScope: readFeishuTurnScope,
+  getCompanionTransport: getBotFeishuTransport,
+  personalIm: feishuIm,
+});
+
 export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMcpProvider[] {
   setSessionPathAuthorizer((request) =>
     authorizeDesktopSessionPath(request, deps.getLiveSessionGrantState),
@@ -189,7 +214,24 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     };
   }
 
-  const workbenchSend: BotWorkbenchSendDeps = {
+  const remoteSessionHandoff = deps.historyRemote
+    ? createRemoteSessionHandoff({
+        captureAccess: deps.historyRemote.captureAccess,
+        invoke: deps.invokeRemote,
+      })
+    : null;
+  // 跨电脑投递的来源:发起任务的 id 与标题(对方按「由任务「X」发送」标注来源)。
+  const remoteHandoffSender = async (dispatcherSessionId: string) => {
+    const dbClient = tryGetDbClient();
+    const [row] = dbClient
+      ? await dbClient.drizzle.select({ title: sessions.title }).from(sessions)
+        .where(eq(sessions.id, dispatcherSessionId)).limit(1).catch(() => [])
+      : [];
+    return { sessionId: dispatcherSessionId, ...(row?.title ? { title: row.title } : {}) };
+  };
+
+  // 工作台继续 / 跨电脑读取:与 send_to_session、get_chat_history 同一条宿主路径。
+  const workbenchHost: BotWorkbenchHostDeps = {
     sendToSession: wrap(async (svc, { targetSessionId, message, dispatcherSessionId }) => {
       const result = await svc.sendToSession({ targetSessionId, message, dispatcherSessionId });
       return result.ok
@@ -200,22 +242,58 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
           }
         : { ok: false as const, errorCode: result.errorCode, message: result.message };
     }),
-    startBackgroundTask: async ({ callerSessionId, workingDir, title, objective }) => {
-      const svc = tryGetBotDelegationService();
-      if (!svc) return { ok: false, errorCode: 'HOST_NOT_READY', message: 'Session task service not initialized' };
-      const result = await svc.startSessionTask({ callerSessionId, objective, title, workingDir });
-      return result.ok
-        ? { ok: true as const, sessionId: result.childSessionId }
-        : { ok: false as const, errorCode: result.errorCode, message: result.message };
+    sendToRemoteSession: async ({ deviceId, sessionId, message, dispatcherSessionId }) => {
+      if (!remoteSessionHandoff) {
+        return { ok: false as const, errorCode: 'REMOTE_UNAVAILABLE', message: '这台电脑没有开启跨电脑发送' };
+      }
+      const result = await remoteSessionHandoff({ deviceId, sessionId }, {
+        message,
+        sender: () => remoteHandoffSender(dispatcherSessionId),
+      });
+      return result.ok ? { ok: true as const, wakeKind: result.wakeKind } : result;
     },
+    readRemoteMessages: createRemoteWorkbenchMessageReader(deps.invokeRemote),
   };
 
-  const remoteSessionHandoff = deps.historyRemote
-    ? createRemoteSessionHandoff({
-        captureAccess: deps.historyRemote.captureAccess,
-        invoke: deps.invokeRemote,
-      })
-    : null;
+  const readTaskDigest = createTaskDigestReader(createDesktopTaskDigestDeps({
+    invokeRemote: deps.invokeRemote,
+    ...(deps.historyRemote ? { listDevices: deps.historyRemote.listDevices } : {}),
+    getSessionRuntime: async (sessionId) => {
+      const svc = tryGetOrcaCollabService();
+      return svc ? svc.getSessionRuntime({ targetSessionId: sessionId }) : { ok: false as const };
+    },
+    listSessionQueuedCounts: async (sessionIds) => {
+      const svc = tryGetOrcaCollabService();
+      return svc ? svc.listSessionQueuedCounts(sessionIds) : { ok: false as const };
+    },
+    // git-context 牵连 Electron 窗口广播,按需加载,不让工具装配一引用就把它带进来。
+    readSessionPrStatuses: async (sessionId) =>
+      (await import('../git-context/ipc.js')).readSessionPrStatuses(sessionId),
+    readRuntimeFacts: async (sessionId) => {
+      const [{ getMakerIfReady }, { getSessionLastLiveUsage }] = await Promise.all([
+        import('../maker-host/index.js'),
+        import('../maker-ipc/sessionLastLiveUsage.js'),
+      ]);
+      const session = getMakerIfReady()?.getSession(sessionId);
+      // 原样交出两份运行时读数,可信用量由 deriveFollowUpUsage 统一推导。
+      const pick = (usage: { contextTokens: number; contextWindow: number } | null | undefined) =>
+        usage ? { contextTokens: usage.contextTokens, contextWindow: usage.contextWindow } : null;
+      const live = pick(session?.getUsageSnapshot());
+      const closed = pick(getSessionLastLiveUsage(sessionId));
+      const terminal = session?.getObservedCurrentTurnTerminal();
+      return {
+        live,
+        closed,
+        terminalError: terminal?.kind === 'error'
+          ? {
+            ...(terminal.sdkError ? { sdkError: terminal.sdkError } : {}),
+            ...(terminal.codexErrorInfo ? { codexErrorInfo: terminal.codexErrorInfo } : {}),
+            ...(typeof terminal.errorStatus === 'number' ? { errorStatus: terminal.errorStatus } : {}),
+          }
+          : null,
+      };
+    },
+  }));
 
   const authorizeTaskToolCall = createTaskToolCallAuthorizer({
     getDb: () => (isAppSessionBoundaryPending() ? null : tryGetDbClient()),
@@ -271,14 +349,36 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
     // lizi_gitlab 已于 2026-07-14 退役(迁入内置意识 cindy-gitlab;老 PAT +
     // 实例地址由 gitlabAccountsMigration 无感搬进意识多连接声明)。
     feishuBot: {
+      // 轮次内直通工具的作用域: 逐轮租约(im/shared/channelToolScope.ts), 不来自模型参数;
+      // 非飞书轮次 / 轮次已结束为 null, 工具 fail closed。
+      readLaneScope: (session) => {
+        const scope = readFeishuTurnScope(session);
+        if (!scope) return null;
+        return {
+          im: scope.im,
+          laneUserId: scope.laneUserId,
+          chatId: scope.chatId,
+          threadId: scope.threadId,
+          chatKind: scope.chatKind,
+          requesterIsOwner: scope.requesterIsOwner,
+          triggerMessageId: scope.triggerMessageId,
+          companion: scope.companion,
+        };
+      },
       // Fallback receiver for send_message_to_user / send_file_to_user when
       // the current session isn't a feishu one — semantically "notify the
       // bot's human owner". Same TOFU accessor scheduler completion
       // notifications use; returns null before the user has DM'd the bot.
-      getOwnerOpenId: () => feishuIm.getOwnerOpenId(),
-      sendFile: async (chatId: string, absPath: string, displayName?: string) => {
+      getOwnerOpenId: async (session) => {
+        const { im, assertCurrent } = await feishuTransportFor(session);
+        assertCurrent();
+        return im.getOwnerOpenId();
+      },
+      sendFile: async (chatId: string, absPath: string, displayName?: string, session?) => {
         try {
-          return await feishuIm.sendFile(chatId, absPath, displayName);
+          const { im, assertCurrent } = await feishuTransportFor(session, chatId);
+          assertCurrent();
+          return await im.sendFile(chatId, absPath, displayName);
         } catch (err) {
           createLogger('mcp/cindy_feishu_bot').warn(
             'sendFile failed target=...%s detail=%s',
@@ -293,15 +393,18 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       // branch-free. Feishu returns 400 with structured `response.data.code/msg`
       // for business errors (rate-limit, invalid text, …); those get folded
       // into `reason` for logging without leaking axios internals to the tool.
-      sendMessage: async (chatId, markdown, notificationSessionId) => {
+      sendMessage: async (chatId, markdown, notificationSessionId, session) => {
         try {
-          if (notificationSessionId && chatId === feishuIm.getOwnerOpenId()) {
+          const { im, assertCurrent } = await feishuTransportFor(session, chatId);
+          assertCurrent();
+          // 只有个人 bot 维护通知到普通任务的回复关联; 伙伴连接已有自己的主任务。
+          if (im === feishuIm && notificationSessionId && chatId === feishuIm.getOwnerOpenId()) {
             const { messageId, sessionLinked } = await sendFeishuSessionNotification(
               feishuIm, notificationSessionId, markdown,
             );
             return { ok: true, messageId, sessionLinked };
           }
-          const { messageId } = await feishuIm.sendMarkdownText(chatId, markdown);
+          const { messageId } = await im.sendMarkdownText(chatId, markdown);
           return { ok: true, messageId };
         } catch (err) {
           const r = (err as { response?: { data?: { code?: number; msg?: string }; status?: number } }).response;
@@ -734,14 +837,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             sendToRemoteSession: async ({ deviceId, sessionId, message, dispatcherSessionId }) =>
               remoteSessionHandoff({ deviceId, sessionId }, {
                 message,
-                sender: async () => {
-                  const dbClient = tryGetDbClient();
-                  const [row] = dbClient
-                    ? await dbClient.drizzle.select({ title: sessions.title }).from(sessions)
-                      .where(eq(sessions.id, dispatcherSessionId)).limit(1).catch(() => [])
-                    : [];
-                  return { sessionId: dispatcherSessionId, ...(row?.title ? { title: row.title } : {}) };
-                },
+                sender: () => remoteHandoffSender(dispatcherSessionId),
               }),
           }
         : {}),
@@ -1004,8 +1100,8 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
         list: (params) => listBotSkillsForSession(params),
       },
-      // 工作台:伙伴继续主人交给它的项目里的任务,或按主人本人的话记下 / 移除项目。授权在
-      // botWorkbenchAccess 里逐次确定性校验;投递复用 send_to_session 的同一条宿主路径。
+      // 工作台「一眼」:总调度伙伴可读 / 继续全部任务(含在线电脑),其它伙伴只碰自己开的或接手的。
+      // 授权在 botWorkbenchAccess 里逐次确定性校验;投递复用 send_to_session 的同一条宿主路径。
       // 停止走通用的 stop_session_turn。
       botWorkbench: {
         todos: async (caller, operation, input) => {
@@ -1025,14 +1121,10 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
             return {ok:true,...await access.ingest(input as Parameters<typeof access.ingest>[0])};
           } catch(error) { return {ok:false,errorCode:error instanceof TodoError ? error.code : 'INTERNAL',message:error instanceof Error?error.message:'INTERNAL'}; }
         },
-        setResponsibility: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.setResponsibility(params)),
-        get: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.get(params)),
-        read: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.read(params)),
-        set: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.set(params)),
-        setMany: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.setMany(params)),
-        continueTask: (params) => runBotWorkbenchTool(workbenchSend, (access) => access.continueTask(params)),
-        addProject: (params) => addBotWorkbenchProjectForCaller(params),
-        removeProject: (params) => removeBotWorkbenchProjectForCaller(params),
+        setResponsibility: (params) => runBotWorkbenchTool(workbenchHost, (access) => access.setResponsibility(params)),
+        get: (params) => runBotWorkbenchTool(workbenchHost, (access) => access.get(params)),
+        read: (params) => runBotWorkbenchTool(workbenchHost, (access) => access.read(params)),
+        continueTask: (params) => runBotWorkbenchTool(workbenchHost, (access) => access.continueTask(params)),
       },
       skillhub: createSkillhubAgentTools({
         isCurrentSession: (context) => !!context.sessionId
@@ -1071,6 +1163,11 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
         },
         searchChatHistory: async (args) => {
           try { const result = await searchChatHistoryHybrid(args); return { ok: true, result }; }
+          catch (err) { const msg = err instanceof Error ? err.message : String(err); const errorCode = isDbClientNotReadyError(err) ? 'HOST_NOT_READY' : 'INTERNAL'; return { ok: false, errorCode, message: msg }; }
+        },
+        // get_task_digest:一件任务的短摘要(本机或 deviceId::sessionId 只读)。
+        taskDigest: async (args) => {
+          try { return await readTaskDigest(args); }
           catch (err) { const msg = err instanceof Error ? err.message : String(err); const errorCode = isDbClientNotReadyError(err) ? 'HOST_NOT_READY' : 'INTERNAL'; return { ok: false, errorCode, message: msg }; }
         },
       },
@@ -1164,6 +1261,28 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       type: 'sdk',
       name: 'cindy_group_history',
       instance: createGroupHistoryMcpServer({
+        getSessionContext: () => resolveLiziMcpSessionContext(ctx),
+      }),
+    }),
+  });
+
+  // cindy_telegram_bot: 个人 / 伙伴 Telegram bot 轮次里的 Bot API 直通。只挂在带 Telegram 渠道
+  // vendorOptions 的会话上: 专线 / 个人 bot 会话由 adapter.buildVendorOptions 写 telegramChatId,
+  // 伙伴主任务由 botProfileRuntime 写「绑了哪些渠道」标记(官方 hook 会话不写, 桌面任务也没有),
+  // 别处看不到这组工具。真正能不能动哪个 chat 由逐轮作用域租约(im/shared/channelToolScope.ts)
+  // 在调用期判定, 没有租约一律 fail closed。
+  // Codex / Pi 的共享 app-server / bridge 在还没有 thread / workdir 的阶段(空 ctx)建一次工具
+  // 清单, 这里不注册它就永远挂不上; 所以空 workdir 快照先放行, 逐会话可见性由
+  // codexEnvironment.buildSessionMcpConfig / piEnvironment capabilityGated 按同一份标记决定。
+  gated.push({
+    name: 'cindy_telegram_bot',
+    isEnabled: (ctx) =>
+      hasImChannelVendorOptions(ctx.vendorOptions, 'telegram')
+      || ((ctx.agentKind === 'codex' || ctx.agentKind === 'pi') && !ctx.workingDir),
+    toClaudeSdkConfig: (ctx) => ({
+      type: 'sdk',
+      name: 'cindy_telegram_bot',
+      instance: createTelegramBotMcpServer({
         getSessionContext: () => resolveLiziMcpSessionContext(ctx),
       }),
     }),

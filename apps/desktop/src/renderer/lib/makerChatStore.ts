@@ -1,3 +1,5 @@
+import { pendingGhostCardFormDelivery } from '@cindy/maker-shared/ghost-card-form';
+import { remoteAgentLimitErrorKey } from '../../shared/remoteAgentLimits';
 import { readBotTaskResults } from '@cindy/maker-shared/botCollaboration';
 import { asyncQuestionNeedsSupplement, formatAsyncQuestionSupplement } from '@cindy/maker-shared/interaction';
 import { isComposerTypingRecently } from './composerTypingActivity';
@@ -9,6 +11,7 @@ import { normalizeTaskTags } from '@cindy/maker-shared';
 import type { ImMessageSource } from '../../shared/imMessageSource';
 import { sharedTaskAuthorMemberId, sharedTaskAuthorName } from '@cindy/maker-shared';
 import { readBotAuthorizationCard } from '../../shared/botAuthorization';
+import { readBotStarterOptions } from '../../shared/botStarterOptions';
 import { applyCindyMakeCardAttention } from './cindyMakeAttention';
 import { confirmRemoteUsers, reserveRemoteUser } from './remoteUserHandoff';
 import { readRemoteHistoryCache, remoteHistoryCacheWriter } from './remoteHistoryCache';
@@ -40,6 +43,7 @@ import { parsePluginConnectionInput, type InputHandoffSnapshot } from '@cindy/de
 
 import { HISTORY_WORK_PATCH_CHANNEL, HistoryViewController, isHistoryViewUnavailable, mapHistoryViewMessages, historyViewLeaves, historyWorkSummaries, historyPrefetchVersion, historySnapshotCovers, historySnapshotForCache, selectHistoryPrefetchSessions, type HistoryViewPage, type HistoryDetailPage, type HistoryWorkPatch } from '@cindy/maker-shared/message-window';
 import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
+import { nextHistoryCacheReceipt, isHistoryCacheReceipt, historyCacheReceiptFollows, mergeHistoryPrefetchRequest, type HistoryCacheReceipt, type HistoryPrefetchRequest } from '@cindy/maker-shared/message-window';
 import { SESSION_SYNC_CHANNEL } from '@cindy/device-link';
 import { isRemoteTextDelta, readRemoteTextSnapshot, reconcileRemoteText, consumeRemoteSessionSync } from '@cindy/maker-shared/message-window';
 import { parseMessageToolUse } from '@cindy/maker-shared/message-normalize';
@@ -350,11 +354,15 @@ function resolveEstimatedTurnCostUsd(
 /** Translation candidate only; callers must check their active i18n resources.
  * Unknown-code fallback text is diagnostic content, not curated guidance. */
 export function remoteErrorI18nKey(msg: string): string | undefined {
+  const limitKey = remoteAgentLimitErrorKey(msg);
+  if (limitKey) return limitKey;
   const parsed = parseAgentErrorCode(msg);
   return parsed ? `chat.remoteError.${parsed.code}` : undefined;
 }
 
 export function decodeRemoteErrorMessage(msg: string): string {
+  const limitKey = remoteAgentLimitErrorKey(msg);
+  if (limitKey) return i18n.t(limitKey);
   const parsed = parseAgentErrorCode(msg);
   return parsed
     ? i18n.t(`chat.remoteError.${parsed.code}`, { defaultValue: parsed.fallback })
@@ -365,6 +373,23 @@ export function decodeRemoteErrorMessage(msg: string): string {
 export function remoteErrorMessageForBanner(msg: string): string {
   const key = remoteErrorI18nKey(msg);
   return key && i18n.exists(key) ? msg : decodeRemoteErrorMessage(msg);
+}
+
+/**
+ * 终态 error 事件写进 live 横幅的文案。空响应/无详情失败 banner 文案走 i18n(四语言),不直接
+ * 渲染 maker-core 发来的中文 message(规则 18:UI 文案必须 i18n)。maker-core 用稳定 reason 当
+ * key('empty-response' / 'turn-failed'), message 仅作非 renderer 消费方(IM/orca)的兜底。
+ */
+function liveErrorBannerText(message: string, reason: string | undefined): string {
+  return reason === 'empty-response'
+    ? i18n.t('logic.errors.emptyResponse')
+    : reason === 'turn-failed'
+      ? i18n.t('logic.errors.turnFailed')
+      : reason === 'silent-stop-exhausted'
+        ? i18n.t('logic.errors.silentStopExhausted')
+        : reason === 'codex-auto-review-unavailable'
+          ? i18n.t('logic.errors.codexAutoReviewUnavailable')
+          : remoteErrorMessageForBanner(message);
 }
 // 专门给"出现在用户面前的红色 ErrorBanner"打日志,scope 以 `maker/` 开头
 // 是为了让它落在统一 agent 流(agent-*.ndjson,跟 agent runtime 抛出的底层错误同一份,
@@ -409,6 +434,8 @@ export interface AskUserQuestionItem {
 }
 
 export interface ChatMessage {
+  /** Local durable-push order, retained by the display cache. */
+  cacheReceipt?: HistoryCacheReceipt;
   /** Private Bot reply provenance, projected from persisted/live agent metadata. */
   botPrivateReply?: boolean;
   botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
@@ -514,8 +541,11 @@ export interface ChatMessage {
   sourceGroup?: MessageSourceGroup;
   /** Host-stamped delivery remains visible after source identity is redacted. */
   explicitDelivery?: boolean;
+  /** Market opening: starter choices shown as buttons below this message (agentMeta.botStarterOptions). */
+  botStarterOptions?: string[];
   /** Provider phase survives live deltas and durable history projection. */
   assistantPhase?: string;
+  failedSamplingAttempt?: boolean;
   /** user 消息投递方式:普通新 turn 或运行中 steer。 */
   delivery?: 'turn' | 'steer';
   /** Hook 来源元数据(IM 平台 + 用户干净原文 + thread 上下文),UserMessage 据此渲染 Cindy 任务卡片。 */
@@ -3574,6 +3604,8 @@ function getLastInboundEventAt(sessionId: string): number | undefined {
 }
 
 function bumpRendererClearGeneration(sessionId: string): void {
+  // /clear、删除、归档、LRU 驱逐都经过这里:关闭错误的待认领意图随旧上下文一起作废。
+  _disposedLiveErrorIntents.delete(sessionId);
   rendererClearGenerationBySession.set(
     sessionId,
     (rendererClearGenerationBySession.get(sessionId) ?? 0) + 1,
@@ -4089,6 +4121,15 @@ const _liveErrorEpoch = new Map<string, number>();
  * 脏信号不带 renderer epoch(跨窗口对不上),用这份名单拒绝把 A 绑到 B。
  */
 const _staleDeferredErrorPersistIds = new Map<string, Set<string>>();
+/**
+ * 关闭/重试时没有绑定落库行的 live 错误:记下当时的横幅文案与队列快照,等同文案的
+ * error 行落库信号到达后补标 dismissed。时序与作废规则见 claimDisposedLiveErrorRow。
+ */
+interface DisposedLiveErrorIntent {
+  text: string;
+  queueIds: Set<string>;
+}
+const _disposedLiveErrorIntents = new Map<string, DisposedLiveErrorIntent>();
 
 /** Terminal error 后、配对 done 到达前，凭据刷新必须等 host 空闲。 */
 const GATEWAY_PROXY_TOKEN_TURN_SETTLE_MS = 5_000;
@@ -4218,10 +4259,12 @@ function applyErrorPersistedDirtySignal(sessionId: string, persistId?: string): 
     !state.errorPersistId &&
     state.error &&
     !_deferredTurnErrorPersist.has(sessionId) &&
-    !_staleDeferredErrorPersistIds.get(sessionId)?.has(persistId)
+    !_staleDeferredErrorPersistIds.get(sessionId)?.has(persistId) &&
+    !disposedIntentCoversLiveError(sessionId, state)
   ) {
     // 本窗口没有 in-flight deferred(设备互联控制端只收到脏信号):绑到当前未绑定横幅。
     // 本窗口刚拒绝过的迟到 persistId 不算控制端信号,不能绑到下一轮错误。
+    // 横幅是刚被关掉那次错误的重亮时不绑,交给下面的补标(见 disposedIntentCoversLiveError)。
     bindLiveErrorPersistId(sessionId, persistId);
   }
   const latest = sessions.get(sessionId) ?? state;
@@ -4229,6 +4272,10 @@ function applyErrorPersistedDirtySignal(sessionId: string, persistId?: string): 
     // 上一轮错误的写成功:不能绑到或清掉当前横幅。历史仍可能因那一行落库而脏。
     if (!_activeViewSessions.has(sessionId) && latest.historyLoaded) {
       setState(sessionId, (s) => (s.historyLoaded ? { ...s, historyLoaded: false } : s));
+    }
+    // 这一行也可能是用户刚关掉、当时还没落库的那次错误。
+    if (!_staleDeferredErrorPersistIds.get(sessionId)?.has(persistId)) {
+      claimDisposedLiveErrorRow(sessionId, persistId);
     }
     return;
   }
@@ -4423,6 +4470,9 @@ function setState(
   if (prev.error !== next.error) {
     _liveErrorEpoch.set(sessionId, (_liveErrorEpoch.get(sessionId) ?? 0) + 1);
   }
+  if (_disposedLiveErrorIntents.size > 0) {
+    invalidateDisposedLiveErrorIntentOnTransition(sessionId, prev, next);
+  }
   const previousIssueRequestId = prev.pendingIssueConfirm?.requestId;
   if (previousIssueRequestId && next.pendingIssueConfirm?.requestId !== previousIssueRequestId) {
     clearIssueConfirmDraft(sessionId, previousIssueRequestId);
@@ -4586,7 +4636,7 @@ function isCodexUserActionableRetryError(data: unknown): boolean {
 }
 
 /**
- * Codex 原生重连行只应在真正的 turn 进展或明确收尾时让位。
+ * 清除可操作的临时错误仍需真正的 turn 进展或明确收尾。
  *
  * `maker:event` 里还混着后台任务更新、tool_result、thinking 等旁路事件；它们
  * 可能属于同一会话但不代表重连已经恢复。Codex 子代理的 descendant 状态通知不会走这条
@@ -4605,6 +4655,46 @@ function isCodexReconnectRecoveryOutput(event: CCAgentStreamEvent): boolean {
     return typeof toolName !== 'string' || !toolName.startsWith('collab:');
   }
   return event.type === 'done' && !isTurnContinuationBoundaryEvent(event);
+}
+
+/**
+ * Fresh, visible root thinking ends the native reconnect presentation, just
+ * as it ends Codex's reconnect-stall wait. This is independent of recovery
+ * success: Main still requires substantive text/tools to settle its retry
+ * episode. A final snapshot repeating already rendered text is not progress.
+ */
+function isCodexReconnectVisibleThinkingProgress(
+  messages: readonly ChatMessage[],
+  event: CCAgentStreamEvent,
+): boolean {
+  if (
+    event.type !== 'thinking' ||
+    event.turnScope === 'background' ||
+    (event.source !== 'codex' && event.source !== 'pi')
+  ) {
+    return false;
+  }
+  const data = event.data as
+    { stage?: unknown; blockId?: unknown; text?: unknown } | null | undefined;
+  if (
+    (data?.stage !== 'delta' && data?.stage !== 'final') ||
+    typeof data.blockId !== 'string' ||
+    typeof data.text !== 'string' ||
+    !hasUserVisibleText(data.text) ||
+    !messages.some((message) => message.clientId === CODEX_RECONNECT_PENDING_CLIENT_ID)
+  )
+    return false;
+
+  const block = messages.find((message) => message.clientId === data.blockId);
+  if (data.stage === 'delta') {
+    return block?.role === 'thinking' && block.isStreaming === true;
+  }
+  if (!block) return true; // final-only delivery is rendered by the reducer below.
+  if (block.role !== 'thinking' || block.thinkingRedacted) return false;
+  const newText = data.text.startsWith(block.content)
+    ? data.text.slice(block.content.length)
+    : data.text;
+  return hasUserVisibleText(newText);
 }
 
 /** Main 的接管 projection 与随后 maker:event 来自两个 channel。只有活动行里保存的
@@ -4665,6 +4755,19 @@ function applyInputProjection(
   // #2194: 人工 Retry 的一次性意图认领——必须在落库广播（onCreated）可能
   // 到达之前完成登记，main 的 emit 先于 scheduleDrain，这里一定更早。
   claimLocalRetryProductFromProjection(projection);
+  // 投影带来文案不同的新错误:用户关掉的那次错误已被顶替,之后落库的行不再代它补标。
+  const disposedIntent = _disposedLiveErrorIntents.get(projection.sessionId);
+  if (
+    disposedIntent &&
+    projection.error &&
+    !liveErrorTextMatchesRow(
+      disposedIntent.text,
+      projection.error,
+      projection.errorReason ?? undefined,
+    )
+  ) {
+    _disposedLiveErrorIntents.delete(projection.sessionId);
+  }
   // wire 上「字段缺省」就是旧被控端的能力信号；新版没有续跑项时也会显式发 null。
   // 必须在 `?? null` 归一化前按 own property 读取，不能让 undefined/null 混淆版本。
   const continuationInFlightProjectionCapability: ContinuationInFlightProjectionCapability =
@@ -5603,8 +5706,11 @@ export function handleStreamEvent(
     reconnectAttempt !== null &&
     !isCodexUserActionableRetryError(event.data);
   const hasCodexReconnectRecoveryOutput = isCodexReconnectRecoveryOutput(event);
+  const hasCodexReconnectVisibleProgress =
+    hasCodexReconnectRecoveryOutput ||
+    isCodexReconnectVisibleThinkingProgress(inputState.messages, event);
   const shouldClearCodexReconnectPendingCard =
-    event.type === 'error' ? !isCodexReconnectProgress : hasCodexReconnectRecoveryOutput;
+    event.type === 'error' ? !isCodexReconnectProgress : hasCodexReconnectVisibleProgress;
   const stateBeforeReconnectCleanup =
     !hasCodexReconnectRecoveryOutput || inputState.recoverableError == null
       ? inputState
@@ -6382,19 +6488,7 @@ export function handleStreamEvent(
         !new RegExp(`\\b${errorStatus}\\b`).test(safeErrMsgRaw)
           ? `${safeErrMsgRaw} (HTTP ${errorStatus})`
           : safeErrMsgRaw;
-      // 空响应/无详情失败 banner 文案走 i18n(四语言),不直接渲染 maker-core 发来的
-      // 中文 message(规则 18:UI 文案必须 i18n)。maker-core 用稳定 reason 当 key
-      // ('empty-response' / 'turn-failed'), message 仅作非 renderer 消费方(IM/orca)的兜底。
-      const errMsg =
-        reason === 'empty-response'
-          ? i18n.t('logic.errors.emptyResponse')
-          : reason === 'turn-failed'
-            ? i18n.t('logic.errors.turnFailed')
-            : reason === 'silent-stop-exhausted'
-              ? i18n.t('logic.errors.silentStopExhausted')
-              : reason === 'codex-auto-review-unavailable'
-                ? i18n.t('logic.errors.codexAutoReviewUnavailable')
-                : remoteErrorMessageForBanner(safeErrMsg);
+      const errMsg = liveErrorBannerText(safeErrMsg, reason);
       const isTerminalError = isTerminalErrorData(event.data);
       // 终态错误 = turn 收口（含失败）：清掉该 session 的「正在识别图片中」toast，
       // 避免视觉桥未输出就终结时 loading toast 残留（done/abort/terminal error 兜底）。
@@ -7934,6 +8028,8 @@ interface GlobalListenerOptions {
    * messages, or persist a retry failure independently.
    */
   ownsRemoteAuthRetry?: boolean;
+  /** The primary renderer owns list-cache receipts; auxiliary windows only display pushes. */
+  ownsRemoteListCache?: boolean;
 }
 
 function initGlobalListeners(options: GlobalListenerOptions = {}): void {
@@ -8748,6 +8844,11 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
     clearRemoteOptimisticSend(sessionId, mapped.clientId);
     const current = getOrCreateState(sessionId);
     const existing = current.messages.find((candidate) => candidate.clientId === mapped.clientId);
+    if (existing?.cacheHydrated || existing?.cacheReceipt) {
+      // This is a live body now; it must not inherit the replaced cache's order or provenance.
+      mapped.cacheHydrated = false;
+      mapped.cacheReceipt = message.cacheReceipt;
+    }
     if (mapped.systemCardType?.startsWith('cindy-make')) {
       // A late update to an older preparation card must not replace the current result.
       const existingIndex = existing ? current.messages.indexOf(existing) : -1;
@@ -9106,14 +9207,17 @@ function initGlobalListeners(options: GlobalListenerOptions = {}): void {
         case 'maker:interaction-dismissed':
           handleLiveInteractionDismissedRaw(push.payload, remoteIngress);
           break;
-        case 'local-db:messages:created':
+        case 'local-db:messages:created': {
           // 远程会话的持久化消息(接管路径)→ 注入 in-memory state(同本机)。
-          handleMessageCreatedRaw(push.payload, remoteIngress);
-          if (listMessage && push.deviceId && inboundSid) {
-            const row = (push.payload as { message?: Message }).message;
+          const payload = push.payload as { sessionId?: string; message?: Message };
+          const row = payload?.message && listMessage
+            ? { ...payload.message, cacheReceipt: nextHistoryCacheReceipt() } : payload?.message;
+          handleMessageCreatedRaw({ ...payload, message: row }, remoteIngress);
+          if (listMessage && options.ownsRemoteListCache !== false && push.deviceId && inboundSid) {
             if (row && !isBeforeOrAtRendererClearBoundary(inboundSid, row.createdAt)) persistListMessage(push.deviceId, inboundSid, row);
           }
           break;
+        }
         case 'local-db:messages:deleted':
           handleMessageDeletedRaw(push.payload, remoteIngress);
           break;
@@ -9694,6 +9798,7 @@ function __teardownGlobalListeners(): void {
   _deferredTurnErrorPersist.clear();
   _liveErrorEpoch.clear();
   _staleDeferredErrorPersistIds.clear();
+  _disposedLiveErrorIntents.clear();
   remotePresenceOnlineByDevice.clear();
   resetRemoteDataOwnerPushFence();
   const remoteOptimisticSessionIds = new Set([
@@ -11431,7 +11536,7 @@ const _cacheHydrateSuppressed = new Set<string>();
 /**
  * 远程会话:从本地冷缓存乐观 hydrate 最近一页(并行于 fresh 首拉)。
  *
- * 只在**切片仍为空且 fresh 还没落地**时种入,种入的行打 `cacheHydrated` 标记,
+ * 只在 fresh 还没落地时补入,种入的行打 `cacheHydrated` 标记,
  * 由首拉落地时整批换掉。刻意不动 `historyLoaded` / `oldestMessageId`,并把
  * `hasMoreMessages` 留在 false:缓存窗口通常只活几百毫秒(fresh 到达前),
  * 拿缓存的游标去翻页会和随后落地的权威窗口打架(见首拉里孤岛游标那段);
@@ -11476,12 +11581,21 @@ function hydrateRemoteMessagesFromCache(sessionId: string): void {
     if (_cacheHydrateSuppressed.has(sessionId)) return;
     if (!isCurrentHydration()) return;
     setState(sessionId, (s) => {
-      // fresh 已经落地 / 期间已有实时消息进来 → 缓存没有价值了,原样返回不动切片。
-      if (s.historyLoaded || s.messages.length > 0) return s;
+      // A pre-received reply does not contain the earlier disk history. Fill
+      // missing rows while keeping every newer in-memory body and its identity.
+      const history = getRemoteHistoryView(sessionId)?.getSnapshot();
+      if (s.historyLoaded && !history?.stale) return s;
+      const current = new Map(s.messages.map(message => [message.clientId, message]));
+      const newerReceipts = new Set(mapped.filter(message => {
+        const existing = current.get(message.clientId);
+        return !existing?.isStreaming && isHistoryCacheReceipt(existing?.cacheReceipt)
+          && historyCacheReceiptFollows(message.cacheReceipt, history?.readReceipt, history?.stale)
+          && historyCacheReceiptFollows(message.cacheReceipt, existing?.cacheReceipt);
+      }).map(message => message.clientId));
       // hasMoreMessages 显式压成 false:缓存窗口期间不许向上翻页。翻回来的权威老行
       // 不带 cacheHydrated,首拉落地剔除缓存行后会在窗口中间留出一段洞,得靠后续翻页
       // 才收敛。首拉通常几百毫秒就到并写回真实的 hasMore,压掉这段的代价近乎为零。
-      return { ...s, messages: mapped, hasMoreMessages: false };
+      return { ...s, messages: mergeMessages(mapped, s.messages, { addOnly: true, addOnlyExcept: newerReceipts }), hasMoreMessages: false };
     });
   });
 }
@@ -11635,6 +11749,9 @@ function createRemoteHistoryView(sessionId: string) {
     return value as T;
   };
   const view = new HistoryViewController<HistoryChatMessage>({
+    diagnostic: (event) => log.debug('history view changed', {
+      hostRef: deviceId?.slice(0, 8) ?? 'local', sessionRef: sessionId.slice(0, 8), ...event,
+    }),
     page: async (before) => {
       const writer = deviceId ? remoteHistoryCacheWriter(deviceId, sessionId) : undefined;
       // Remote reads ask for Host-projected running lines; a local view already holds live rows.
@@ -11684,9 +11801,14 @@ function createRemoteHistoryView(sessionId: string) {
     }
     const available = historyViewLeaves(snapshot.items).flatMap((item) => item.type === 'messages' ? item.messages : []);
     for (const detail of snapshot.details.values()) available.push(...detail.messages);
+    // Restored page rows are cached too. Keep their read order when borrowing them
+    // into the raw store, so a delayed disk receipt is comparable without treating live rows as old.
+    const borrowed = deviceId && snapshot.stale ? available.map(message => ({ ...message,
+      cacheHydrated: true as const, cacheReceipt: snapshot.readReceipt })) : available;
     setState(sessionId, (state) => ({ ...state, historyLoaded: true,
       messages: confirmRemoteUsers(
-        mergeMessages(available, state.messages.filter((message) => !message.cacheHydrated), { addOnly: true }),
+        mergeMessages(borrowed, state.messages.filter((message) => !message.cacheHydrated
+          || historyCacheReceiptFollows(message.cacheReceipt, snapshot.readReceipt, snapshot.stale)), { addOnly: true }),
         new Set(available.filter((message) => message.role === 'user').map((message) => message.clientId)),
       ),
       hasMoreMessages: snapshot.hasMore, isLoadingMore: view.isLoadingOlder(),
@@ -11704,17 +11826,21 @@ function createRemoteHistoryView(sessionId: string) {
 // Activity version already read ahead, per device and task, valid only while that mirror entry
 // is current (account switch or cache invalidation resets it). Memory only.
 const remoteHistoryPrefetchedAt = new Map<string, { version: string; owner: ReturnType<typeof getDataOwnerGeneration>; token: number }>();
-const remoteHistoryPrefetchRuns = new Map<string, { again: boolean }>();
+const remoteHistoryPrefetchRuns = new Map<string, { again: boolean; request: HistoryPrefetchRequest }>();
 
 /**
  * After a list read that may follow missed pushes (bootstrap/reconnect), read the latest
  * history page of recently changed tasks into the mirror a task restores on open. Open tasks
  * read their own view. Sequential and best effort: a failed read waits for the next refresh.
  */
-async function prefetchRemoteHistories(deviceId: string): Promise<void> {
+async function prefetchRemoteHistories(deviceId: string, sessionIds?: ReadonlySet<string>): Promise<void> {
   const run = remoteHistoryPrefetchRuns.get(deviceId);
-  if (run) { run.again = true; return; }
-  const state = { again: true };
+  if (run) {
+    run.again = true;
+    run.request = mergeHistoryPrefetchRequest(run.request, sessionIds);
+    return;
+  }
+  const state = { again: true, request: mergeHistoryPrefetchRequest(undefined, sessionIds) };
   remoteHistoryPrefetchRuns.set(deviceId, state);
   const owner = getDataOwnerGeneration();
   const key = (sessionId: string) => JSON.stringify([deviceId, sessionId]);
@@ -11724,7 +11850,10 @@ async function prefetchRemoteHistories(deviceId: string): Promise<void> {
   try {
     while (state.again) {
       state.again = false;
+      const request = state.request;
+      state.request = mergeHistoryPrefetchRequest(undefined, new Set());
       const candidates = selectHistoryPrefetchSessions(remoteProjectsStore.getDeviceSessions(deviceId, 'active'), {
+        limit: request.recent ? undefined : 0, targets: request.targets,
         eligible: (session) => session.status === 'active' && session.source !== 'scheduler' && !getRemoteHistoryView(session.id),
         prefetchedAt: (sessionId) => {
           const entry = remoteHistoryPrefetchedAt.get(key(sessionId));
@@ -11739,6 +11868,7 @@ async function prefetchRemoteHistories(deviceId: string): Promise<void> {
         if (!historySnapshotCovers(previous, session)) {
           // Capture write authority before the read, like an open view does.
           const write = remoteHistoryCacheWriter(deviceId, session.id);
+          const readReceipt = nextHistoryCacheReceipt();
           let page: HistoryViewPage<Message>;
           try {
             page = await window.electronAPI.deviceLink.invoke(deviceId, 'local-db:messages:view',
@@ -11755,7 +11885,7 @@ async function prefetchRemoteHistories(deviceId: string): Promise<void> {
           const snapshot = historySnapshotForCache({ ...page, items }, previous,
             (candidate) => fitsRemoteHistoryCache(encodeRemoteHistory(candidate)));
           if (!snapshot) continue;
-          write(snapshot);
+          write({ ...snapshot, readReceipt });
         }
         const version = historyPrefetchVersion(session);
         if (version !== undefined) {
@@ -14825,6 +14955,11 @@ function sendMessage(
   if ((!text.trim() && (!files || files.length === 0)) || !workingDir)
     return Promise.resolve(false);
   if (isRemoteDeletedSessionSendBlocked(sessionId)) return Promise.resolve(false);
+  const formDelivery = pendingGhostCardFormDelivery(sessionId);
+  if (formDelivery) {
+    const beforeEnqueue = opts?.beforeEnqueue;
+    opts = { ...opts, beforeEnqueue: async () => await formDelivery && (beforeEnqueue ? await beforeEnqueue() : true) };
+  }
   const remoteScopeAtStart = captureRemoteOptimisticSendScope(
     sessionId,
     opts?.onRemoteOptimisticFailure,
@@ -15075,6 +15210,11 @@ async function sendMessageCore(
       throw err;
     }
   }
+
+  // 消息已过完所有本端拒绝点(clear/scope/beforeEnqueue),之后一定交给 coordinator 或
+  // 远程 outbox:之后落库的错误属于这次发送,不再代关掉的那次错误补标。被拒的发送不作废,
+  // 否则关掉的错误随后落库时补标不了。
+  _disposedLiveErrorIntents.delete(sessionId);
 
   // 一次性契约收口(bot review P2):计划勾选在**点击发送**时消耗——本条消息的计划
   // 意图已定格在行内快照(createOpts.planMode,派发时经 SendOptions.planMode 权威
@@ -15475,6 +15615,9 @@ async function steerMessageCore(
       throw err;
     }
   }
+  // 插话被受理(远程 outbox 收下 / 主进程受理或物化进队列)才作废关闭错误的待补标意图:之后
+  // 落库的错误属于这次插话,不再代关掉的那次错误补标。被拒的插话不作废,否则关掉的错误随后
+  // 落库时补标不了。
   touchSessionUserSend(sessionId, workingDir, false);
   // 补起名同样要覆盖 steer:首条是纯附件的会话标题此时是合成占位,而用户完全
   // 可能趁这一轮还在跑就用「插话」写下第一句话。只走普通发送的话,这句话不会
@@ -15495,6 +15638,7 @@ async function steerMessageCore(
     if (materializationPending) remoteRecord.onMaterializationReady = commitAutoTitle;
     else commitAutoTitle();
     remoteRecord.composerResolvedOptimistically = true;
+    _disposedLiveErrorIntents.delete(sessionId);
     void pumpRemoteOptimisticSends(sessionId);
     return true;
   }
@@ -15504,6 +15648,7 @@ async function steerMessageCore(
     .steer(sessionId, queued, { touchUserSend: true })
     .then(async (ok) => {
       if (ok) {
+        _disposedLiveErrorIntents.delete(sessionId);
         commitAutoTitle();
         requestInputProjection(sessionId);
         return true;
@@ -15524,6 +15669,7 @@ async function steerMessageCore(
           // 物化进队列 = 这条输入已被主端接管、日后会派发,与受理同等 —— 起名也要
           // 跟上,否则纯附件/fork 之后的第一句话恰好在这条不确定路径上不改名
           // (review P1)。是否真该改名仍由 main 权威判定。
+          _disposedLiveErrorIntents.delete(sessionId);
           commitAutoTitle();
           return true;
         }
@@ -15855,23 +16001,163 @@ function popQueueTail(sessionId: string): boolean {
  * 并尽快把即将/已经落库的 error 行标 dismissed。离开视图不会走这里。
  */
 function disposeLiveErrorPersist(sessionId: string): void {
-  const persistId = sessions.get(sessionId)?.errorPersistId;
+  const state = sessions.get(sessionId);
+  const persistId = state?.errorPersistId;
   if (persistId) {
-    setState(sessionId, (s) =>
-      s.disposedErrorPersistId === persistId ? s : { ...s, disposedErrorPersistId: persistId },
-    );
-    void dismissErrorTailMessage(sessionId, persistId);
+    markLiveErrorRowDisposed(sessionId, persistId);
     return;
   }
   const pending = _deferredTurnErrorPersist.get(sessionId);
-  if (!pending) return;
-  void pending.then((id) => {
-    if (!id) return;
-    setState(sessionId, (s) =>
-      s.disposedErrorPersistId === id ? s : { ...s, disposedErrorPersistId: id },
-    );
-    void dismissErrorTailMessage(sessionId, id);
+  if (pending) {
+    void pending.then((id) => {
+      if (id) markLiveErrorRowDisposed(sessionId, id);
+    });
+    return;
+  }
+  if (!state?.error) return;
+  const tailRowId = persistedTailRowIdForLiveError(state);
+  if (tailRowId) markLiveErrorRowDisposed(sessionId, tailRowId);
+  _disposedLiveErrorIntents.set(sessionId, {
+    text: state.error,
+    queueIds: new Set(state.pendingQueue.map((item) => item.clientId)),
   });
+}
+
+function markLiveErrorRowDisposed(sessionId: string, clientId: string): void {
+  setState(sessionId, (s) =>
+    s.disposedErrorPersistId === clientId ? s : { ...s, disposedErrorPersistId: clientId },
+  );
+  void dismissErrorTailMessage(sessionId, clientId).then((persisted) => {
+    // 落库失败时 errorDismissed 已回滚;这里一并撤掉跳过标记,让尾部错误提示重新出现、
+    // 用户可以再关一次。否则提示被藏着,重启后这一行又冒出来。
+    if (persisted || sessions.get(sessionId)?.disposedErrorPersistId !== clientId) return;
+    setState(sessionId, (s) =>
+      s.disposedErrorPersistId === clientId ? { ...s, disposedErrorPersistId: null } : s,
+    );
+  });
+}
+
+/**
+ * live 横幅没有绑定落库行时，找出它对应的已落库尾部错误行。
+ *
+ * 错误落库后若用户没在看这个任务(或之后离开过)，live 横幅会交给历史错误卡，绑定一并清掉；
+ * main 的输入投影仍带着这次错误，之后任何一次投影(打开任务、队列变化、协同派活等)都会把
+ * live 横幅重新点亮，但投影只有错误文案、没有它对应的行，也没有错误代次。所以不在交接时
+ * 保留绑定：后来的新错误(远程断线期间漏收的新一轮、scheduler 发送前失败直接换掉错误等)
+ * 可能不经过新一轮启动就顶替旧错误，保留的绑定会被错用到新错误上，关闭标掉的是旧行。
+ *
+ * 改在关闭时按当前看到的内容认领：已加载历史的最后一条(与尾部错误卡同一判定)是未处置的
+ * error 行，且文案与 live 横幅一致(liveErrorTextMatchesRow)，才认为是同一次错误。对不上
+ * (历史未加载、尾部不是 error、文案不同)就什么都不标，不会标到无关行。
+ * 关闭的错误可能还没落库：尾部仍是同文案的旧行时，这里会把旧行一起标掉(它不在尾部之后
+ * 就不再显示，没有可见影响)，真正那一行由 claimDisposedLiveErrorRow 等它落库后补标。
+ */
+function persistedTailRowIdForLiveError(state: SessionChatState): string | null {
+  if (!state.error || !state.historyLoaded) return null;
+  const tail = state.messages[state.messages.length - 1];
+  return tail && isUndisposedErrorRowFor(tail, state.error, state.disposedErrorPersistId)
+    ? tail.clientId
+    : null;
+}
+
+function isUndisposedErrorRowFor(
+  row: ChatMessage,
+  liveText: string,
+  disposedErrorPersistId: string | null,
+): boolean {
+  return (
+    row.role === 'error' &&
+    !row.errorDismissed &&
+    row.clientId !== disposedErrorPersistId &&
+    typeof row.content === 'string' &&
+    liveErrorTextMatchesRow(liveText, row.content, row.errorReason ?? undefined)
+  );
+}
+
+/**
+ * live 横幅文案是否就是这条错误(行 message / 投影 message + reason)。横幅有两种来源:
+ * - error 事件写入：liveErrorBannerText(message, reason)。行 message 与事件 message 经同一
+ *   redactSensitiveText 落库，事件附带的 errorStatus 不落库，所以横幅末尾的「(HTTP 4xx)」
+ *   后缀去掉再比；
+ * - 投影点亮：coordinator 记录的是同一条 message 原文，直接相等。
+ */
+function liveErrorTextMatchesRow(
+  liveText: string,
+  message: string,
+  reason: string | undefined,
+): boolean {
+  if (liveText === message) return true;
+  const bannerText = liveErrorBannerText(message, reason);
+  return liveText === bannerText || liveText.replace(/ \(HTTP \d{3}\)$/, '') === bannerText;
+}
+
+/**
+ * 当前未绑定的 live 横幅是不是刚被关掉的那次错误重新亮起来(例如关闭请求返回前，已在途的
+ * 同文案投影又把它点亮)。是的话落库信号不能绑到它：绑上后这一行就算「属于当前横幅」，走不到
+ * 补标，关闭请求随后清掉横幅，这一行仍未处置，刷新后又出现。
+ * 意图有效期内同文案的横幅只可能是这种重亮：新错误要经过新一轮启动、新队列项或文案不同的
+ * 投影，这些都会先作废意图(见 claimDisposedLiveErrorRow)。
+ * 两边都是横幅文案，可能分别来自 error 事件和投影，所以两个方向各按行口径比一次。
+ */
+function disposedIntentCoversLiveError(sessionId: string, state: SessionChatState): boolean {
+  const intent = _disposedLiveErrorIntents.get(sessionId);
+  if (!intent || !state.error) return false;
+  const reason = state.errorReason ?? undefined;
+  return (
+    liveErrorTextMatchesRow(intent.text, state.error, reason) ||
+    liveErrorTextMatchesRow(state.error, intent.text, reason)
+  );
+}
+
+/**
+ * 关闭(或重试)走了兜底的 live 错误，等它的行落库后补标 dismissed。
+ *
+ * 时序：旧错误 A 已交给历史、尾部是 A；投影点亮同文案的新错误 B(没有绑定)；B 的落库信号
+ * 到达前用户点了关闭。兜底只能看到尾部的 A，标掉 A 后 B 落库仍未处置，刷新后又出现。
+ * 所以关闭时登记意图(横幅文案 + 当时的队列快照)，之后第一条不属于当前横幅的落库信号带着
+ * persistId 到这里：读最新一页历史找到这一行，是未处置的 error 行且文案对得上就标 dismissed
+ * (远程任务经 dismissErrorTailMessage 走隧道写被控端)。
+ *
+ * 直接读权威历史而不是等内存窗口重载：落库信号到达时这一行一定已写入；当前视图不会因此
+ * 重载，后台任务要等用户再打开才重载，等它会让刷新/重启前这一行一直未处置。标记时同时设
+ * disposedErrorPersistId，并发的历史重载即使先读到未处置的旧值，尾部横幅也会跳过它。
+ *
+ * 作废(之后同文案的行不再补标)：读到一条 error 行后(对上就标，对不上说明已是别的错误)；
+ * 新一轮启动、新的队列项、本窗口发送/插话被受理、UI 触发；投影带来文案不同的新错误；/clear、
+ * 删除、归档、LRU 驱逐。不设时间上限：新错误都要经过上面某一条，远程落库慢时也不该丢标记。
+ * 剩余边界：作废之前落库的同文案新错误也会被标掉——它正是用户刚关掉的那种错误。
+ */
+function claimDisposedLiveErrorRow(sessionId: string, persistId: string): void {
+  const intent = _disposedLiveErrorIntents.get(sessionId);
+  if (!intent) return;
+  void listMessagesFor(sessionId)
+    .then((rows) => {
+      if (_disposedLiveErrorIntents.get(sessionId) !== intent) return;
+      const row = rows.find((m) => m.clientId === persistId);
+      const mapped = row ? mapServerMessages([row])[0] : undefined;
+      if (mapped?.role !== 'error') return;
+      _disposedLiveErrorIntents.delete(sessionId);
+      if (!isUndisposedErrorRowFor(mapped, intent.text, null)) return;
+      markLiveErrorRowDisposed(sessionId, persistId);
+    })
+    .catch((err: unknown) => log.warn('read persisted error row for dismiss failed:', err));
+}
+
+function invalidateDisposedLiveErrorIntentOnTransition(
+  sessionId: string,
+  prev: SessionChatState,
+  next: SessionChatState,
+): void {
+  const intent = _disposedLiveErrorIntents.get(sessionId);
+  if (!intent) return;
+  const turnStarted = !prev.agentStatus.isRunning && next.agentStatus.isRunning;
+  // 本端乐观排进来、主进程还没收下的项不算：发送可能随后被拒、撤回，受理时由发送路径作废。
+  const queueGrew =
+    prev.pendingQueue !== next.pendingQueue &&
+    next.pendingQueue.some(
+      (item) => item.isPendingEnqueue !== true && !intent.queueIds.has(item.clientId),
+    );
+  if (turnStarted || queueGrew) _disposedLiveErrorIntents.delete(sessionId);
 }
 
 /** 取消账号限额重置后的自动继续:错误与手动重试保留,只撤等待。 */
@@ -17138,7 +17424,7 @@ function updatePendingPlanReviewContent(
  */
 /**
  * Toggle Fast Mode for a session.
- * Server-first: persist to DB, then update store + push to SDK via IPC.
+ * Host-first: Main owns the runtime/DB or pending-intent commit, then update UI.
  */
 async function setFastMode(
   sessionId: string,
@@ -17168,15 +17454,10 @@ async function setFastMode(
     return;
   }
   try {
-    await sessionService.update(sessionId, { fastMode: enabled });
+    await window.electronAPI.maker.setFastMode(sessionId, enabled);
     setState(sessionId, (s) => {
       if (s.fastMode === enabled) return s;
       return { ...s, fastMode: enabled };
-    });
-    // 无条件推 IPC:codex → agent setFastMode;claude-code → main 记 bridge 会话态
-    // (chatgpt/ 模型经订阅 handler 的 prefs 生效),其余在 main 侧安全 no-op。
-    await window.electronAPI.maker.setFastMode(sessionId, enabled).catch((err: unknown) => {
-      log.warn('setFastMode IPC failed:', err);
     });
   } catch (err) {
     log.warn('setFastMode persist failed:', err);
@@ -17240,7 +17521,7 @@ async function setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
 
 /**
  * Reset Fast Mode to OFF.
- * Server-first: persist false to DB, then update store + push to SDK via IPC.
+ * Main owns the same commit as an explicit Fast change.
  * Used when model changes automatically invalidate fast mode.
  */
 async function resetFastMode(sessionId: string): Promise<void> {
@@ -17256,14 +17537,10 @@ async function resetFastMode(sessionId: string): Promise<void> {
     return;
   }
   try {
-    await sessionService.update(sessionId, { fastMode: false });
+    await window.electronAPI.maker.setFastMode(sessionId, false);
     setState(sessionId, (s) => {
       if (!s.fastMode) return s;
       return { ...s, fastMode: false };
-    });
-    // 与 setFastMode 同理:无条件推,main 按 agentKind / 模型分流。
-    await window.electronAPI.maker.setFastMode(sessionId, false).catch((err: unknown) => {
-      log.warn('resetFastMode IPC failed:', err);
     });
   } catch (err) {
     log.warn('resetFastMode persist failed:', err);
@@ -17414,6 +17691,9 @@ export { UI_ACTION_TRIGGER_PREFIX };
  */
 
 function sendUiTriggerCore(sessionId: string, prompt: string): Promise<void> {
+  // 已拿到发送 token(Agent 切换在途时 sendUiTrigger 直接拒绝、走不到这里),之后一定发出:
+  // 同 sendMessageCore,只在这里作废关闭错误的待补标意图。
+  _disposedLiveErrorIntents.delete(sessionId);
   const state = getOrCreateState(sessionId);
   // UI triggers can be invoked from an error card while the mirror is being
   // reseeded. Pin every mutation in this attempt to the device that owned the
@@ -18666,6 +18946,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
   const createdAtById = new Map(serverMsgs.map((m) => [m.clientId, m.createdAt]));
   const serverIdByClientId = new Map(serverMsgs.map((m) => [m.clientId, m.id]));
   const rowidById = new Map(serverMsgs.map((m) => [m.clientId, m.rowid]));
+  const receiptById = new Map(serverMsgs.map((m) => [m.clientId, m.cacheReceipt]));
   const remoteContentTruncatedById = new Map(
     serverMsgs.map((m) => [m.clientId, m.agentMeta?.remoteContentTruncated === true]),
   );
@@ -19196,13 +19477,16 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
           : (persistedTurnMoney?.amount ?? 0) > 0 || turnUsageDetails !== undefined
             ? true
             : undefined;
+    const botStarterOptions = m.role === 'assistant' ? readBotStarterOptions(m.agentMeta?.botStarterOptions) : [];
     return {
       clientId: m.clientId,
       role: m.role,
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       ...(m.role === 'assistant' ? { sourceGroup: readMessageSourceGroup(m.agentMeta) } : {}),
       ...(m.role === 'assistant' && typeof m.agentMeta?.assistantPhase === 'string' ? { assistantPhase: m.agentMeta.assistantPhase } : {}),
+      ...(m.role === 'assistant' && m.agentMeta?.failedSamplingAttempt ? { failedSamplingAttempt: true } : {}),
       ...(m.role === 'assistant' && m.agentMeta?.explicitDelivery === true ? { explicitDelivery: true } : {}),
+      ...(botStarterOptions.length ? { botStarterOptions } : {}),
       ...(m.role === 'assistant' ? { botLearning: m.agentMeta?.botLearning } : {}),
       ...(m.agentMeta?.botPrivateReply === true ? { botPrivateReply: true } : {}),
       ...(m.role === 'assistant' && m.agentMeta?.turnCompleted === true
@@ -19258,6 +19542,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
     const iso = mapServerCreatedAt(cm, ts);
     const serverId = serverIdByClientId.get(cm.clientId);
     const rowid = rowidById.get(cm.clientId);
+    const cacheReceipt = receiptById.get(cm.clientId);
     const remoteContentTruncated = remoteContentTruncatedById.get(cm.clientId) === true;
     const remoteRowsTrimmed = remoteRowsTrimmedById.get(cm.clientId) === true;
     const legacyUserTurnCost = legacyUserTurnCosts.get(cm.clientId);
@@ -19277,6 +19562,7 @@ function mapServerMessages(serverMsgs: Message[]): ChatMessage[] {
       ...(iso ? { createdAt: iso } : {}),
       ...(typeof serverId === 'string' && serverId.length > 0 ? { id: serverId } : {}),
       ...(rowid !== undefined ? { rowid } : {}),
+      ...(cacheReceipt !== undefined ? { cacheReceipt } : {}),
       ...(remoteContentTruncated ? { remoteContentTruncated: true } : {}),
       ...(remoteRowsTrimmed ? { remoteRowsTrimmed: true } : {}),
     };

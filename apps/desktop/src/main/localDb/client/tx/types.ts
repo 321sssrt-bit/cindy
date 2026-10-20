@@ -2,6 +2,7 @@ import type { PluginUsageTransaction, PluginUsageHandle } from '../../../../shar
 import type { TaskTagRequest, TaskTagResult } from '@cindy/maker-shared';
 
 export type DbTxName =
+  | 'usage.recordMediaSpend'
   | 'authorization.readProjection'
   | 'pluginUsage.execute'
   | 'taskTags.execute'
@@ -57,6 +58,8 @@ export type DbTxName =
   | 'bots.prepareProfileDeletion'
   | 'bots.persistSessionPermission'
   | 'bots.createGroupLane'
+  | 'bots.createChannelLane'
+  | 'bots.archiveChannelLanes'
   | 'botGroups.create'
   | 'botGroups.setMembers'
   | 'botGroups.delete'
@@ -425,6 +428,8 @@ export interface MessageInsertArgs {
   createdAt: number;
   guarded: boolean;
   expectedClearBoundaryMs?: number | null;
+  /** Host-only opening guard, evaluated atomically with the insert. */
+  requireNoUserMessage?: boolean;
   /** Host-only publication; stages belong to a connection-local TEMP table. */
   publication?: 'stage' | 'publish' | 'discard' | 'rollback';
 }
@@ -823,6 +828,24 @@ export interface BotGroupsCreateLaneArgs {
 export interface BotGroupsCreateLaneResult {
   sessionId: string;
   created: boolean;
+}
+
+/** 伙伴接管的个人 IM 群 / 话题专线(`role = 'channel'`)。 */
+export interface BotsCreateChannelLaneArgs {
+  botId: string;
+  routeKey: string;
+  session: BotsReplaceCanonicalSessionArgs['session'];
+}
+
+/**
+ * 归档 IM 连接的伙伴专线: 精确 routeKey 或 routeKey 前缀(整条连接)二选一;
+ * exceptBotId 非空时保留该伙伴的专线(改绑时只收旧伙伴的)。
+ */
+export interface BotsArchiveChannelLanesArgs {
+  routeKey: string | null;
+  routeKeyPrefix: string | null;
+  exceptBotId: string | null;
+  now: number;
 }
 
 export interface BotGroupsCreateArgs {
@@ -1229,10 +1252,13 @@ export interface WechatStopAllArgs {
   bindingEpoch: string;
   now: number;
   errorCode: string;
+  /** Permanent companion deletion cancels pre-accepted work instead of replaying it. */
+  cancelPending?: boolean;
 }
 
 export interface WechatStopAllResult {
   requeued: number;
+  cancelled: number;
   interrupted: number;
   expired: number;
   repaired: number;
@@ -1323,7 +1349,18 @@ export type SkillUsageApplyMutationArgs =
   | { kind: 'deleteBefore'; analyzerVersion: string; recentSince: number }
   | { kind: 'promote'; analyzerVersion: string };
 
+export interface MediaSpendArgs {
+  day: string;
+  model: string;
+  amount: number;
+  currency: 'USD' | 'CNY';
+  sessionId?: string;
+  userClientId?: string;
+  now: number;
+}
+
 export type DbTxArgsByName = {
+  'usage.recordMediaSpend': MediaSpendArgs;
   'authorization.readProjection': { sessionId: string; leadId: string };
   'codex.importMessages': CodexImportMessagesArgs;
   'claude.importMessages': ClaudeImportMessagesArgs;
@@ -1379,6 +1416,8 @@ export type DbTxArgsByName = {
   'bots.prepareProfileDeletion': { botId: string };
   'bots.persistSessionPermission': { sessionId: string; mode: string };
   'bots.createGroupLane': BotGroupsCreateLaneArgs;
+  'bots.createChannelLane': BotsCreateChannelLaneArgs;
+  'bots.archiveChannelLanes': BotsArchiveChannelLanesArgs;
   'botGroups.create': BotGroupsCreateArgs;
   'botGroups.setMembers': BotGroupsSetMembersArgs;
   'botGroups.delete': BotGroupsDeleteArgs;
@@ -1410,6 +1449,12 @@ export type DbTxArgsByName = {
 };
 
 export type DbTxResultByName = {
+  'usage.recordMediaSpend': {
+    legacyUsd: number;
+    amount: number;
+    currency: 'USD' | 'CNY';
+    approximate: number;
+  } | null;
   'authorization.readProjection': import('../../autoReviewProjection.js').StoredAutoReviewProjection;
   'codex.importMessages': { changed: number };
   'claude.importMessages': { changed: number };
@@ -1469,6 +1514,8 @@ export type DbTxResultByName = {
   'bots.prepareProfileDeletion': undefined;
   'bots.persistSessionPermission': { updated: boolean };
   'bots.createGroupLane': BotGroupsCreateLaneResult;
+  'bots.createChannelLane': BotGroupsCreateLaneResult;
+  'bots.archiveChannelLanes': { archivedSessionIds: string[] };
   'botGroups.create': undefined;
   'botGroups.setMembers': BotGroupsSetMembersResult;
   'botGroups.delete': { archivedSessionIds: string[] };

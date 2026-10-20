@@ -1,4 +1,5 @@
 import { readTokenSpeedSnapshot, type TokenSpeedSnapshot } from '@cindy/maker-shared/usage-format';
+import { historyTurnEnded, nextHistoryCacheReceipt } from '@cindy/maker-shared/message-window';
 import { normalizeTaskTags, reconcileTaskTags } from '@cindy/maker-shared';
 import {
   createContext,
@@ -388,6 +389,10 @@ const INPUT_PROJECTION_REMOTE_EVIDENCE_LIMIT = 256;
 const sessionLiveActivity = new Map<string, RemoteSessionLiveActivity>();
 const sessionRunning = new Map<string, boolean>();
 const sessionRunStatus = new Map<string, RemoteSessionRunStatus>();
+// Pushes can precede the first task list. Keep their provenance until list
+// reconciliation can decide whether they belong to the selected task row.
+const sessionRuntimeSources = new Map<string, string>();
+const sessionInteractionSources = new Map<string, string>();
 // `maker:list-active` snapshots race live maker pushes during reconnect hydration. A snapshot
 // may clear an older transient reconnect attempt, but must not erase a newer retry event that
 // arrived after the request started.
@@ -715,7 +720,7 @@ const pendingRefreshSessions = new Set<string>();
 const reseedHandlers = new Map<string, Set<() => void>>();
 // A whole-list read after app start or a reconnect reseed may follow a gap in live pushes.
 // Listeners read changed tasks ahead; ordinary list refreshes while pushes flow do not fire.
-const sessionListRefreshListeners = new Set<(deviceId: string) => void>();
+const sessionListRefreshListeners = new Set<(deviceId: string, sessionId?: string) => void>();
 const sessionListRefreshArmed = new Set<string>();
 const sessionListRefreshSeen = new Set<string>();
 const subs = new Set<() => void>();
@@ -1073,6 +1078,50 @@ function listMessageWriteAllowed(sessionId: string, deviceId?: string): boolean 
     && retentionForSession(sessionId) === 'regular';
 }
 
+/** Match live state to the same selected host as the merged task row. */
+function sessionStateWriteAllowed(sessionId: string, deviceId?: string): boolean {
+  const indexedDeviceId = sessionDeviceIndex.get(sessionId);
+  return !deviceId || !indexedDeviceId || indexedDeviceId === deviceId
+    || mergedSessionById.get(sessionId)?.canonicalDeviceId === deviceId;
+}
+
+function sessionStateReadAllowed(sessionId: string, deviceId: string | undefined, sources: Map<string, string>): boolean {
+  if (!deviceId) return true;
+  if (!sessionStateWriteAllowed(sessionId, deviceId)) return false;
+  const source = sources.get(sessionId);
+  return !source || source === deviceId || (sessionDeviceIndex.has(sessionId) && sessionStateWriteAllowed(sessionId, source));
+}
+
+function clearSourcedSessionState(sessionId: string, sources: Map<string, string>): void {
+  sources.delete(sessionId);
+  if (sources === sessionInteractionSources) {
+    deletePendingInteractionState(sessionId);
+    pendingInteractionsAuthoritative.delete(sessionId);
+  } else {
+    deleteSessionLiveActivity(sessionId);
+    writeSessionRunStatus(sessionId, EMPTY_SESSION_RUN_STATUS);
+    writeMakerTurnRunning(sessionId, false);
+    sessionMakerActivityEpochs.delete(sessionId);
+  }
+}
+
+function acceptSessionStateSource(
+  sessionId: string,
+  deviceId: string | undefined,
+  sources: Map<string, string>,
+): boolean {
+  if (!sessionStateWriteAllowed(sessionId, deviceId)) return false;
+  if (!deviceId) return true; // Local optimistic updates retain their remote provenance.
+  const previous = sources.get(sessionId);
+  if (previous && previous !== deviceId && !(sessionDeviceIndex.has(sessionId)
+    && sessionStateWriteAllowed(sessionId, previous))) {
+    clearSourcedSessionState(sessionId, sources);
+    emit();
+  }
+  sources.set(sessionId, deviceId);
+  return true;
+}
+
 function normalizeWindowForRetention(
   sessionId: string,
   list: readonly RemoteMessage[],
@@ -1128,6 +1177,8 @@ function invalidateSessionMessageWindowState(
 }
 
 function removeSessionRuntimeState(sessionId: string): void {
+  sessionRuntimeSources.delete(sessionId);
+  sessionInteractionSources.delete(sessionId);
   protectedQuestions.delete(sessionId);
   visibleInteractionCache.delete(sessionId);
   void clearHistoryDisk(undefined, sessionId);
@@ -1661,6 +1712,13 @@ function recomputeSessions(): void {
   reconcileVisibleSessions();
   mergedSessionById.clear();
   for (const session of mergedSessions) mergedSessionById.set(session.id, session);
+  for (const sources of [sessionRuntimeSources, sessionInteractionSources]) {
+    for (const [sessionId, deviceId] of sources) {
+      if (sessionDeviceIndex.has(sessionId) && !sessionStateWriteAllowed(sessionId, deviceId)) {
+        clearSourcedSessionState(sessionId, sources);
+      }
+    }
+  }
   // Usage-only patches bypass this projection and cannot change Home fields.
   // Reuse the list comparison above to skip its scan and allocations entirely.
   if (sessionsChanged) reconcileHomeSessions();
@@ -3533,6 +3591,7 @@ export const remoteSessionStore = {
       return;
     }
     let shouldReseedAfterPatch = false;
+    const turnEnded = historyTurnEnded(shard.sessions[idx], patch);
     if (patch.status === 'deleted' || patch.status === 'archived') {
       protectedQuestions.delete(sessionId);
       visibleInteractionCache.delete(sessionId);
@@ -3574,6 +3633,9 @@ export const remoteSessionStore = {
       shouldReseedAfterPatch = wasPinned && unpinned;
     }
     recomputeSessions();
+    if (turnEnded && patch.status !== 'deleted' && patch.status !== 'archived') {
+      for (const listener of sessionListRefreshListeners) listener(deviceId, sessionId);
+    }
     if (shouldReseedAfterPatch) this.requestReseed(deviceId);
   },
 
@@ -4163,8 +4225,9 @@ export const remoteSessionStore = {
   setPendingInteractions(
     sessionId: string,
     list: readonly PendingInteraction[],
-    options: { finalizeStreaming?: boolean } = {},
+    options: { finalizeStreaming?: boolean; deviceId?: string } = {},
   ): void {
+    if (!acceptSessionStateSource(sessionId, options.deviceId, sessionInteractionSources)) return;
     // 已确认 dismiss 的延长抑制条目按「缺席即过期」回收:本轮快照不含该
     // requestId = 被控端已确认移除,慢的旧快照此后不可能再带着它(权威读取按
     // 请求序返回),条目可以安全解除;仍含 = 这是 resolve 前发出的旧快照,保留
@@ -4347,8 +4410,7 @@ export const remoteSessionStore = {
       if (!isRecord(item)) continue;
       const sessionId = readString(item, 'sessionId');
       if (sessionId && typeof item.isTurnRunning === 'boolean') {
-        const indexedDeviceId = sessionDeviceIndex.get(sessionId);
-        if (indexedDeviceId && indexedDeviceId !== deviceId) continue;
+        if (!sessionStateWriteAllowed(sessionId, deviceId)) continue;
         snapshotStates.set(sessionId, {
           running: item.isTurnRunning,
           activityPhase: readString(item, 'activityPhase'),
@@ -4358,6 +4420,7 @@ export const remoteSessionStore = {
     }
     let changed = false;
     for (const [sessionId, { running, activityPhase, activityAttention }] of snapshotStates) {
+      acceptSessionStateSource(sessionId, deviceId, sessionRuntimeSources);
       if (!running) {
         changed = flushAndFinalizeRemoteStreamingMessages(sessionId) || changed;
         changed = writeMakerTurnRunning(sessionId, false) || changed;
@@ -4394,8 +4457,8 @@ export const remoteSessionStore = {
       changed = writeSessionRunStatus(sessionId, next) || changed;
     }
     if (completeResponse) {
-      for (const [sessionId, indexedDeviceId] of sessionDeviceIndex) {
-        if (indexedDeviceId !== deviceId || snapshotStates.has(sessionId)
+      for (const sessionId of sessionDeviceIndex.keys()) {
+        if (!sessionStateWriteAllowed(sessionId, deviceId) || snapshotStates.has(sessionId)
           || (sessionMakerActivityEpochs.get(sessionId) ?? 0) > activityEpochAtFetchStart) continue;
         // A runtime absent from a complete host snapshot has ended. Do not
         // discard a newer live push that arrived while this read was in flight.
@@ -4604,8 +4667,9 @@ export const remoteSessionStore = {
       const fromList = payload.listMessage === true;
       if (fromList && (!sessionId || !listMessageWriteAllowed(sessionId, deviceId))) return;
       if (sessionId && message) {
-        this.appendMessage(sessionId, message, { listMessage: fromList });
-        if (fromList) void cacheSessionListMessage(deviceId, sessionId, message);
+        const received = fromList ? { ...message, cacheReceipt: nextHistoryCacheReceipt() } : message;
+        this.appendMessage(sessionId, received, { listMessage: fromList });
+        if (fromList) void cacheSessionListMessage(deviceId, sessionId, received);
       }
       return;
     }
@@ -4675,7 +4739,7 @@ export const remoteSessionStore = {
     if (channel === 'maker:status-changed' && isRecord(payload)) {
       const sessionId = readString(payload, 'sessionId');
       const status = readString(payload, 'status');
-      if (sessionId && status === 'closed') this.setSessionRunning(sessionId, false);
+      if (sessionId && status === 'closed' && acceptSessionStateSource(sessionId, deviceId, sessionRuntimeSources)) this.setSessionRunning(sessionId, false);
       return;
     }
     if (channel === 'usage:message-turn-cost' && isRecord(payload)) {
@@ -4774,7 +4838,7 @@ export const remoteSessionStore = {
     if (channel === 'maker:interaction-request' && isRecord(payload)) {
       const sessionId = readString(payload, 'sessionId');
       const request = isRecord(payload.request) ? payload.request : null;
-      if (sessionId && request) {
+      if (sessionId && request && acceptSessionStateSource(sessionId, deviceId, sessionInteractionSources)) {
         this.applyInteractionRequest(sessionId, {
           request: request as PendingInteraction['request'],
           persistId: readString(payload, 'persistId') ?? undefined,
@@ -4785,7 +4849,7 @@ export const remoteSessionStore = {
     if (channel === 'maker:interaction-dismissed' && isRecord(payload)) {
       const sessionId = readString(payload, 'sessionId');
       const requestId = readString(payload, 'requestId');
-      if (sessionId && requestId) {
+      if (sessionId && requestId && acceptSessionStateSource(sessionId, deviceId, sessionInteractionSources)) {
         if (payload.reason === 'resolved' && !(isRecord(payload.decision) && payload.decision.dismissed === true)) {
           this.confirmProtectedQuestion(sessionId, requestId);
         }
@@ -4821,11 +4885,12 @@ export const remoteSessionStore = {
     emit();
   },
 
-  applySessionActivity(_deviceId: string, payload: unknown): void {
+  applySessionActivity(deviceId: string, payload: unknown): void {
     if (!isRecord(payload)) return;
     const sessionId = readString(payload, 'sessionId');
     const phase = readString(payload, 'phase');
-    if (!sessionId || !isRemoteSessionLiveActivityPhase(phase)) return;
+    if (!sessionId || !isRemoteSessionLiveActivityPhase(phase)
+      || !acceptSessionStateSource(sessionId, deviceId, sessionRuntimeSources)) return;
     markSessionMakerActivity(sessionId);
     const compactDetail = typeof payload.compactDetail === 'string' ? payload.compactDetail : '';
     let changed = false;
@@ -4889,8 +4954,12 @@ export const remoteSessionStore = {
     deviceId?: string,
     fromList = false,
   ): void {
-    markSessionMakerActivity(sessionId);
     const type = readString(event, 'type');
+    // Text has its own transport replacement/retention rules; only fence the
+    // runtime signals here, so reconnecting transports keep their existing data path.
+    if ((type === 'status' || type === 'done' || type === 'error')
+      && !acceptSessionStateSource(sessionId, deviceId, sessionRuntimeSources)) return;
+    markSessionMakerActivity(sessionId);
     const reconnectCleared = type !== null && type !== 'error' && type !== 'done'
       ? clearSessionReconnectAttempt(sessionId)
       : false;
@@ -5341,6 +5410,8 @@ export const remoteSessionStore = {
       bumpHomeStatusVersion();
     }
     sessionRunStatus.clear();
+    sessionRuntimeSources.clear();
+    sessionInteractionSources.clear();
     sessionMakerActivityEpochs.clear();
     makerActivityEpoch = 0;
     sessionMessageSyncMarkers.clear();
@@ -5402,8 +5473,8 @@ export const remoteSessionStore = {
     reseedHandlers.get(deviceId)?.forEach((handler) => handler());
   },
 
-  /** Whole-list reads that may follow missed pushes (first read per app run, reconnect reseed). */
-  onSessionListRefreshAfterGap(listener: (deviceId: string) => void): () => void {
+  /** First/reconnected lists, or a specific task whose durable turn just ended. */
+  onSessionHistoryPrefetchRequested(listener: (deviceId: string, sessionId?: string) => void): () => void {
     sessionListRefreshListeners.add(listener);
     return () => { sessionListRefreshListeners.delete(listener); };
   },
@@ -5571,7 +5642,8 @@ export const remoteSessionStore = {
     return newMakerWorktreeBranchPreferences.get(deviceId)?.get(baseRepo.trim()) ?? null;
   },
 
-  getPendingInteractions(sessionId: string): PendingInteraction[] {
+  getPendingInteractions(sessionId: string, deviceId?: string): PendingInteraction[] {
+    if (!sessionStateReadAllowed(sessionId, deviceId, sessionInteractionSources)) return emptyPendingInteractions;
     return pendingInteractions.get(sessionId) ?? emptyPendingInteractions;
   },
 
@@ -5622,12 +5694,13 @@ export const remoteSessionStore = {
     return inputProjections.get(sessionId) ?? EMPTY_INPUT_PROJECTION;
   },
 
-  getSessionLiveActivity(sessionId: string): RemoteSessionLiveActivity | null {
+  getSessionLiveActivity(sessionId: string, deviceId?: string): RemoteSessionLiveActivity | null {
+    if (!sessionStateReadAllowed(sessionId, deviceId, sessionRuntimeSources)) return null;
     return sessionLiveActivity.get(sessionId) ?? null;
   },
 
-  isSessionRunning(sessionId: string): boolean {
-    return sessionRunning.get(sessionId) === true;
+  isSessionRunning(sessionId: string, deviceId?: string): boolean {
+    return sessionStateReadAllowed(sessionId, deviceId, sessionRuntimeSources) && sessionRunning.get(sessionId) === true;
   },
 
   getSessionRunStatus(sessionId: string): RemoteSessionRunStatus {

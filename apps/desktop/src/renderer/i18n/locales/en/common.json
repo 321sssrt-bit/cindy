@@ -1,4 +1,26 @@
 {
+  "mailReader": {
+    "markReadFailed": "Could not sync read status. Check mailbox authorization and reopen this email.",
+    "title": "Mail",
+    "openMailbox": "Open in mailbox",
+    "loading": "Loading email…",
+    "failed": "Could not load this email. Check the connected mailbox account, retry, or open it in your mailbox.",
+    "retry": "Retry",
+    "to": "To",
+    "cc": "Cc",
+    "bcc": "Bcc",
+    "subject": "Subject",
+    "currentMessage": "Current email",
+    "messageCount_other": "{{count}} emails",
+    "messageCount_one": "{{count}} email",
+    "showMessages_other": "Show {{count}} emails",
+    "showMessages_one": "Show {{count}} email",
+    "expandMessage": "Expand email from {{from}}",
+    "collapseMessage": "Collapse email from {{from}}",
+    "conversationFailed": "Other emails in this conversation could not be loaded.",
+    "messageCount": "{{count}} emails",
+    "showMessages": "Show {{count}} emails"
+  },
   "logSupport": {
     "title": "Logs and Feedback",
     "localFiles": "Choose logs from the day of the problem. Review unredacted files before sharing.",
@@ -280,6 +302,17 @@
         "toastRejected": "Declined {{name}}’s request",
         "toastRevoked": "Withdrew agreement for {{name}}. Running sessions were stopped.",
         "listTitle": "Using it through {{owner}}’s provider group"
+      },
+      "memberNote": {
+        "add": "Set Note",
+        "edit": "Edit Note",
+        "title": "Set User Note",
+        "label": "Note",
+        "username": "Username: {{name}}",
+        "hint": "Up to {{count}} characters. Leave blank to clear. Only visible to you.",
+        "save": "Save Note",
+        "saving": "Saving note…",
+        "saveFailed": "Could not save note"
       }
     },
     "toast": {
@@ -453,6 +486,66 @@
       "rejectedBody": "{{name}} declined to share {{provider}}",
       "reshareTitle": "New Usage Request",
       "reshareBody": "{{name}} wants to use your shared {{provider}} through {{owner}}’s provider group"
+    },
+    "runLimits": {
+      "title": "Remote session limits",
+      "description": "Applies to all providers on this computer, including your other computers and devices using shared providers. Idle sessions count until released. Sessions run directly on this computer do not count.",
+      "perDevice": "Maximum sessions per connected device",
+      "total": "Maximum sessions across all connected devices",
+      "invalid": "Enter whole numbers from 1 to {{max}}. The per-device limit cannot exceed the total limit.",
+      "usage": "{{used}} / {{total}} sessions held by {{devices}} devices; the busiest device holds {{largest}}.",
+      "applyHint": "Changes apply immediately. Lowering a limit only blocks new sessions; existing sessions continue. Group relays count toward the directly connected device.",
+      "save": "Save",
+      "reset": "Restore defaults",
+      "saved": "Remote session limits saved",
+      "retry": "Reload",
+      "loading": "Loading…"
+    },
+    "insights": {
+      "visibilityTitle": "Shared Information",
+      "visibilityNote": "Applies to everyone using this shared provider. Turning off viewing permissions does not affect model use.",
+      "allowQuota": "Allow Viewing Remaining Allowance",
+      "allowUsage": "Allow Viewing Usage Details",
+      "saveFailed": "Could not save sharing permissions",
+      "quotaTitle": "Remaining Allowance",
+      "quotaNote": "This allowance is shared by the account, not reserved for you.",
+      "groupNote": "Accounts are shown separately; percentages are not added. Some accounts may be omitted. Accounts borrowed from others are excluded, and the same account on multiple computers may appear more than once.",
+      "account": "Account {{number}}",
+      "noOwnAccounts": "This group has no owned accounts whose allowance can be shared",
+      "usageNote": "Historical usage includes the owner and current users. Amounts are estimates.",
+      "relayNote": "Relayed usage is grouped separately because the end users are unknown. It is not counted as the owner’s own usage.",
+      "relay": "Relayed Usage",
+      "you": "You",
+      "owner": "Owner",
+      "notShared": "The owner has not shared the remaining allowance",
+      "usageNotShared": "The owner has not shared usage details",
+      "usageUnavailable": "Usage details are temporarily unavailable",
+      "denied": "This share cannot be viewed right now",
+      "unsupported": "Allowance reading is not supported for this provider",
+      "unavailable": "Allowance or usage is temporarily unavailable",
+      "offline": "The owner’s computer is offline or disconnected",
+      "needs-update": "The owner needs to update Cindy to share this information",
+      "unlimited": "No personal limit set",
+      "session": "Current Period",
+      "week": "Weekly",
+      "scoped": "Separate Period",
+      "remaining": "{{percent}}% remaining",
+      "resets": "Resets: {{time}}",
+      "updated": "Updated {{time}}",
+      "usageTitle": "Usage Details",
+      "allowUsageDescription": "When enabled, everyone using this shared provider can view the sharer's and every other user's display names and detailed usage history."
+    },
+    "idleRelease": {
+      "title": "When this computer uses models on other computers",
+      "description": "When tasks on this computer use models on another computer, that computer limits how many of them it runs at once. As the limit gets close, you can let tasks idle longer than the time below disconnect temporarily to make room for new tasks. Send one a message and it reconnects automatically, with the earlier conversation intact. Tasks that are running are never disconnected; while a task is disconnected, its background commands on this computer keep running.",
+      "minutes": "Idle release (minutes)",
+      "hint": "The default is 0, which never disconnects; when the limit is reached you see the limit message. With 1–120, a task can disconnect only after it has been idle this long.",
+      "invalid": "Enter a whole number from 0 to {{max}}.",
+      "save": "Save",
+      "reset": "Restore defaults",
+      "saved": "Idle release setting saved",
+      "retry": "Reload",
+      "loading": "Loading…"
     }
   },
   "providerGroup": {
@@ -709,6 +802,9 @@
     "controlledByDevice": "{{name}} is controlling your desktop",
     "viewedByDevice": "{{name}} is viewing your desktop",
     "disconnect": "Disconnect",
+    "disconnectChoiceDetail": "Disconnecting ends this remote desktop session; the device can connect again later.",
+    "disconnectRevoke": "Also revoke this device's access",
+    "disconnectRevokeHint": "It can no longer connect to this machine until you restore it under Settings → Remote Connection.",
     "back": "Back",
     "connect": "Connect",
     "connecting": "Connecting…",
@@ -1279,6 +1375,7 @@
     "tabs": {
       "storage": "Storage",
       "general": "General",
+      "appearance": "Appearance",
       "billing": "Usage and billing",
       "usage": "Usage history",
       "personalization": "Personalization",
@@ -1605,6 +1702,7 @@
     "appearance": {
       "title": "Appearance",
       "modeLabel": "Appearance Mode",
+      "sidebarAndPanels": "Sidebar & panels",
       "themeLabel": "Theme",
       "themeAriaLabel": "Theme selection",
       "localBadge": "(Local)",
@@ -1631,6 +1729,7 @@
       },
       "font": {
         "reset": "Reset to default",
+        "title": "Fonts",
         "defaultPreset": "Default",
         "presets": "Presets",
         "custom": "Custom",
@@ -1669,8 +1768,12 @@
           "ui": "The quick brown fox jumps over the lazy dog ABC xyz · a/b/c/d · a,b · 0123456789 !?@&"
         }
       },
-      "missingLightNotice": "{{name}} has no light variant; showing its dark variant instead.",
-      "missingDarkNotice": "{{name}} has no dark variant; showing its light variant instead.",
+      "singleVariant": {
+        "lightOnly": "Light only",
+        "darkOnly": "Dark only",
+        "lightNotice": "{{name}} only has a light variant, so the appearance mode stays light. Your choice comes back when you switch themes.",
+        "darkNotice": "{{name}} only has a dark variant, so the appearance mode stays dark. Your choice comes back when you switch themes."
+      },
       "theme": {
         "light": "Light",
         "dark": "Dark",
@@ -1691,13 +1794,6 @@
         "hint": "For unpinned sessions: Text uses one line; List adds a preview.",
         "aria": "Switch session list style"
       },
-      "ghostPanelRestore": {
-        "label": "Plugin panel restore entry",
-        "hint": "Choose where minimized plugin panels can be restored.",
-        "aria": "Choose the plugin panel restore entry",
-        "bubble": "Floating bubble",
-        "sidebar": "Sidebar"
-      },
       "wallpaper": {
         "title": "Wallpaper",
         "description": "Choose a Cindy scene, image or video for the whole app, independently of the theme.",
@@ -1710,31 +1806,18 @@
           "cindy-studio": "Cindy · Future Atelier",
           "cindy-dream": "Cindy · Dream Voyage",
           "cindy-whisper": "Cindy · Whisper",
-          "cindy-crimson": "Cindy · Crimson Realm",
           "cindy-night-glance": "Cindy · Night Glance",
           "cindy-scarlet-stroll": "Cindy · Scarlet Stroll",
           "cindy-neon": "Cindy · Neon Silhouette",
           "cindy-prism": "Cindy · Prism Shards",
-          "wheatfield-watch": "Wheatfield Watch",
-          "teacup-cat": "Teacup Cat",
-          "cloud-roaming": "Under the Clouds",
           "night-launch": "Night Launch",
-          "stardust-vortex": "Stardust Vortex",
           "silent-orbits": "Silent Orbits",
           "dune-dawn": "Dune Dawn",
           "planet-dawn": "Planet Dawn",
-          "neon-valley": "Neon Valley",
-          "silent-circuit": "Silent Circuit",
           "indigo-folds": "Indigo Folds",
-          "moon-solitude": "Moon Gazer",
           "dune-sphere": "Dune Sphere",
           "ocean-clouds": "Ocean Clouds",
-          "blush-leaves": "Blush Leaves",
-          "white-wilderness": "White Wilderness",
           "rose-quartz": "Rose Quartz",
-          "silver-veins": "Silver Veins",
-          "dawn-arc": "Dawn Arc",
-          "tidal-lines": "Tidal Lines",
           "custom": "Custom wallpaper"
         },
         "visibilityLabel": "Wallpaper Visibility",
@@ -1763,7 +1846,7 @@
         "reset": "Restore default layout",
         "resetSuccess": "Default panel layout restored",
         "resetFailed": "Could not restore the panel layout.",
-        "saved": "Panel position saved. Restore the default layout in the Appearance section under Settings → General.",
+        "saved": "Panel position saved. Restore the default layout in Settings → Appearance.",
         "saveFailed": "Could not save panel positions."
       }
     },
@@ -3012,6 +3095,7 @@
           "quotaTitle": "Remaining this period",
           "quotaUsed": "Used {{used}} / Period allowance {{total}}",
           "loading": "Loading…",
+          "noPersonalLimit": "No personal spending limit set",
           "unavailable": "Temporarily unavailable. Refresh to retry.",
           "refresh": "Refresh allowance"
         },
@@ -3938,6 +4022,15 @@
         "workingDirSaved": "Working directory for new WeChat conversations updated",
         "workingDirReset": "New WeChat conversations now use the default directory",
         "workingDirFailed": "Could not update the working directory. Select it again."
+      },
+      "companion": {
+        "assigned": "Replies come from the linked teammate",
+        "description": "Chat with {{name}} on WeChat, sharing memory and the main task. This computer’s WeChat connection can belong to one teammate at a time.",
+        "other": "WeChat is linked to another teammate. Remove that link in their connection settings or Personal WeChat settings first.",
+        "permissionNote": "WeChat keeps per-action permission checks. Choose Claude Code or Codex for this teammate, with Auto-review or Ask permissions.",
+        "remove": "Remove teammate link",
+        "useExisting": "Use connected WeChat with {{name}}",
+        "updateFailed": "Could not update the link. Wait for WeChat tasks to finish, then retry and check that the teammate is available."
       }
     },
     "discordBot": {
@@ -4571,7 +4664,7 @@
     "agentResource": {
       "saveFailed": "Failed to save. Try again.",
       "title": "Agent Resource Usage",
-      "description": "Limit how much system capacity Agent command-line work can consume, so parallel tests or builds don't freeze your machine. Defaults to full speed (no intervention). The concurrency limit applies immediately; priority lowering reaches running Agent processes within about 15 seconds; raising priority back to Normal and toolchain thread caps only apply to newly started Agent processes. Applies to local Agents only; Agents on remote (SSH) machines are not governed by these settings.",
+      "description": "Limit the system resources Agent command-line work can use, so parallel tests or builds don't slow down your computer. Defaults to full speed and applies only to local Agents, not remote (SSH) machines.",
       "preset": "Profile",
       "presets": {
         "full": "Full Speed",
@@ -4587,18 +4680,19 @@
       "maxConcurrent": "Concurrent Command Limit",
       "maxConcurrentHint": "Maximum number of commands the Claude Code engine may run at once; extra commands wait in a queue. 0 means unlimited. Codex commands run inside their own sandbox without a per-command hook and are covered by the priority and thread-cap layers instead.",
       "priority": "Process Priority",
-      "priorityHint": "Lower it so Agents only use idle capacity and foreground apps stay responsive. Raising it back only applies to newly started Agent processes.",
+      "priorityHint": "Lower it so Agents only use idle capacity and foreground apps stay responsive. Lowering reaches running Agents within about 15 seconds; raising it back to Normal only applies to newly started Agents.",
       "priorityOptions": {
         "normal": "Normal",
         "low": "Low",
         "lowest": "Lowest"
       },
       "capThreads": "Cap Toolchain Parallelism",
-      "capThreadsHint": "Injects environment variables such as VITEST_MAX_FORKS and MAKEFLAGS so a single test or build command can't take every CPU core. Variables you set yourself are never overridden."
+      "capThreadsHint": "Injects environment variables such as VITEST_MAX_FORKS and MAKEFLAGS so a single test or build command can't take every CPU core. Applies only to newly started Agents; variables you set yourself are never overridden."
     },
     "piPackages": {
       "title": "Pi extensions",
       "entryTitle": "Pi extension settings",
+      "manageLabel": "Manage extensions",
       "entryDescription": "Install, enable, or uninstall extensions for Cindy's Pi",
       "backToGeneral": "Back to General",
       "description": "Extensions stay in Cindy on this device. Any ordinary Pi task executed here can use them, even when started from a phone or another connected client. Review does not load them.",
@@ -6283,7 +6377,8 @@
         "updateTo": "Update to v{{version}}",
         "updateAria": "Update {{name}} to v{{version}}",
         "createWithCindy": "Create with Cindy",
-        "createPrompt": "I want to create a Cindy plugin. First call ghost_forge_guide to get the handbook's table of contents, read chapter 0 (design alignment) first, then read the relevant chapters via the section parameter (at minimum the capability overview, sandbox red-lines, and packaging chapters) before writing any code; do not start implementing yet. Begin by asking questions: prefer option-based question cards, one key decision per card with your recommended choice marked, and proactively surface design options I may not know about — such as the UI form (docked panel, panel inside the Plugins page, chat card, or no UI), a $ command word, launch mode, background abilities (event listening, in-app toast notifications, unread badges, confirmation dialogs), network access, whether a settings page is needed, whether a bundled Node process should do heavy lifting, and whether image/video media abilities are needed. Step by step, confirm the problem to solve, target users, interaction flow, required tools and connections, permission boundaries, and acceptance criteria. After I confirm the design, implement and validate it according to the specification, then call ghost_forge_pack to validate and produce the .cindy package; do not claim that it was installed.",
+        "createPrompt": "Help me create a Cindy plugin.",
+        "creatorUnavailable": "The built-in plugin creation Skill is unavailable.",
         "filterAll": "All",
         "filtersAria": "Filter plugins by source",
         "origin": {
@@ -6429,7 +6524,7 @@
         "bodyInvalid": "This plugin's installation verification record is damaged, so the plugin is paused. Reinstall the marketplace release or select the matching .cindy package again.",
         "bodyBuiltinRestart": "Something went wrong with this built-in plugin's installation verification record. Restart Cindy to recover automatically — no other action is needed."
       },
-      "install": "Install Plugin…",
+      "install": "Install from file…",
       "empty": "No plugins installed yet",
       "emptyHint": "Install from the market, or import a .cindy file from the menu above",
       "legacyRecovery": {
@@ -6453,14 +6548,19 @@
       "projectDisabledTag": "Off in this project",
       "projectSwitchLockedTip": "This plugin is disabled globally; enable it in the Global view first",
       "projectBanner": {
-        "title": "Configuring project \"{{name}}\"",
-        "desc": "Switches here only affect this project — turned-off plugins are unavailable in it",
+        "title": "Current Project: {{name}}",
+        "desc": "Switches affect only this project. Installation, updates, removal, and configuration apply to {{device}}.",
         "backToGlobal": "Back to global"
       },
       "scopePicker": {
         "global": "Global (default)",
         "ariaLabel": "Choose where plugins take effect",
-        "browse": "Choose another folder…"
+        "browse": "Choose another folder…",
+        "management": "Management scope",
+        "globalScope": "Global",
+        "computers": "Computers",
+        "projectScope": "Project Scope",
+        "projectsForComputer": "Projects on {{device}}"
       },
       "enableAria": "Enable {{name}}",
       "uninstall": "Uninstall",
@@ -6552,6 +6652,11 @@
         "unknownReviewerDetail": "The package claims a review, but this Cindy version does not recognize the reviewer key, so it is not shown as reviewed."
       },
       "perm": {
+        "mail": "Use mail drafts and send cards",
+        "mailDetail": "Edit and sync drafts in a card, with confirmation and an undo countdown before sending.",
+        "mailReader": "View mail in the app",
+        "mailReaderHost": "Open mail links from {{host}} in the app",
+        "mailMarkRead": "Mark messages as read when opened",
         "grantsTitle": "After installing it will have:",
         "toolsGroup": "Registered Tools",
         "toolsDiffGroup": "Registered Tool Changes",
@@ -6591,9 +6696,9 @@
         "nodeResidentDetail": "Runs while the plugin is enabled and stops when disabled, updated, uninstalled, or when Cindy exits.",
         "tool": "Tool \"{{name}}\"",
         "command": "Chat command ${{command}}",
-        "panelLeft": "Panel \"{{title}}\" · docked left of the chat",
+        "panelLeft": "Panel \"{{title}}\" · shown in the sidebar",
         "panelTab": "Panel \"{{title}}\" · opens inside the Plugins page",
-        "mainView": "Can add a “{{title}}” entry to Cindy's sidebar",
+        "mainView": "Can add a “{{title}}” entry to Cindy's left navigation",
         "mainViewDetail": "Opening it displays the main view in the plugin sandbox and does not grant file, network, or credential access.",
         "code": "Executable code",
         "codeDetail": "Runs in an isolated sandbox with no access to your files or network.",
@@ -6612,7 +6717,7 @@
         "notify": "Can show system tips (light banner at the top of the screen)",
         "notifyDetail": "Tip text is provided by this plugin and labeled with its name; tips fade automatically and never block your work.",
         "badge": "Can light an unread mark on the Plugins entry",
-        "badgeDetail": "When it has something new, it can show a green dot on the sidebar Plugins entry and on its own card, with a one-line summary. Opening its panel clears the dot. The dot makes no sound, does not vibrate, never reaches your system notification center, and is a permission separate from system tips.",
+        "badgeDetail": "When it has something new, it can show a green dot on the Plugins entry in the left navigation and on its own card, with a one-line summary. Opening its panel clears the dot. The dot makes no sound, does not vibrate, never reaches your system notification center, and is a permission separate from system tips.",
         "confirm": "Can ask for your confirmation in a dialog",
         "confirmDetail": "Before acting it can open a dialog that looks like Cindy's own to ask you. The question comes from the plugin and the dialog is labeled with its name; only you can click confirm or cancel — the plugin cannot. At most one dialog at a time, and asking too often is blocked.",
         "fsWrite": "Can write files (create / modify)",
@@ -6688,8 +6793,9 @@
         "locationCopied": "Install location copied",
         "locationCopyFailed": "Could not copy the install location. Copy it manually.",
         "openLocation": "Open install location",
-        "panelDocked": "Docked · min width {{min}}px",
-        "panelNotDocked": "Not docked (no layout record yet)",
+        "panelInSidebar": "Shown in the right sidebar (kept across tasks)",
+        "panelDismissed": "Closed from the right sidebar · reopen here or from the sidebar “+” menu",
+        "openInSidebar": "Open in the sidebar",
         "panelPageHosted": "Opens from the Plugin page · closes when you leave",
         "panelNone": "This plugin has no panel",
         "customSlotTitle": "Plugin custom settings area",
@@ -6735,16 +6841,17 @@
         "settingsUnavailableUntilRestore": "Restore the plugin to use this configuration again.",
         "oauthScopeStale": "This authorization does not include newly added permissions. Reconnect to grant them.",
         "configurationTitle": "Configuration",
-        "sidebarEntryTitle": "Sidebar entry",
-        "showInSidebar": "Show in sidebar",
-        "sidebarEntryDescription": "When turned on, “{{title}}” appears in the sidebar, either at the top or under More — choose where in More → Customize. Hiding it does not disable the plugin.",
+        "sidebarEntryTitle": "Navigation Entry",
+        "showInSidebar": "Show in Left Navigation",
+        "sidebarEntryDescription": "When turned on, “{{title}}” appears in the left navigation alongside Automations and Plugins, either at the top or under More — choose where in More → Customize. Hiding it does not disable the plugin.",
         "openTool": "View details for Tool {{name}}",
         "noToolDescription": "No description is available for this Tool.",
         "viewAllTools": "See All",
         "collapseTools": "Collapse Tools",
         "viewAllPermissions": "See All",
         "permissionsDialogDescription": "All {{count}} permissions requested by this Plugin",
-        "closeDialog": "Close Dialog"
+        "closeDialog": "Close Dialog",
+        "resetPlacement": "Reset to default position"
       },
       "contents": {
         "mainView": "Main view",
@@ -6958,6 +7065,49 @@
           "requirements": "Requires an Apple Silicon Mac, macOS 15 or later, and full Xcode.",
           "dataNotice": "Your original simulator devices and app data will not be deleted. Installing Baguette does not automatically migrate devices, apps, or sign-ins."
         }
+      },
+      "remote": {
+        "device": "Manage computer",
+        "thisComputer": "This computer",
+        "offline": "Offline",
+        "confirmOn": "{{name}} on {{device}}",
+        "targetOnly": "Configuration is saved on {{device}}.",
+        "hostPreferencesUnavailable": "This computer does not support remote editing of model, task or sidebar preferences. Configure them on {{device}}.",
+        "taskWorkdirBoundary": "The working directory stays on the target computer. Change it there.",
+        "configurationLoading": "Loading settings…",
+        "configurationReadFailed": "Could not load settings.",
+        "refreshConfiguration": "Refresh Settings",
+        "enableBeforeConfigure": "This plugin is disabled. Enable it with the switch above before configuring.",
+        "settingsPageUnavailable": "Open Cindy on {{device}} to use this plugin’s settings page. This version of the target computer cannot display it remotely.",
+        "offlineNotice": "{{device}} is offline. Management is unavailable until the connection is restored.",
+        "managingTarget": "Managing {{device}}",
+        "managingDescription": "Changes are saved on this computer.",
+        "viewingTarget": "Installed on {{device}}",
+        "unsupported": "The Cindy version on {{device}} does not support remote management yet. You can view its installed plugins here. To install, update, uninstall, enable, disable or configure plugins and manage project settings, update Cindy on that computer.",
+        "refresh": "Refresh Plugins",
+        "instanceId": "Plugin Instance",
+        "detailLoading": "Reading plugin details…",
+        "detailReadFailed": "Could not read plugin details.",
+        "refreshDetail": "Refresh Details",
+        "detailUnavailable": "This computer has not provided all plugin details. Only the information it returned is shown.",
+        "retry": "Retry",
+        "readFailed": "Could not read plugins.",
+        "unknown": "The result is not confirmed. Query the original operation to check it.",
+        "success": "Completed on the target computer.",
+        "cancelled": "Cancelled.",
+        "actionFailed": "The operation failed. Refresh the list before trying again.",
+        "changed": "The plugin changed. Refresh before trying again.",
+        "uninstallOn": "Uninstall {{name}} from {{device}}?",
+        "uninstall": "Uninstall",
+        "empty": "No plugins installed on this computer.",
+        "marketUnavailable": "The target computer’s plugin market is unavailable.",
+        "personalInstall": "Personal installation",
+        "loading": "Reading plugins…",
+        "installDestination": "Install to: {{device}}",
+        "projectsUnsupported": "Update Cindy on this computer to manage project settings.",
+        "noProjects": "No projects are available on this computer yet.",
+        "projectLoading": "Reading project settings…",
+        "projectReadFailed": "Could not read project settings. Try again."
       },
       "usage": {
         "title": "Your calls",
@@ -7974,19 +8124,7 @@
     "collapsePanel": "Collapse",
     "expandPanel": "Expand"
   },
-  "panelChrome": {
-    "maximizeAria": "Maximize panel",
-    "restoreAria": "Restore panel size",
-    "detachAria": "Open in a new window",
-    "minimizeAria": "Minimize panel",
-    "closeAria": "Close panel and disable plugin"
-  },
   "ghostPanel": {
-    "disableConfirm": {
-      "title": "Disable \"{{name}}\"?",
-      "body": "Closing this panel disables the plugin and pauses its capabilities. You can re-enable it anytime from Plugins in the sidebar.",
-      "confirm": "Disable"
-    },
     "externalLinkConfirm": {
       "title": "Allow Cindy to open an external website?",
       "message": "Allow Cindy to open an external website?",
@@ -7994,19 +8132,11 @@
       "cancel": "Cancel"
     }
   },
-  "ghostPanelWindow": {
-    "mergeBack": "Return to main window",
-    "unavailable": "This plugin panel is currently unavailable"
-  },
-  "ghostPanelBubble": {
-    "restoreAria": "Restore {{name}} panel",
-    "stackExpandAria": "{{count}} plugin panels minimized. Click to expand",
-    "stackCollapseAria": "Collapse the plugin panel list"
-  },
-  "ghostPanelRestore": {
-    "single": "Restore {{name}}",
-    "multiple": "Minimized plugin panels",
-    "multipleAria": "{{count}} plugin panels minimized. Choose a panel to restore"
+  "ghostMainView": {
+    "openInSidebar": "Open in the sidebar",
+    "openInPage": "Open as page",
+    "openInWindow": "Open in a separate window",
+    "resetPlacement": "Reset to default position"
   },
   "rightSidebar": {
     "ariaLabel": "Right sidebar",
@@ -8020,16 +8150,24 @@
       "mergeBack": "Merge back to main window",
       "followPlaceholder": "The sidebar follows the main window's current session"
     },
+    "tabWindow": {
+      "title": "Sidebar tab",
+      "mergeBack": "Merge back into the sidebar",
+      "loading": "Loading…",
+      "closed": "This tab has been closed"
+    },
     "emptyTitle": "Reserved area",
     "emptyDesc": "Right sidebar content will be added in future iterations.",
     "tabs": {
       "addAria": "Add tab",
       "addFailed": "Failed to add tab",
       "tabCloseAria": "Close tab",
+      "pinnedAria": "Global tab, kept across tasks",
       "menu": {
         "addLabel": "Add tab",
         "comingSoon": "Coming soon",
-        "alreadyOpen": "Open"
+        "alreadyOpen": "Open",
+        "pluginsLabel": "Plugins"
       },
       "kinds": {
         "fileBrowser": "File browser",
@@ -8041,19 +8179,23 @@
         "resourceUsage": "Activity Monitor",
         "collaboration": "Team",
         "unknown": "Unknown tab",
-        "ghostPanel": "Plugin panel"
+        "ghostPanel": "Plugin panel",
+        "pluginView": "Plugin view"
       },
       "controls": {
         "showAria": "Show sidebar",
         "maximizeAria": "Maximize sidebar",
         "restoreAria": "Restore sidebar",
         "closeAria": "Close sidebar",
-        "detachAria": "Open sidebar in a new window"
+        "detachAria": "Open the current tab in a new window"
       },
       "contextMenu": {
         "close": "Close",
         "closeOthers": "Close others",
-        "closeAll": "Close all"
+        "closeAll": "Close all",
+        "openInWindow": "Open in a new window",
+        "moveTo": "Move to {{target}}",
+        "moveToWindow": "Move to window:"
       },
       "empty": {
         "eyebrow": "Right Sidebar",
@@ -8075,6 +8217,12 @@
         "addMoreHint": "Use the + button at the top to choose more panel types"
       },
       "placeholderHint": "{{kind}} — content coming in a later phase"
+    },
+    "tabGroups": {
+      "left": "left side",
+      "right": "right sidebar",
+      "top": "top",
+      "bottom": "bottom"
     },
     "fileBrowser": {
       "noWorkdir": "This session has no local working directory; file browser unavailable",
@@ -8824,138 +8972,60 @@
     "workbench": {
       "title": "Workbench",
       "open": "Open workbench",
-      "emptyTitle": "Give {{name}} a project",
-      "emptyDescription": "Hand the work already on your computer to {{name}}. It first looks over the project's docs, recent commits and PRs, and past sessions, picks out what's unfinished or worth doing, and asks which one to continue.",
-      "scanning": "Looking for projects on this computer…",
-      "noProjects": "No projects with sessions yet. Pick a folder to hand to {{name}}.",
-      "pickFolder": "Choose another folder",
-      "cancelAdd": "Cancel",
-      "projectTasks_one": "{{count}} session",
-      "projectTasks_other": "{{count}} sessions",
-      "projectAutomations_one": "{{count}} automation",
-      "projectAutomations_other": "{{count}} automations",
-      "sourceCindy_one": "{{count}} Cindy session",
-      "sourceCindy_other": "{{count}} Cindy sessions",
-      "sourceClaude_one": "{{count}} Claude Code session",
-      "sourceClaude_other": "{{count}} Claude Code sessions",
-      "sourceCodex_one": "{{count}} Codex session",
-      "sourceCodex_other": "{{count}} Codex sessions",
-      "moreProjects": "{{count}} more",
-      "hideMoreProjects": "Show less",
-      "grant": "{{name}} can view, continue and stop {{scope}} in {{project}}, and will start new sessions for you.",
-      "grantTasks_one": "{{count}} session",
-      "grantTasks_other": "{{count}} sessions",
-      "grantCindy_one": "{{count}} Cindy session",
-      "grantCindy_other": "{{count}} Cindy sessions",
-      "grantClaude_one": "{{count}} Claude Code session",
-      "grantClaude_other": "{{count}} Claude Code sessions",
-      "grantCodex_one": "{{count}} Codex session",
-      "grantCodex_other": "{{count}} Codex sessions",
-      "grantAutomations_one": "{{count}} automation",
-      "grantAutomations_other": "{{count}} automations",
-      "grantEverything": "the sessions and automations",
-      "handOver": "Hand to {{name}}",
-      "handoverMessage": "I'm handing {{project}} over to you.",
-      "addProject": "Give {{name}} another project",
-      "removeProject": "Take {{project}} back from {{name}}",
-      "dirMissing": "Folder not found",
-      "dirUnavailable": "This folder can't be opened. Try another one.",
-      "tooManyDirs": "{{name}} can look after up to {{count}} projects",
-      "sendFailed": "Could not send to {{name}}. Try again.",
-      "tasksEmpty": "Nothing to pick up yet.",
-      "understanding": "{{name}} is getting to know {{project}}…",
       "untitled": "Untitled session",
-      "continueMessage": "Continue “{{title}}”: {{text}}",
-      "verdict": {
-        "unfinished": "Unfinished",
-        "idea": "Not followed up"
-      },
-      "detail": {
-        "back": "Back to workbench",
-        "stop": "Stop this session",
-        "openInTasks": "Open in sessions",
-        "placeholder": "Add a note so {{name}} can continue…",
-        "send": "Send",
-        "sent": "Sent to {{name}}",
-        "judgment": "{{name}}'s take",
-        "empty": "Nothing to show yet.",
-        "loadFailed": "Couldn't read this session.",
-        "truncated": "Showing the most recent part only",
-        "ref": "Reference",
-        "noRef": "No reference attached.",
-        "openPr": "Open PR #{{number}} on GitHub",
-        "refBlocked": "This path is outside the handed-over projects, so it wasn't opened.",
-        "stopLabel": "Stop",
-        "doing": "Working on",
-        "outputs": "Outputs so far",
-        "recent": "Recent activity"
-      },
-      "openTask": "Open “{{title}}” ({{state}})",
-      "outputs": "Outputs",
-      "outputsEmpty": "Files {{name}} makes will show up here.",
-      "outputsAll": "All",
-      "outputsLess": "Show less",
-      "summary": {
-        "waiting_one": "{{count}} waiting on you",
-        "waiting_other": "{{count}} waiting on you",
-        "running_one": "{{count}} running",
-        "running_other": "{{count}} running",
-        "todo_one": "{{count}} to do",
-        "todo_other": "{{count}} to do"
-      },
-      "state": {
-        "running": "Running",
-        "waiting": "Waiting on you",
-        "queued": "Queued",
-        "stopped": "Stopped",
-        "automation": "Automation",
-        "done": "Done"
-      },
-      "group": {
-        "waiting": "Waiting on you",
-        "running": "Running",
-        "todo": "To do",
-        "done": "Done"
-      },
-      "followUp": {
-        "label": "Follow up",
-        "message": "Follow up on “{{title}}”",
-        "aria": "Follow up on “{{title}}”"
-      },
       "followingMark": "This task is looked after by {{names}}",
-      "olderCount_one": "{{count}} older",
-      "olderCount_other": "{{count}} older",
-      "kind": {
-        "existing": "Existing session",
-        "delegated": "You asked",
-        "claudeCode": "From Claude Code",
-        "codex": "From Codex",
-        "pi": "From Pi",
-        "pr": "PR #{{number}}",
-        "issue": "Issue #{{number}}",
-        "idea": "Suggestion",
-        "automationPlain": "Automation"
+      "glance": {
+        "waiting": "Waiting on you",
+        "working": "Running",
+        "loadFailed": "Couldn't load the workbench right now.",
+        "quiet": "Nothing in progress, and nothing waiting on you.",
+        "allow": "Allow",
+        "answer": "Answer",
+        "look": "Take a Look",
+        "waitedFor": "waited {{duration}}",
+        "offline": "Offline",
+        "deviceOffline": "{{device}} is offline",
+        "thisComputer": "This computer",
+        "lessThanMinute": "under 1 min",
+        "minutes_one": "{{count}} min",
+        "minutes_other": "{{count}} min",
+        "hours_one": "{{count}} hr",
+        "hours_other": "{{count}} hr",
+        "days_one": "{{count}} day",
+        "days_other": "{{count}} days",
+        "notSeenYet": "Not checked yet",
+        "seenJust": "Just checked",
+        "seenMinutesAgo_one": "Checked {{count}} min ago",
+        "seenMinutesAgo_other": "Checked {{count}} min ago",
+        "seenHoursAgo_one": "Checked {{count}} hr ago",
+        "seenHoursAgo_other": "Checked {{count}} hr ago",
+        "doneToday_one": "{{count}} done today",
+        "doneToday_other": "{{count}} done today",
+        "devicesOffline": "{{devices}} offline",
+        "allowFailed": "Couldn't allow it. Handle it in the session.",
+        "more_one": "{{count}} more",
+        "more_other": "{{count}} more",
+        "less": "Show Less"
+      }
+    },
+    "autonomy": {
+      "title": "Follow Up on All Sessions",
+      "descriptionOn": "{{name}} checks all sessions regularly and tells you when something is waiting on you.",
+      "movedFrom": "Moved here from {{name}}",
+      "heldBy": "{{name}} handles this now. Switch it on to move it here.",
+      "heldByNobody": "No teammate handles this right now.",
+      "restoreDefault": "Restore Default ({{name}})",
+      "saveFailed": "Couldn't save. Try again.",
+      "turnOff": {
+        "title": "Stop following up on all sessions?",
+        "description": "Once this is off, no teammate follows up on all sessions.",
+        "confirm": "Switch Off",
+        "cancel": "Cancel"
       },
-      "cycle": {
-        "manual": "Manual",
-        "once": "Once",
-        "event": "On event"
-      },
-      "line": {
-        "waiting": "Waiting for your reply",
-        "waitingPermission": "Waiting for your approval",
-        "waitingQuestion": "Waiting for your answer",
-        "waitingPlan": "Waiting for you to review the plan",
-        "waitingAction": "Waiting for you to take action",
-        "waitingFor": "{{label}}: {{text}}",
-        "queued": "Queued",
-        "interrupted": "Last run didn't finish",
-        "errored": "Last run hit an error",
-        "failed": "Didn't finish",
-        "paused": "Paused",
-        "disabled": "Turned off"
-      },
-      "dirElsewhere": "On “{{device}}”"
+      "allowSchedulerFollow": {
+        "title": "Let {{name}} follow up on sessions it starts",
+        "description": "By default, {{scheduler}} only watches. When this is on and a session {{name}} started isn't finished, {{scheduler}} follows up on it too."
+      }
     },
     "remoteSettings": {
       "empty": "Nothing here yet.",
@@ -9024,6 +9094,7 @@
       "duplicate": "Duplicate teammate",
       "moreActions": "More actions for {{name}}",
       "sectionExpand": "Expand teammates",
+      "showLess": "Show less",
       "sectionCollapse": "Collapse teammates",
       "noResults": "No matching teammates or groups"
     },
@@ -9166,6 +9237,8 @@
     "globalSettings": {
       "restoreHint": "Restoring defaults follows the client’s default model settings. Individual teammates’ custom models stay unchanged.",
       "restoreFailed": "Could not restore defaults. Try again.",
+      "defaultModel": "Default model",
+      "defaultModelHint": "Teammates use this model by default. Each teammate can pick a different one in their own settings.",
       "title": "Teammates",
       "description": "Settings shared by all teammates. Anything about one teammate lives on their own page.",
       "rosterNote": "The shipped roster grows with each release."
@@ -9805,7 +9878,17 @@
       "setupDeferred": "Continue sign-in and verification in the teammate chat.",
       "automationInvalid": "The automation definition could not be converted; it was not created.",
       "itemFailed": "This item is unfinished. Retry or view import details.",
-      "chatPartial": "Your teammate is created, but some content was not fully saved. The items below still need attention; other content and chat remain available."
+      "chatPartial": "Your teammate is created, but some content was not fully saved. The items below still need attention; other content and chat remain available.",
+      "imBotOwnerMissing": "No owner user ID was found. Finish connecting this bot on the teammate’s Messaging platforms page.",
+      "imBotGatewayRunning": "The original gateway is still using this bot. Stop it, then connect the bot on Messaging platforms.",
+      "imBotInUse": "This bot is already connected on this computer, in Settings → IM bots or on another teammate.",
+      "imBotConnectFailed": "Couldn’t connect this bot. Try again on the teammate’s Messaging platforms page.",
+      "imBotSourceStopUnconfirmed": "The original bot hasn’t stopped yet, so it wasn’t handed to the teammate. You can connect it later on the teammate’s Messaging platforms page.",
+      "imBotSourceChanged": "The original bot changed after the preview, so it wasn’t stopped. Reload the preview and import again.",
+      "bots": "Messaging bots",
+      "botsNote": "After import, these bots stop in {{source}} and the teammate takes them over.",
+      "sourceDisabled": "Already off",
+      "botOwner": "Owner ID {{id}}"
     },
     "learning": {
       "memory": "Remembered: {{title}}",
@@ -9881,6 +9964,193 @@
       "transferConflict": "{{name}}’s main computer has already changed, so it wasn’t moved",
       "transferOffline": "Can’t reach the server. {{name}} still runs on this computer",
       "transferFailed": "Couldn’t move {{name}} to “{{device}}”"
+    },
+    "market": {
+      "heading": "Discover Teammates",
+      "description": "Practical methods and skills for moving work forward together.",
+      "invite": "Invite",
+      "open": "Open",
+      "remove": "Remove Teammate",
+      "back": "Back to List",
+      "loading": "Loading teammates…",
+      "empty": "No teammates found",
+      "loadFailed": "Teammates could not load. Try reopening this later.",
+      "installFailed": "Adding the teammate wasn't finished. Saved content is kept; you can try again.",
+      "nameExists": "A teammate already has this name. Rename them in teammate settings before inviting.",
+      "installing": "Saving teammate profile and skills…",
+      "memoryDisabled": "Memory is off, so reference knowledge was not imported. Memory stays off.",
+      "knowledge": "Knowledge and Memory",
+      "skills": "Skills",
+      "routines": "Routines",
+      "capabilities": "Key Capabilities",
+      "workTogether": "My Setup",
+      "tools": "Work Tools",
+      "remembersLead": "Remembers your",
+      "pluginInstalled": "Installed",
+      "pluginNotInstalled": "Not installed",
+      "routineOff": "Off by default",
+      "itemFailed": {
+        "routine": "Routine “{{name}}” could not be saved.",
+        "skill": "Skill “{{name}}” could not be saved.",
+        "knowledge": "Knowledge “{{name}}” could not be saved.",
+        "other": "“{{name}}” could not be saved.",
+        "unknown": "One item could not be saved."
+      },
+      "partialReady": "Everything else is ready, so you can start using the teammate.",
+      "partialUnsaved": "The teammate is not saved yet. Save again to finish.",
+      "retry": "Save Again"
+    },
+    "starterOptions": "Starter options",
+    "channels": {
+      "title": "Messaging platforms",
+      "platform": {
+        "telegram": "Telegram",
+        "feishu": "Feishu",
+        "lark": "Lark",
+        "wecom": "WeCom",
+        "dingtalk": "DingTalk",
+        "discord": "Discord"
+      },
+      "status": {
+        "connected": "Connected",
+        "connecting": "Connecting…",
+        "offline": "Offline",
+        "conflict": "Another device is using this bot",
+        "error": "Error",
+        "idle": "Not connected"
+      },
+      "remove": "Remove",
+      "removeAria": "Remove {{platform}}",
+      "empty": "Add a bot you already have, or connect personal WeChat below, and {{name}} will reply there.",
+      "externalNote": "Anyone who messages this bot is talking to {{name}}. Your own messages run with {{name}}’s permissions; everyone else gets a separate hidden task with restricted permissions.",
+      "sharedMemoryNote": "{{name}} uses information from here and from other conversations together. To keep memories separate, use another teammate.",
+      "groups": {
+        "title": "Groups",
+        "hint": "Groups {{name}} has joined show up here. “Always” = read every message and let {{name}} decide whether to chime in (each one costs tokens).",
+        "empty": "No groups yet. Add the bot to a group; it appears here once someone speaks.",
+        "loadFailed": "Couldn't load groups",
+        "saveFailed": "Not saved; reverted to the previous mode",
+        "retry": "Reload",
+        "mode": {
+          "mention": "@ only",
+          "always": "Always"
+        }
+      },
+      "lanes": {
+        "title": "Hidden tasks",
+        "hint": "Each group, topic, and DM from someone else has its own hidden task. If one gets stuck or goes off track, start it over. Its history is kept.",
+        "ownerName": "Your DM",
+        "kind": {
+          "ownerDm": "Main task",
+          "group": "Group",
+          "topic": "Topic",
+          "guestDm": "DM"
+        },
+        "state": {
+          "running": "Replying",
+          "failed": "Last reply failed"
+        },
+        "noActivity": "No messages yet",
+        "messageCount_one": "{{count}} message in context",
+        "messageCount_other": "{{count}} messages in context",
+        "reset": "Start over",
+        "resetAria": "Start “{{lane}}” over",
+        "resetConfirm": {
+          "title": "Start “{{lane}}” over?",
+          "description": "The next message starts with a clean context, and any reply in progress stops. The full history stays in this hidden task, and {{name}}’s memory is unchanged.",
+          "ownerDescription": "This is {{name}}’s main task, shared by your desktop conversation and this DM. The next message starts with a clean context, and any reply in progress stops. History, memory, and files are kept.",
+          "confirm": "Start over",
+          "cancel": "Cancel"
+        },
+        "resetDone": "“{{lane}}” started over. The next message begins with a clean context.",
+        "resetFailed": "Couldn’t start it over. Try again later.",
+        "loadFailed": "Couldn’t load hidden tasks",
+        "empty": "No groups or DMs from others yet. They show up here once someone talks to {{name}} in a group or a DM."
+      },
+      "add": {
+        "button": "Add platform",
+        "title": "Add a platform for {{name}}",
+        "description": "Paste the credentials of a bot you created on the platform. They stay on this computer.",
+        "platformLabel": "Platform",
+        "telegram": {
+          "tokenLabel": "Bot token",
+          "tokenPlaceholder": "Paste the token from @BotFather",
+          "ownerLabel": "Your Telegram user ID",
+          "ownerPlaceholder": "Numeric ID (ask @userinfobot)",
+          "ownerHint": "Messages from this ID run with {{name}}’s own permissions. Everyone else is treated as a guest."
+        },
+        "feishu": {
+          "serviceLabel": "Service",
+          "appIdLabel": "App ID",
+          "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
+          "appSecretLabel": "App Secret",
+          "appSecretPlaceholder": "Paste the app secret"
+        },
+        "wecom": {
+          "botIdLabel": "Bot ID",
+          "botIdPlaceholder": "Bot ID from WeCom administration",
+          "secretLabel": "Secret",
+          "secretPlaceholder": "Bot Secret from WeCom administration",
+          "ownerHint": "The first person to DM this bot becomes its owner and runs with {{name}}’s permissions. Create an intelligent bot and enable long connection first."
+        },
+        "dingtalk": {
+          "appKeyLabel": "Client ID",
+          "appKeyPlaceholder": "Paste the bot application’s Client ID",
+          "appSecretLabel": "Client Secret",
+          "appSecretPlaceholder": "Paste the bot application’s Client Secret",
+          "ownerHint": "The first person to DM this bot becomes its owner and runs with {{name}}’s permissions. In groups it replies when @-mentioned."
+        },
+        "discord": {
+          "tokenLabel": "Bot Token",
+          "tokenPlaceholder": "Paste the Discord Bot Token",
+          "ownerLabel": "Your Discord user ID",
+          "ownerPlaceholder": "17–20 digit ID",
+          "ownerHint": "Only DMs from this ID reach {{name}}, with {{name}}’s own permissions."
+        },
+        "confirm": "Connect",
+        "connecting": "Connecting…",
+        "errors": {
+          "invalidToken": "That doesn’t look like a bot token. It should look like 123456:ABC…",
+          "invalidOwner": "The user ID should be a number.",
+          "invalidFeishu": "Fill in both the App ID and the App Secret.",
+          "invalidWecom": "Fill in both the Bot ID and the Secret.",
+          "invalidDingtalk": "Fill in both the Client ID and the Client Secret.",
+          "invalidDiscordToken": "That doesn’t look like a bot token.",
+          "invalidDiscordOwner": "The user ID should be 17–20 digits.",
+          "conflict": "This bot is already connected on this computer, in Settings → IM bots or on another teammate.",
+          "botUnavailable": "{{name}} is unavailable right now. Try again once it’s back.",
+          "connectFailed": "Couldn’t connect: {{reason}}",
+          "failed": "Couldn’t finish. Try again later.",
+          "personalBotGone": "This bot is no longer set up in Settings → IM bots. Enter its credentials instead."
+        },
+        "source": {
+          "label": "How to connect",
+          "existing": "Use the bot already set up in Cindy",
+          "manual": "Enter new credentials",
+          "moveNote": "The bot moves out of Settings → IM bots, which will be left empty. Its chats continue with {{name}}."
+        }
+      },
+      "removeConfirm": {
+        "title": "Remove {{platform}}?",
+        "description": "This bot stops replying, its credentials are deleted from this computer, and its hidden tasks are archived. {{name}}’s memory and personality stay the same.",
+        "confirm": "Remove",
+        "cancel": "Cancel",
+        "failed": "Couldn’t remove it. Try again later.",
+        "ok": "OK"
+      },
+      "officialX": {
+        "bind": "Assign to this teammate",
+        "remove": "Remove teammate assignment",
+        "bindTitle": "Let {{name}} handle X questions?",
+        "bindBody": "Your public questions to @askmycindy will use {{name}}’s identity, tools, shared memory and workspace. Replies are public. The X thread is separate from your private chat history. This replaces any existing teammate assignment.",
+        "removeTitle": "Remove the X assignment?",
+        "removeBody": "Your X account stays connected. Future questions become ordinary tasks. Replies already in progress will finish.",
+        "bound": "X questions are assigned to {{name}}. Enable X and authorize your account to start.",
+        "boundElsewhere": "X is assigned to another teammate. Assigning it here replaces that teammate.",
+        "unbound": "Let {{name}} handle your questions to the official @askmycindy bot.",
+        "managed": "A teammate handles X questions. Change the assignment in that teammate’s message platform settings.",
+        "riskBody": "X questions use the teammate’s shared memory, tools and workspace, and replies are public. Do not use X for private information. The X thread does not directly use your private chat history."
+      }
     }
   },
   "common": {
@@ -10871,6 +11141,14 @@
     "verificationFailed": "Cindy couldn’t confirm whether the ChatGPT sign-in has recovered. Check again."
   },
   "chat": {
+    "imageDelivery": {
+      "stored": "Image delivered",
+      "failed": "Image delivery failed. Retry transferring the existing image.",
+      "retry": "Retry delivery",
+      "retrying": "Delivering…",
+      "retryFailed": "Delivery is still unavailable. Check that the source computer is online."
+    },
+    "failedSamplingAttempt": "This reply did not complete. Its content is for reference only.",
     "jumpToBottom": "Jump to bottom",
     "prevMessageJump": "Jump to previous prompt: {{preview}}",
     "sessionLoading": "Loading task",
@@ -11049,7 +11327,7 @@
     },
     "errorBanner": {
       "requestFormatError": "The app sent an invalid request, so this reply could not be completed.",
-      "replyFailed": "This reply could not be completed. Check the error details for more information.",
+      "replyFailed": "Could not complete the reply",
       "retryTitle": "Resend the last message",
       "cancelTitle": "Dismiss error",
       "retry": "Retry",
@@ -11085,12 +11363,12 @@
       "syncAuthSuccess": "Synced — click \"Retry\" to resend",
       "syncAuthFailed": "Sync failed: {{msg}}",
       "syncAuthDaemonRestartFailed": "Credentials pushed, but the old daemon did not restart — reconnect to the remote before retrying",
-      "invalidEncryptedContent": "Switching providers made the previous encryption unusable. This session can only continue under the original provider, or click Fork to drop the protocol-encrypted content and continue in a new session.",
-      "readableHistoryRecovery": "New task from readable history",
-      "readableHistoryRecoveryDescription": "If retry keeps failing, create a new task using readable history. Internal encrypted information is omitted. The original task is kept, and the failed message is not resent automatically.",
-      "forkStripEncrypted": "Fork and strip",
-      "forkStripEncryptedRunning": "Forking…",
-      "forkStripEncryptedTitle": "Fork and strip into a new session",
+      "invalidEncryptedContent": "The current provider cannot read part of the history. Switch back to the original provider or continue in a new session.",
+      "readableHistoryRecovery": "Continue in a New Session",
+      "readableHistoryRecoveryDescription": "Create a new session with your chat history. The original session is kept. Send your last message again once the new session opens.",
+      "forkStripEncrypted": "Continue in a New Session",
+      "forkStripEncryptedRunning": "Creating session…",
+      "forkStripEncryptedTitle": "Create a new session with your chat history",
       "forkStripOversizedHistory": "Slim history and continue",
       "forkStripOversizedHistoryRunning": "Forking…",
       "forkStripOversizedHistoryTitle": "Fork into a new task after removing oversized inline images",
@@ -11106,8 +11384,11 @@
       "overloadBusyNoRetry": "The model service is busy — the upstream has no capacity right now. Try again later, or switch to another model.",
       "streamInterrupted": "The model stream was interrupted. This is usually a temporary upstream issue — click Retry.",
       "streamInterruptedNoRetry": "The model stream was interrupted. This is usually a temporary upstream issue. Try again in a little while.",
-      "networkShowRaw": "Show raw error",
-      "networkHideRaw": "Hide raw error",
+      "networkShowRaw": "Error Details",
+      "networkHideRaw": "Hide Details",
+      "diagnose": "Diagnose",
+      "diagnoseTitle": "Diagnose this error in a new session",
+      "diagnosePrompt": "Please diagnose this error: find the cause and tell me how to fix it.\n\nSession: {{sessionUrl}}\nError: {{message}}\nDetails:\n{{details}}\n\nIf you find it's a problem with Cindy itself, let me know so I can choose whether to file an issue with the Cindy team.",
       "gatewayProxyTokenInvalid": "Cindy AI credentials are no longer valid. Click Retry. If it happens again, sign out and sign back in",
       "gatewayProxyTokenInvalidNoRetry": "Cindy AI credentials are no longer valid. If it happens again, sign out and sign back in",
       "modelAccessDenied": "The upstream account cannot access this model. Select another model or check its access with the provider",
@@ -11135,6 +11416,21 @@
       "continuing": "Continuing…",
       "continueTitle": "Continue from where the task left off (completed steps will not be repeated)",
       "dismissTitle": "Dismiss this interruption notice"
+    },
+    "interruptedResumeDialog": {
+      "title": "Resume interrupted sessions",
+      "description_one": "{{appName}} quit unexpectedly and {{count}} session didn't finish. Selected sessions will check the conversation and pick up where they left off.",
+      "description_other": "{{appName}} quit unexpectedly and {{count}} sessions didn't finish. Selected sessions will check the conversation and pick up where they left off.",
+      "selectAll": "Select all",
+      "selectedCount": "{{selected}} of {{total}} selected",
+      "interruptedAgo": "interrupted {{time}} ago",
+      "interruptedJustNow": "interrupted just now",
+      "continueSelected_one": "Resume {{count}} session",
+      "continueSelected_other": "Resume {{count}} sessions",
+      "continueNone": "Resume",
+      "later": "Not now",
+      "continueFailed_one": "{{count}} session couldn't resume. Open it to try again.",
+      "continueFailed_other": "{{count}} sessions couldn't resume. Open them to try again."
     },
     "unreadFailedScheduleBanner": {
       "text": "An automatic run failed.",
@@ -11272,6 +11568,9 @@
       "previewFailed": "Could not prepare the web preview. Check the directory and connection, then try again.",
       "previewNotFound": "The HTML file was not found. Check that it still exists.",
       "previewFetching": "Preparing Web Preview…",
+      "previewConnectionBusy": "The connection is busy. The web preview is not ready yet. Please try again shortly.",
+      "previewTimeout": "The remote web preview timed out. Please try again shortly.",
+      "previewDisconnected": "The remote device is not connected. Try again when the connection returns.",
       "previewTooLarge": "Too many previews are being prepared. Please try again shortly.",
       "previewUnsupported": "Update Cindy on the remote device to preview this directory.",
       "fetching": "Fetching file from remote…",
@@ -11290,7 +11589,8 @@
       "downloadUnsupported": "The remote computer can't download folders yet. Update Cindy on that computer and try again",
       "downloadNoSpace": "Not enough disk space to finish the download",
       "downloadSkipped": "Saved to Downloads, but some files could not be downloaded",
-      "cancelTransfer": "Cancel"
+      "cancelTransfer": "Cancel",
+      "downloadsInProgress": "Downloads in progress ({{count}})"
     },
     "mivoAction": {
       "promptPlaceholder": "Type a prompt, press Enter to send",
@@ -11534,7 +11834,8 @@
         "labelStrip": "Historical images reorganized",
         "toggleHint": "View handoff context",
         "handoffTitle": "Handoff — the context summary sent to the next stretch of this conversation (not part of the chat transcript; shown only here)",
-        "handoffTitleEnglishSource": "Handoff — the context summary sent to the next stretch of this conversation (not part of the chat transcript; shown only here)"
+        "handoffTitleEnglishSource": "Handoff — the context summary sent to the next stretch of this conversation (not part of the chat transcript; shown only here)",
+        "labelIdleGap": "Picking up after a pause; context reorganized to continue"
       },
       "review": {
         "running": "Reviewing current work",
@@ -11690,7 +11991,11 @@
       "referencedMessages": "Referenced messages ({{count}})",
       "referencedContext": "Referenced messages",
       "groupBackground": "Group chat background",
-      "viewThread": "View thread context ({{count}})"
+      "viewThread": "View thread context ({{count}})",
+      "memberFromGroup": "{{name}} · from {{platform}} group “{{group}}”",
+      "memberFromPlatform": "{{name}} · from a {{platform}} group",
+      "guestFromDm": "{{name}} · from {{platform}} DM (not the owner)",
+      "unknownSender": "Group member"
     },
     "rewind": {
       "noFilesToRollback": "No restorable project file changes were detected",
@@ -11773,7 +12078,10 @@
       "REMOTE_AGENT_SHARE_PAUSED": "The owner has paused this share for you, so these models can’t be used until it’s resumed. Switch to another model to continue.",
       "REMOTE_AGENT_SHARE_REMOVED": "This share is no longer available (the owner removed it or you left). Switch to another model to continue.",
       "REMOTE_AGENT_SHARE_UNAVAILABLE": "The shared provider is temporarily unavailable. The owner's computer may be offline, or sharing is turned off for now. Try again later, or switch to another model to continue.",
-      "REMOTE_AGENT_GROUP_UNAVAILABLE": "No computer in the provider group can run this task right now. They may be offline, paused, cooling down, or missing this model. Check the group on this provider’s Remote & Sharing page."
+      "REMOTE_AGENT_GROUP_UNAVAILABLE": "No computer in the provider group can run this task right now. They may be offline, paused, cooling down, or missing this model. Check the group on this provider’s Remote & Sharing page.",
+      "REMOTE_AGENT_DEVICE_LIMIT": "This device has reached its remote session limit. Archive unused sessions or ask the provider owner to raise the limit in Remote & sharing.",
+      "REMOTE_AGENT_TOTAL_LIMIT": "The provider computer has reached its total remote session limit. Ask the owner to release unused sessions or raise the limit in Remote & sharing.",
+      "REMOTE_AGENT_RESUME_LOST": "The earlier conversation on the other computer could not be reconnected, so the agent continues without that context."
     },
     "generatedFiles": {
       "title": "Files created this message",
@@ -11882,7 +12190,17 @@
       "linkConfirmHint": "This link is provided by a plugin and will open in your browser:",
       "linkConfirmOpen": "Open",
       "linkConfirmCancel": "Cancel",
-      "linkOpenFailed": "Failed to open link"
+      "expandFields": "Expand",
+      "collapseFields": "Collapse",
+      "formSyncFailed": "Card edits have not synced. Check the connection and continue editing; the message has not been sent.",
+      "linkOpenFailed": "Failed to open link",
+      "mailPreview": "Email preview",
+      "mailEnlarge": "Enlarge preview",
+      "mailInsertImage": "Insert into message",
+      "mailAttach": "Add attachment",
+      "mailRemoveAttachment": "Remove {{name}}",
+      "mailUpdated": "Draft updated (read-only)",
+      "mailLegacy": "Draft history (read-only)"
     },
     "ghostHook": {
       "blockedFallback": "Message blocked by a plugin; not sent",
@@ -11946,7 +12264,8 @@
       "degraded": "Connection to the remote device is unstable — retrying automatically…",
       "actionsUnavailable": "The remote device is unavailable. Reconnect it before changing this session.",
       "resync": "Resync",
-      "loading": "Loading session from the remote device…",
+      "loading": "Loading task…",
+      "syncing": "Syncing task…",
       "suspectStall": "This turn hasn't updated in a while — the stream may have dropped",
       "finalizeStuck": "End turn",
       "issue": {
@@ -13810,6 +14129,17 @@
     "projectSkillNotLoaded": "This Pi task hasn't loaded this project Skill. New tasks will automatically try to load it."
   },
   "skillhub": {
+    "remote": {
+      "loading": "Loading skills…",
+      "readFailed": "Could not load skills. Try again.",
+      "unsupported": "Update Cindy on the target computer to manage skills remotely.",
+      "confirm": {
+        "install": "Install {{name}} on {{device}}?",
+        "update": "Update {{name}} on {{device}} to v{{version}}?",
+        "uninstall": "Uninstall {{name}} from {{device}}?",
+        "installDescription": "The skill will be saved on the selected computer. Updates keep a backup of the existing files."
+      }
+    },
     "unifiedDetail": {
       "contentSource": "Content source",
       "local": "Local",
@@ -13827,17 +14157,13 @@
     },
     "home": {
       "title": "Skills",
-      "description": "Manage local skills, or discover and install more from Skill Hub.",
+      "description": "Manage installed skills or discover more in SkillHub.",
       "descriptionLocalOnly": "Manage the local skills installed on this device.",
       "search": "Search skills",
       "clearSearch": "Clear skill search",
       "noSearchResults": "No matching skills found",
       "catalogFiltersAria": "SkillHub categories",
       "categoryFiltersAria": "Filter skills by category",
-      "scrollCategoriesLeft": "View more categories to the left",
-      "scrollCategoriesRight": "View more categories to the right",
-      "categoryScrollAtStart": "Already at the first category",
-      "categoryScrollAtEnd": "Already at the last category",
       "catalogFilter": {
         "public": "Public",
         "organization": "Organization",
@@ -13869,6 +14195,9 @@
       },
       "learn": {
         "description": "Distill a reusable Skill from this task, a described workflow, or a SkillHub Skill through Cindy's review flow."
+      },
+      "pluginCreator": {
+        "description": "Create, edit, debug, and package Cindy plugins, or publish them when requested."
       }
     },
     "common": {
@@ -14740,6 +15069,7 @@
     "addUnavailable": "This session can’t be opened in the current split. Open a session in the main area and try again."
   },
   "extraDirs": {
+    "libraryReadOnlyLabel": "Mivo Library (Read-Only)",
     "retryRemotePlugins": "Remote plugins failed to load. Retry",
     "menuAria": "Composer actions",
     "tooltipEmpty": "More actions",
@@ -15425,7 +15755,11 @@
     "checkCommand": "Pre-run check command",
     "checkHint": "Optional. Checks on the computer before each run: exit 2 skips the run, exit 0 continues, errors stay visible. Clear to remove.",
     "timeoutMs": "Check timeout (ms, blank for no limit)",
-    "advancedSettings": "Advanced settings"
+    "advancedSettings": "Advanced settings",
+    "builtinFollowUp": {
+      "name": "Follow-up (built-in)",
+      "hint": "Wakes it when a session is stuck, waiting for you, errors out, hits the usage limit, or finishes. Built in, so it can only be paused or resumed."
+    }
   },
   "cindyMakeDoctor": {
     "description": "Check the local environment for building Cindy. Usage: /cindy-make-doctor",
@@ -16491,5 +16825,11 @@
     "messageSource": "Sent by $t(mcpApps.appName) “{{name}}”",
     "serverId": "MCP Server ID: {{id}}",
     "exitFullscreen": "Exit Fullscreen"
+  },
+  "richAnswer": {
+    "playVideo": "Play video",
+    "openVideoSource": "Open original video",
+    "calculationUnavailable": "Unable to calculate this value.",
+    "incomplete": "Some content could not be displayed."
   }
 }

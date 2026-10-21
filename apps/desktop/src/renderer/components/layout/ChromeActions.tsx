@@ -39,6 +39,7 @@ import { useTranslation } from 'react-i18next';
 import { MenuButton } from '@/components/title-bar/MenuButton';
 import { ChromeIconButton } from '@/components/title-bar/ChromeIconButton';
 import { Tip } from '@/components/ui/tooltip';
+import { useAuth } from '@/contexts/AuthContext';
 import { useMacFullscreen } from '@/hooks/useMacFullscreen';
 import { useAppShortcutDisplay } from '@/hooks/useAppShortcut';
 import { useSessionBrowseHistory } from '@/features/cc-agent/useSessionBrowseHistory';
@@ -65,7 +66,11 @@ export function ChromeActions({
 }: ChromeActionsProps) {
   const { t } = useTranslation();
   const { isMac, isFullscreen } = useMacFullscreen();
-  const browseHistory = useSessionBrowseHistory();
+  // 浏览栈按数据所有者(账号 + 恢复代次)隔离：切号时不能把上一个账号的任务带过来。
+  const { dataOwnerId, dataOwnerRecoveryEpoch } = useAuth();
+  const browseHistory = useSessionBrowseHistory({
+    ownerKey: `${dataOwnerId ?? 'signed-out'}:${dataOwnerRecoveryEpoch}`,
+  });
 
   // 钉死左上角:mac 非全屏让位红绿灯(78),其余 8。不随侧栏状态变化。
   const x =
@@ -111,8 +116,8 @@ export function ChromeActions({
         }
       />
       {/* 任务浏览历史：与浏览器同惯例，左键后退、右键前进；到边界置灰并把
-          tooltip 换成「为什么不可用」。形状与相邻的菜单/折叠按钮同为 28px
-          rounded-md（ChromeIconButton 默认圆角留给 TabBar）。 */}
+          tooltip 换成「为什么不可用」。尺寸与相邻的菜单/折叠按钮同为 28px，
+          圆角走 ChromeIconButton 默认的控件 pill（DESIGN §5）。 */}
       <SessionHistoryButtons {...browseHistory} />
     </div>
   );
@@ -138,7 +143,7 @@ export function SessionHistoryButtons({
   return (
     <>
       <ChromeIconButton
-        className="rounded-md disabled:opacity-40"
+        className="disabled:opacity-40"
         disabled={!canBack}
         onClick={goBack}
         tooltip={withShortcut(t('titleBar.historyBack'), backShortcut)}
@@ -149,7 +154,7 @@ export function SessionHistoryButtons({
         <ArrowLeft size={15} />
       </ChromeIconButton>
       <ChromeIconButton
-        className="rounded-md disabled:opacity-40"
+        className="disabled:opacity-40"
         disabled={!canForward}
         onClick={goForward}
         tooltip={withShortcut(t('titleBar.historyForward'), forwardShortcut)}

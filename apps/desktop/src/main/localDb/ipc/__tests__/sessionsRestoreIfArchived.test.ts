@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  // 导入链会静态引到 WorktreeManager → workdir-probe-host,后者在模块顶层读 app.once。
+  app: { getPath: () => os.tmpdir(), once: vi.fn() },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       h.handlers.set(channel, handler);
@@ -92,6 +94,7 @@ function createDb(): void {
       title TEXT NOT NULL DEFAULT 'New CCS',
       working_dir TEXT,
       model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+      scheduled_model_baseline TEXT,
       effort TEXT NOT NULL DEFAULT 'high',
       permission_mode TEXT NOT NULL DEFAULT 'ask',
       status TEXT NOT NULL DEFAULT 'active',

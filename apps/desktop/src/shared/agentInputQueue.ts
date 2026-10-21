@@ -1,3 +1,4 @@
+import type { AgentRequestReceipt } from './forwardedRequest.js';
 import { coordinationModelPrefix, type BotTaskCoordination } from './botTaskCoordination.js';
 /**
  * Agent input queue wire contract.
@@ -166,7 +167,7 @@ export interface AgentInputCreateOpts {
   providerId?: string | null;
   orcaRole?: 'lead' | 'worker' | null;
   effort?: string;
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   permissionMode?: string;
   /** 计划模式一级开关(与 permissionMode 正交), lazy-create / rehydrate 时透传给 maker。 */
   planMode?: boolean;
@@ -294,13 +295,15 @@ export interface RecoveryCheckpoint {
 export const HOST_ONLY_AGENT_PREFIX = Symbol('host-only-agent-prefix');
 
 export interface AgentInputQueuedMessage {
+  /** Rejection marker only. The positive authorization is a Main-only, non-persisted guard. */
+  taskActionRequiresAuthorization?: true;
   /** Main-owned delegation receipt; stripped from renderer/device-link input. */
   botTaskCoordination?: BotTaskCoordination;
   [HOST_ONLY_AGENT_PREFIX]?: string;
   /** Host-stamped attribution, retained in durable queue snapshots and messages. */
   sharedTaskAuthor?: SharedTaskAuthor;
   /** Host-captured authored text before plugin/reference decoration; omitted from wire projections. */
-  autoReviewUserText?: string | { kind: 'delegated-continuation' };
+  autoReviewUserText?: string | AgentRequestReceipt;
   /** Host-owned text-only input; retained by queue persistence and retry. */
   toolsDisabled?: boolean;
   clientId: string;

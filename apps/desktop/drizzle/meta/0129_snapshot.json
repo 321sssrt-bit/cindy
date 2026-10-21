@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "37ca1e7b-2e63-498a-a0b6-bd735fac493e",
+  "id": "4080b7b1-04ec-45f5-833c-cc80efbbf146",
   "prevId": "779b3cd5-66b5-40e9-a391-bacb00957c6f",
   "tables": {
     "account_usage_snapshots": {
@@ -5278,6 +5278,13 @@
           "autoincrement": false,
           "default": "'claude-sonnet-4-6'"
         },
+        "scheduled_model_baseline": {
+          "name": "scheduled_model_baseline",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "effort": {
           "name": "effort",
           "type": "text",
@@ -5407,14 +5414,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "notifications_muted": {
-          "name": "notifications_muted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         },
         "summary": {
           "name": "summary",

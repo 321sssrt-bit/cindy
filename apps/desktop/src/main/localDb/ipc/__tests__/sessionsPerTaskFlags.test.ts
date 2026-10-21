@@ -12,6 +12,7 @@
  * - 同步登记进 sessionFlagRegistry,供原生/系统通知路径免查库判定。
  */
 import Database from 'better-sqlite3';
+import os from 'node:os';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,6 +28,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  // 导入链会静态引到 WorktreeManager → workdir-probe-host,后者在模块顶层读 app.once。
+  app: { getPath: () => os.tmpdir(), once: vi.fn() },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       h.handlers.set(channel, handler);
@@ -79,6 +82,7 @@ function createDb(): void {
       title TEXT NOT NULL DEFAULT 'New CCS',
       working_dir TEXT,
       model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+      scheduled_model_baseline TEXT,
       effort TEXT NOT NULL DEFAULT 'high',
       permission_mode TEXT NOT NULL DEFAULT 'ask',
       status TEXT NOT NULL DEFAULT 'active',

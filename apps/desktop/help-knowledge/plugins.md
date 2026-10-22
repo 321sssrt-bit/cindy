@@ -4,7 +4,7 @@ title: Plugins (extending what the agents can do)
 summary: What plugins are, how to browse / install / enable / disable them, per-working-directory control, the permission model, and invoking one with a $command.
 tab: ghosts
 ---
-Plugins (internally "意识" / Ghost) extend what the agents can do — they add AI-callable tools, dockable UI panels, and "ask Cindy to make it" media generation. Each plugin is a self-contained `.cindy` capability pack that runs in its own isolated sandbox.
+Plugins (internally "意识" / Ghost) extend what the agents can do — they add AI-callable tools, panels that live as pinned tabs in the right sidebar, full-page app views, and "ask Cindy to make it" media generation. Each plugin is a self-contained `.cindy` capability pack that runs in its own isolated sandbox.
 
 **The Plugins page:**
 
@@ -15,22 +15,30 @@ Plugins (internally "意识" / Ghost) extend what the agents can do — they add
 **Built-in plugins that ship with the app:**
 
 - **Cindy Art** (`$cindy-art`) — generate and edit images and short videos.
-- **Cindy Web Search** (`$cindy-web-search`) — public web search (add your own Brave or Tavily key on its detail page).
+- **Cindy Web Search** (`$cindy-web-search`) — public web search. **No key needed**: by default it searches through Cindy AI and uses your signed-in Cindy account's balance (unavailable in local mode). Results come with a title, link, and short summary. To search through your own service instead, add a Brave, Tavily, or DeepSeek key on its detail page. A failed search is reported as-is; it never silently switches to another source.
 - **Cindy Mermaid** (`$cindy-mermaid`) — build / repair Mermaid diagrams.
 - **Cindy GitHub** (`$cindy-github`) / **Cindy GitLab** (`$cindy-gitlab`) — read / write issues, PRs / MRs, reviews, CI, releases.
 - **Filo Google** (`$filo-google`) — Gmail / Calendar / Drive / Sheets.
 
 **Enabling and disabling:**
 
-- **Enable / disable (globally)** from the plugin's detail page. Disabling puts its tools and panel to sleep but keeps the plugin installed — its layout position is remembered and restored when you re-enable it.
+- **Enable / disable (globally)** from the plugin's detail page. Disabling puts its tools and panel to sleep but keeps the plugin installed — its right-sidebar tab is kept and comes back when you re-enable it. A plugin's panel shows up as a pinned tab in the right sidebar that stays across tasks; close it from the tab, and reopen it later by right-clicking the plugin's entry in the left sidebar and choosing "Open in the sidebar".
 - **Disable for one working directory only** — a plugin can be turned off just for a specific project. In that project's sessions it behaves as if it isn't installed (its tools and `$command` are unavailable there); everywhere else it stays on.
 
 **Installing:**
 
 - Install from the marketplace, or add a `.cindy` file manually (drag it in / pick it from disk).
-- Choosing Install, dragging a package, or picking one from disk installs and enables the selected plugin directly. Installation does not add a permission or version-confirmation step; review its declared capabilities on the plugin detail page.
+- Choosing Install, dragging a package, or picking one from disk first shows a **confirmation dialog** listing everything the plugin declares it can do (network domains, credentials, background tasks, skills, bundled code, panels…). Nothing is installed until you confirm; after that the plugin is enabled right away.
+- When you ask an agent to install a plugin (`ghost_market_install` / `ghost_forge_install`), the same confirmation appears as a card in that task — whatever the task's permission mode, including Full Access. It also works from the phone when you control this computer remotely. If you deny it, nothing is installed.
+- Plugins pushed by your organization (server default installs) are installed and updated silently without a confirmation.
 - The server selects the release appropriate for this Cindy version before marketplace delivery. Desktop does not apply a second `minCindyVersion` gate; custom marketplaces and local `.cindy` packages follow the same install policy.
-- Updates from stable marketplace sources are applied automatically when the plugin is idle. Failed attempts retry later; you can still click Update to retry immediately.
+- Updates from stable marketplace sources are applied automatically when the plugin is idle — **as long as the new version doesn't need more permissions**. If it does, the automatic update pauses, the old version keeps working, and the plugin card shows "New permissions need confirmation"; clicking Update shows the added permissions for you to confirm. Failed attempts retry later; you can still click Update to retry immediately.
+
+**Creating or updating your own plugin:**
+
+- Choose **Create with Cindy** from the Plugins page's add menu. Cindy opens a new-task draft with the built-in Plugin Creator's actual command, selecting the built-in version even if a user Skill has the same name. Describe what you want and send it using your chosen Agent and model.
+- The built-in `cindy-plugin-creator` Skill supports creating, editing, debugging, packaging, and publishing plugins. Its bundled references contain the authoring documentation for the current Cindy version. If it is unavailable, the page reports that and keeps your existing draft.
+- Creating and packaging a plugin produces a `.cindy` file. Installation and publication are separate actions that you can request when ready.
 
 **Using a plugin with `$command`:**
 
@@ -46,7 +54,7 @@ Plugins (internally "意识" / Ghost) extend what the agents can do — they add
 
 **Configuring a plugin's account / API key:**
 
-- Do it on the plugin's **detail page**. Plugins that use a key (web-search, GitHub/GitLab tokens) have a field there; the value goes straight into the host's encrypted store and can't be read back.
+- Do it on the plugin's **detail page**. Plugins that use a key (optional search-service keys for Web Search, GitHub/GitLab tokens) have a field there; the value goes straight into the host's encrypted store and can't be read back.
 - Plugins that use OAuth (for example Filo Google) show a **Connect account** button instead.
 
 **Notes:**

@@ -236,6 +236,37 @@ describe('Scheduler', () => {
     expect(list).toHaveLength(1);
   });
 
+  // 测试价值
+  // - 生产入口与可观察结果：Scheduler.tick 认领到期任务、运行 runner 并重排 nextFireAt；下一合法槽位前不得重复调用。
+  // - Bug／规则依据：#5924；重排结果必须严格晚于完成时刻。
+  // - 现有覆盖缺口：已有 tick/互斥测试未在 Lord Howe 亚小时回拨时区验证 cron 重排结果。
+  // - 最小失败输入：Lord Howe 回拨后的整点 cron，完成时刻 15:30Z。
+  // - tier：unit；内存 storage、假时钟、无副作用 runner。
+  // - 实测耗时：随现有 scheduler.test.ts 定向运行记录在 PR 验证项。
+  it('Lord Howe 回拨后真实 tick 重排到未来且下一合法槽前不重复', async () => {
+    const local = makeHarness();
+    local.clock.setTo(Date.UTC(2026, 3, 4, 14, 0, 21));
+    const schedule = await local.scheduler.create({
+      ...baseInput,
+      cronExpr: '0 * * * *',
+      timezone: 'Australia/Lord_Howe',
+    });
+    expect(schedule.nextFireAt).toBe(Date.UTC(2026, 3, 4, 15, 30, 0));
+
+    local.clock.setTo(Date.UTC(2026, 3, 4, 15, 30, 0));
+    await local.scheduler.tick();
+    expect(local.runner.fire).toHaveBeenCalledTimes(1);
+    const run = (await local.storage.listRuns(schedule.id))[0];
+    const updated = await local.storage.get(schedule.id);
+    expect(run?.finishedAt).toBeDefined();
+    expect(updated?.nextFireAt).toBeDefined();
+    expect(updated!.nextFireAt!).toBeGreaterThan(run!.finishedAt!);
+
+    local.clock.advance(30_000);
+    await local.scheduler.tick();
+    expect(local.runner.fire).toHaveBeenCalledTimes(1);
+  });
+
   it('marks skipped child runs as zero-cost', async () => {
     const childHarness = makeHarness({
       runnerImpl: async (_schedule, ctx) => {
@@ -1834,6 +1865,20 @@ describe('Scheduler', () => {
     expect(h.scheduler.isRunSilenced(runId)).toBe(false);
   });
 
+  it('keeps unclassified reminders audible and preserves explicit quiet checks and script mode', async () => {
+    const reminder = await h.scheduler.create({ ...baseInput });
+    expect(reminder.silentWhenIdle).toBe(false);
+    const { runId } = await h.scheduler.runNow(reminder.id);
+    expect((await h.scheduler.listRuns(reminder.id)).find((run) => run.id === runId)?.readAt).toBeUndefined();
+    expect((await h.scheduler.create({ ...baseInput, preRunHook: { command: 'node check.mjs' } })).silentWhenIdle).toBe(false);
+    const check = await h.scheduler.create({ ...baseInput, silentWhenIdle: true });
+    expect(check.silentWhenIdle).toBe(true);
+    expect((await h.scheduler.create({ ...baseInput, executionMode: 'script', workspaceKind: 'project', workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } })).silentWhenIdle).toBe(false);
+    const scriptPatch = { executionMode: 'script' as const, workspaceKind: 'project' as const, workingDir: '/repo', scriptConfig: { command: 'node check.mjs', capabilities: [] } };
+    await expect(h.scheduler.update(check.id, { ...scriptPatch, silentWhenIdle: true })).rejects.toThrow('does not support silentWhenIdle');
+    expect((await h.scheduler.update(check.id, scriptPatch)).silentWhenIdle).toBe(false);
+  });
+
   it('silentWhenIdle run is silent by default', async () => {
     h = makeHarness({
       runnerImpl: async (_s, ctx) => {
@@ -1918,7 +1963,7 @@ describe('Scheduler', () => {
           gates.push(() => resolve({ sessionId: `sess-${ctx.runId}` }));
         }),
     });
-    const sch = await h.scheduler.create({ ...baseInput });
+    const sch = await h.scheduler.create({ ...baseInput, silentWhenIdle: false });
     const p1 = h.scheduler.runNow(sch.id);
     const p2 = h.scheduler.runNow(sch.id);
     await vi.waitFor(() => expect(gates).toHaveLength(2));
@@ -1944,7 +1989,7 @@ describe('Scheduler', () => {
         return { sessionId: 'sess-no-active-turn' };
       },
     });
-    const sch = await h.scheduler.create({ ...baseInput });
+    const sch = await h.scheduler.create({ ...baseInput, silentWhenIdle: false });
     const events: unknown[] = [];
     h.scheduler.on('silenced', (e) => events.push(e));
     const result = await h.scheduler.runNow(sch.id);
@@ -2368,6 +2413,40 @@ describe('Scheduler preRunHook results', () => {
     const after = await h.storage.get(sch.id);
     expect(after?.status).toBe('expired');
     expect(after?.nextFireAt).toBeUndefined();
+  });
+
+  it.each([
+    { recurring: true, manual: false, intervalMs: undefined },
+    { recurring: true, manual: false, intervalMs: 600_000 },
+    { recurring: false, manual: false, intervalMs: undefined },
+    { recurring: false, manual: true, intervalMs: undefined },
+  ])('settles an undispatched Stop without losing normal scheduling: %j', async (timing) => {
+    const h = makeHarness({
+      runnerImpl: async () => ({
+        sessionId: 'stopped-session',
+        skipped: true,
+        resultText: 'Scheduled turn stopped before vendor dispatch',
+      }),
+    });
+    const sch = await h.scheduler.create({ ...baseInput, ...timing });
+    const firedAt = sch.nextFireAt ?? h.clock.now();
+    h.clock.setTo(firedAt);
+    if (timing.manual) await h.scheduler.runNow(sch.id);
+    else await h.scheduler.tick();
+    const runs = await h.scheduler.listRuns(sch.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: 'skipped', sessionId: 'stopped-session', readAt: firedAt });
+    const after = await h.storage.get(sch.id);
+    if (timing.recurring) {
+      expect(after?.status).toBe('active');
+      expect(after?.nextFireAt).toBe(firedAt + (timing.intervalMs ?? 60_000));
+      h.clock.setTo(after!.nextFireAt!);
+      await h.scheduler.tick();
+      expect(await h.scheduler.listRuns(sch.id)).toHaveLength(2);
+    } else {
+      expect(after?.nextFireAt).toBeUndefined();
+      if (!timing.manual) expect(after?.status).toBe('expired');
+    }
   });
 
   it('create() 透传 preRunHook 配置', async () => {

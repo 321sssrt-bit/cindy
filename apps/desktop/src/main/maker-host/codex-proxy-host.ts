@@ -1,7 +1,22 @@
+import { captureUsagePricing, createUsagePricingObserver } from './model-usage-pricing.js';
+import { rewriteFastModel } from './model-fast-mode.js';
 import { createAttachmentRecovery } from './oversized-attachment-recovery.js';
 import { clearCodexTextOnlyPolicies, codexTextOnlyRequestGuard, codexTextOnlyWebSocketTransforms, isCodexTextOnly } from './codex-text-only-policy.js';
-import { resolveConversationSessionHeaders, withChatBridgeUserAgent, overrideHeadersCaseInsensitive } from '@cindy/responses-chat-bridge';
-import { providerModelRecord, type Effort } from '@cindy/model-providers';
+import {
+  resolveConversationSessionHeaders,
+  withChatBridgeUserAgent,
+  overrideHeadersCaseInsensitive,
+} from '@cindy/responses-chat-bridge';
+import {
+  isCustomRoutedProvider,
+  isCodexGatewayWireModel,
+  providerCatalogId,
+  providerModelRecord,
+  stripCodexGatewayWirePrefix,
+  type CatalogModel,
+  type Effort,
+  type Provider,
+} from '@cindy/model-providers';
 import { reconcileOutboundReasoningEffort } from './outbound-reasoning-effort.js';
 import { createPiProviderFetch, handlePiProviderRequest, invocationModelRecord, nativeBridgeApiKey, readBoundedResponseText, requiresNativeProviderAuth } from './pi-provider-transport.js';
 import { normalizeProviderRequest, normalizeMiniMaxResponsesReasoning } from '@cindy/model-compat';
@@ -29,6 +44,7 @@ import {
   createAnthropicCompatProxy,
   createActiveStripTransform,
   createEncryptedContentRecoveryRule,
+  createResponsesReasoningContentRecoveryRule,
   createImageGenerationIdRecoveryRule,
   createResponsesItemIdPrefixRecoveryRule,
   createResponsesItemIdLengthRecoveryRule,
@@ -40,6 +56,7 @@ import {
   sanitizeXaiModelInputBody,
   sanitizeXaiModelInputFromBody,
   stripEncryptedContentFromBody,
+  stripResponsesReasoningContentFromBody,
   stripImageGenerationItemsWithoutIdFromBody,
   stripNonCanonicalResponsesItemIdsFromBody,
   shortenOversizedResponsesItemIdsFromBody,
@@ -63,7 +80,7 @@ import {
   type ChatBridgeCapabilities,
 } from '@cindy/responses-chat-bridge';
 import { createResponsesAnthropicHandler } from '@cindy/responses-anthropic-bridge';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -91,6 +108,8 @@ import {
   buildRouteDecision,
   inferProviderIdForModel,
   isHostInjectedAuthSession,
+  getProviderRouteCredentialRevision,
+  isProviderRouteMutationInProgress,
   isUserProviderSession,
   getUserProviderIdForSession,
   readProviderOAuthToken,
@@ -103,11 +122,10 @@ import {
   rewriteSessionModelIdForRoute,
 } from './provider-route.js';
 import type { CodexSubagentRouteSnapshot } from './codex-subagent-config.js';
-import { getSessionProvider } from './session-provider-store.js';
-import {
-  composeResponseObservers,
-  recordClaudeRateLimitHeaders,
-} from './claude-rate-limit-headers-observer.js';
+import { getSessionProvider, hasHostedSessionModelAccess, hostedSessionModelAllowed } from './session-provider-store.js';
+import { guestProviderModelAllowed, guestProviderOffersModel, guestProviderRouteForSession, hostedProviderOffersModel } from './guest-provider-route-store.js';
+import { isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
+import { composeResponseObservers } from './claude-rate-limit-headers-observer.js';
 import { createProviderUpstreamErrorObserver, reportProviderUpstreamError } from './provider-upstream-error-observer.js';
 import { createXaiProxyAuthInvalidationObserver } from './xai-auth-invalidation-host.js';
 import { xaiServerSideTools } from './xai-server-side-tools.js';
@@ -116,6 +134,7 @@ import {
   imageGenerationStripController,
   responsesItemIdStripController,
   responsesItemIdLengthStripController,
+  responsesReasoningContentStripController,
   xaiModelInputStripController,
 } from './thread-strip-controllers.js';
 import { createMakerLogger } from './logger-adapter.js';
@@ -124,6 +143,7 @@ import { outboundFetch } from './outbound-fetch.js';
 import { desktopAnthropicImageCodec } from './anthropic-image-codec.js';
 import { readSilentEncryptedRetrySettings } from './silent-encrypted-retry-store.js';
 import { getLogDir } from '../logger.js';
+import { createCodexImageModelRewrite } from './codex-image-model-rewrite.js';
 import { recordXaiRateLimitSnapshot } from '../usageBroadcaster.js';
 import {
   CODEX_IMAGE_GENERATION_ACTOR_HEADER,
@@ -152,6 +172,7 @@ const sessionToThreads = new Map<string, Set<string>>();
 const threadToSession = new Map<string, string>();
 const subagentRouteByParentThread = new Map<string, CodexSubagentRouteSnapshot>();
 const subagentRouteByThread = new Map<string, CodexSubagentRouteSnapshot>();
+const subagentCredentialRevisions = new WeakMap<CodexSubagentRouteSnapshot, number>();
 const smartSubagentRoutesByParentThread = new Map<
   string,
   ReadonlyMap<string, CodexSubagentRouteSnapshot>
@@ -167,6 +188,8 @@ export interface CodexObservedSubagentIdentity {
 const observedSubagentIdentityByThread = new Map<string, CodexObservedSubagentIdentity>();
 const reviewerModelBySession = new Map<string, string>();
 const httpRecoveryReasonByThread = new Map<string, string>();
+/** WS 已确认、尚未在落回的 HTTP 请求上激活对应 strip 的 recovery 原因（一次性消费）。 */
+const pendingHttpRecoveryStripByThread = new Map<string, string>();
 
 const CODEX_AUTO_REVIEW_MODEL = 'codex-auto-review';
 const CODEX_GUARDIAN_SUBAGENT = 'guardian';
@@ -213,6 +236,9 @@ const responsesItemIdPrefixRecoveryRule = createResponsesItemIdPrefixRecoveryRul
 const responsesItemIdLengthRecoveryRule = createResponsesItemIdLengthRecoveryRule({
   onRetry: (threadId, model) => responsesItemIdLengthStripController.markActive(threadId, model),
 });
+const responsesReasoningContentRecoveryRule = createResponsesReasoningContentRecoveryRule({
+  onRetry: (threadId, model) => responsesReasoningContentStripController.markActive(threadId, model),
+});
 const xaiModelInputRecoveryRule = createXaiModelInputRecoveryRule({
   onRetry: (threadId, model) => xaiModelInputStripController.markActive(threadId, model),
 });
@@ -222,6 +248,7 @@ const CODEX_BODY_RECOVERY_RULES = [
   imageGenerationIdRecoveryRule,
   responsesItemIdPrefixRecoveryRule,
   responsesItemIdLengthRecoveryRule,
+  responsesReasoningContentRecoveryRule,
   xaiModelInputRecoveryRule,
   vllmResponsesCompatibilityRule,
 ] as const;
@@ -306,6 +333,7 @@ export function armCodexHttpRecovery(args: {
     sessionToThreads.set(sessionId, threads);
     threadToSession.set(threadId, sessionId);
   }
+  pendingHttpRecoveryStripByThread.set(threadId, reason);
   log.info('codex websocket recovery fallback armed', {
     sessionId,
     threadId,
@@ -314,6 +342,31 @@ export function armCodexHttpRecovery(args: {
     ...(disconnectedWebSockets === 0 ? { scopedSocketAlreadyClosed: true } : {}),
   });
   return reason;
+}
+
+/**
+ * WS 已确认的 body recovery 原因，在 426 落回 HTTP 后的首个请求上直接激活对应 strip，
+ * 不再等上游 400。ChatGPT 订阅后端对解不开的 encrypted_content 在 WS 上回 400 错误帧，
+ * 同一历史走 HTTP 时却回 200 + SSE error 事件；只认 400/422 的 recoveryRules 永远不触发，
+ * 任务每轮都以 "stream closed before response.completed" 失败（2026-10-18 实测）。
+ * 激活与上游 400 触发的 rule.onRetry 等价：按本次请求的 model 标记，换模型后照常 reconcile。
+ * 必须排在各 active strip transform 之前，同一请求即生效。使用最终模型的规则
+ * 在 provider model rewrite 后激活，避免 Guardian 等固定别名掩盖真实模型切换。
+ */
+function createArmedHttpRecoveryStripTransform(useUpstreamModel = false): RequestTransform {
+  return (body, ctx) => {
+    if (!isPlainObject(body) || typeof body.model !== 'string' || !body.model) return null;
+    const threadId = selectedThreadIdFromHeaders(ctx.headers);
+    const reason = pendingHttpRecoveryStripByThread.get(threadId);
+    if (!reason) return null;
+    const rule = CODEX_BODY_RECOVERY_RULES.find((candidate) => candidate.id === reason);
+    if (Boolean(rule?.useUpstreamModel) !== useUpstreamModel) return null;
+    pendingHttpRecoveryStripByThread.delete(threadId);
+    if (!rule?.enabled() || !rule.onRetry) return null;
+    rule.onRetry(threadId, body.model);
+    log.info('codex HTTP recovery strip activated from websocket error', { threadId, reason, model: body.model });
+    return null;
+  };
 }
 
 // codex 走 Responses API,每轮**全量重发**整个 thread 历史;导入的存量长会话
@@ -354,6 +407,18 @@ export function getCodexProxyAuthInjection(): CodexProxyAuthInjection {
 
 // gateway api key reader —— 由 host 注入(readClaudeApiKey), 避免 codex-proxy-host 直接 import
 // auth-adapters(重模块, 会拖累单测加载 / 埋循环依赖)。proxy 给折扣 / api 流量换 gateway key 时调它。
+type CodexSubagentOAuth = {
+  accessToken: string;
+  accountId: string | null;
+  canDispatch(): boolean;
+};
+let readSubagentOAuth: ((providerId?: string) => Promise<CodexSubagentOAuth>) | undefined;
+
+/** Only an explicitly routed official child may request host-owned OAuth credentials. */
+export function setCodexSubagentOAuthReader(reader: (providerId?: string) => Promise<CodexSubagentOAuth>): void {
+  readSubagentOAuth = reader;
+}
+
 let _readGatewayKey: () => string | null = () => null;
 export function setCodexProxyGatewayKeyReader(fn: () => string | null): void {
   _readGatewayKey = fn;
@@ -501,11 +566,11 @@ function providerContextForRequest(
 }
 
 /**
- * 网关折扣命名空间判定：`codex/` 是 Gateway wire model 的档位标识，请求必须送往
- * 网关换 key，且转发时原样保留。它不是 Codex 运行时 slug，也不参与 spawn_agent。
+ * 网关折扣命名空间判定：`openai-codex/` 与 `codex/` 都是 Gateway wire model 的档位标识，
+ * 请求必须送往网关换 key，且转发时原样保留。它不是 Codex 运行时 slug，也不参与 spawn_agent。
  */
 function gatewayProviderIdForRewrittenModel(model: string): string | null {
-  return model.startsWith('codex/') && model.length > 'codex/'.length ? 'xd' : null;
+  return isCodexGatewayWireModel(model) ? 'xd' : null;
 }
 
 /** Applies the locked Subagent effort while preserving unrelated reasoning fields. */
@@ -834,10 +899,11 @@ function createProviderAwareGuardianReviewerTransform(
 }
 
 /**
- * Codex Code Mode 对部分 GPT-5.6 网关模型不会发出 Responses 原生搜索声明：
+ * Codex Code Mode 对部分网关模型不会发出 Responses 原生搜索声明：
  * 目录里的 `supports_search_tool` / `webSearch` 能力虽为 true，但 Gateway 只看最终
  * 请求的 `tools`。插件搜索是增强项，不能作为该基础能力的前置条件，因此在明确走
- * Cindy Gateway 的 GPT-5.6 请求中补回标准 `web_search` 工具；已有声明保持原样。
+ * Cindy Gateway 的 GPT-5.6 请求中补回标准 `web_search` 工具；GPT-6.1 Sol 仅在回放
+ * 已完成的搜索历史时补齐声明。已有声明保持原样。
  */
 function createGatewayNativeWebSearchTransform(frozenAuthInjection?: CodexProxyAuthInjection): RequestTransform {
   return (body, ctx) => {
@@ -854,8 +920,12 @@ function createGatewayNativeWebSearchTransform(frozenAuthInjection?: CodexProxyA
     const routeProviderId = providerContext.providerId
       ?? inferProviderIdForModel(model, 'codex')
       ?? rewrittenGatewayProviderId;
-    const gatewayModel = model.startsWith('codex/') ? model.slice('codex/'.length) : model;
-    if (!/^gpt-5\.6(?:$|[-.])/.test(gatewayModel)) return null;
+    const gatewayModel = stripCodexGatewayWirePrefix(model);
+    const replaysSearchHistory = Array.isArray(body.input) && body.input.some(
+      (item) => isPlainObject(item) && item.type === 'web_search_call' && item.status === 'completed',
+    );
+    if (!/^gpt-5\.6(?:$|[-.])/.test(gatewayModel)
+      && !(gatewayModel === 'gpt-6.1-sol' && replaysSearchHistory)) return null;
 
     // Match the effective auth context used by this proxy's routing transform. Another
     // app-server may change the global mode while a frozen OAuth proxy is still active.
@@ -945,7 +1015,19 @@ const MOONSHOT_CHAT_HOSTS = new Set(['api.moonshot.cn', 'api.moonshot.ai']);
 /** Kimi Code (coding plan) official endpoint DNS boundary. */
 const KIMI_CODING_CHAT_HOST = 'api.kimi.com';
 /** Model ids on the Kimi Code Codex (openai-chat) route verified for image input. */
-const KIMI_CODING_IMAGE_CHAT_MODELS = new Set(['k3', 'k3-256k']);
+const KIMI_CODING_IMAGE_CHAT_MODELS = new Set([
+  'k3',
+  'k3-256k',
+  'kimi-for-coding',
+  'kimi-for-coding-highspeed',
+]);
+/** Moonshot 开放平台上官方文档确认支持图片输入的 model id。 */
+const MOONSHOT_IMAGE_CHAT_MODELS = new Set([
+  'kimi-k3',
+  'kimi-k2.7-code',
+  'kimi-k2.7-code-highspeed',
+  'kimi-k2.6',
+]);
 /** 火山方舟(豆包)官方 DNS 边界:ark.<region>.volces.com(如 ark.cn-beijing.volces.com)。 */
 const VOLCENGINE_ARK_CHAT_HOST_RE = /^ark\.[a-z0-9-]+\.volces\.com$/;
 /** 阿里云百炼 Coding Plan / Token Plan / 按量付费官方 DNS 边界。 */
@@ -972,7 +1054,11 @@ function isDoubaoVisionModel(model: string): boolean {
 /** 已确认支持图片输入的 Qwen model id 白名单。 */
 const QWEN_IMAGE_CHAT_MODELS = new Set([
   'qwen3.6-flash',
+  'qwen3.6-plus',
   'qwen3.7-plus',
+  'qwen3.8-flash',
+  'qwen3.8-max',
+  // 已下线，旧 id 由百炼路由到 qwen3.8-max；保留给存量连接。
   'qwen3.8-max-preview',
 ]);
 
@@ -1084,7 +1170,7 @@ function isVerifiedImageChatRoute(upstream: string, realModel: string): boolean 
   }
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
-  if (realModel === 'kimi-k3') return MOONSHOT_CHAT_HOSTS.has(host);
+  if (MOONSHOT_IMAGE_CHAT_MODELS.has(realModel)) return MOONSHOT_CHAT_HOSTS.has(host);
   if (KIMI_CODING_IMAGE_CHAT_MODELS.has(realModel)) return host === KIMI_CODING_CHAT_HOST;
   if (isDoubaoVisionModel(realModel)) return VOLCENGINE_ARK_CHAT_HOST_RE.test(host);
   if (isQwenImageChatModel(realModel)) return DASHSCOPE_CODING_CHAT_HOSTS.has(host);
@@ -1108,10 +1194,10 @@ function createChatBridgeDecision(
   const { headers } = buildLocalHandlerHeaders(route, 'codex');
   const stripPrefix = route.routing.modelIdRewrite?.stripPrefix;
   const realModel = rewriteChatBridgeModel(wireModel, stripPrefix);
-  // localHandler 绕过 proxy 的 responseObserver,自定义(user)供应商的上游错误不会被
+  // localHandler 绕过 proxy 的 responseObserver,自定义(user/organization)供应商的上游错误不会被
   // createProviderUpstreamErrorObserver 看到。这里显式把非 2xx 上游错误喂回同一广播通道,
   // 让 Chat 桥接会话与透明自定义供应商一样弹结构化 providerError.* 提示。内置来源不广播
-  // (与 observer 的 user-only 语义一致)。
+  // (与 observer 的 custom-routed 语义一致)。
   const providerId = route.providerId;
   const providerName = getActiveCatalog().providers.find((p) => p.id === providerId)?.name ?? providerId;
   const baseCapabilities: ChatBridgeCapabilities = isGoogleGeminiChatUpstream(
@@ -1139,7 +1225,7 @@ function createChatBridgeDecision(
   const capabilities = systemMessagePolicy
     ? { ...routedCapabilities, systemMessagePolicy }
     : routedCapabilities;
-  const onUpstreamError = route.providerSource === 'user'
+  const onUpstreamError = isCustomRoutedProvider({ source: route.providerSource })
     ? ({ status, body }: { status: number; body: string }): void => {
         reportProviderUpstreamError({ agent: 'codex', providerId, providerName, status, bodyText: body });
       }
@@ -1178,10 +1264,12 @@ function createChatBridgeDecision(
         const nativeHeaders = overrideHeadersCaseInsensitive(withChatBridgeUserAgent(Object.fromEntries(Object.entries(headers).filter(([name]) =>
           !['authorization', 'x-api-key'].includes(name.toLowerCase())))), resolveConversationSessionHeaders(ctx?.headers));
         if (standard.execution.pi.api === 'anthropic-messages' && (actualModel.endsWith('[1m]')
-          || (isOfficialAnthropicUpstream(standard.upstream) && standard.contextWindow >= 1_000_000))) {
+          || (isOfficialAnthropicUpstream(standard.upstream) && (standard.contextWindow ?? 0) >= 1_000_000))) {
           appendCommaSeparatedHeaderToken(nativeHeaders, 'anthropic-beta', 'context-1m-2025-08-07');
         }
-        const nativeFetch = createPiProviderFetch({ row: standard, providerId,
+        const nativeFetch = createPiProviderFetch({ row: { ...standard,
+          supportsFastMode: selected?.supportsFastMode ?? standard.supportsFastMode,
+        }, providerId,
           // Keep the catalog adapter while honoring the host assigned to this account.
           upstream: buildRouteDecision(route.routing, null, 'codex', route.apiKey, route.oauthToken)?.upstreamOverride ?? route.routing.upstream,
           apiKey: nativeBridgeApiKey(headers),
@@ -1321,42 +1409,34 @@ function appendCommaSeparatedHeaderToken(
   headers[name] = values.join(',');
 }
 
-function claudeCodeSessionId(token: string): string {
-  const hash = createHash('sha256')
-    .update(`claude-code-session:${token}`, 'utf8')
-    .digest('hex');
-  const variant = ((Number.parseInt(hash[16], 16) & 0x3) | 0x8).toString(16);
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-${variant}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-}
-
-function claudeOAuthHeaders(
-  base: Record<string, string>,
-  token: string,
-): Record<string, string> {
-  return {
-    ...base,
-    authorization: `Bearer ${token}`,
-    'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-    'user-agent': '@anthropic-ai/sdk/0.74.0',
-    'x-app': 'cli',
-    'x-stainless-retry-count': '0',
-    'x-stainless-runtime': 'node',
-    'x-stainless-lang': 'js',
-    'x-stainless-timeout': '600',
-    'x-stainless-arch': process.arch,
-    'x-stainless-os': process.platform,
-    'x-stainless-package-version': '0.74.0',
-    'x-stainless-runtime-version': process.version.slice(1),
-    'x-claude-code-session-id': claudeCodeSessionId(token),
-    'x-client-request-id': randomUUID(),
-  };
-}
-
 /**
  * Responses → Anthropic Messages local bridge. The bridge owns both request and
  * response translation; this host layer only resolves the selected provider, supplies
  * provider-owned credentials, and restores preprocessing skipped by localHandler.
  */
+/**
+ * Claude 订阅只供内置 Claude Code CLI 用它自己的登录使用,Codex 不得借用。目录已不向 Codex
+ * 提供 Claude 订阅;旧会话 / 远端目录残留的选择在本地明确拒绝,绝不回落到默认上游
+ * (否则会按 ChatGPT 订阅或网关另行计费)。
+ */
+function claudeSubscriptionCodexRefusalDecision(): RoutingDecision {
+  return {
+    localHandler: async ({ res }) => {
+      res.writeHead(403, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(JSON.stringify({
+        error: {
+          type: 'permission_error',
+          code: 'anthropic_subscription_claude_code_only',
+          message: 'Claude subscriptions are only available in Claude Code. Choose another model for Codex.',
+        },
+      }));
+    },
+  };
+}
+
 function createAnthropicBridgeDecision(
   route: Awaited<ReturnType<typeof resolveSessionRoute>>,
   instructions: string | undefined,
@@ -1386,42 +1466,15 @@ function createAnthropicBridgeDecision(
       },
     };
   }
-  // For Codex, provider-oauth-header is the subscription-safe route: the host
-  // injects the Claude.ai token and never forwards the Codex/OpenAI bearer.
-  if (
-    isClaudeSubscriptionProviderId(route.providerId)
-    && route.routing.authStrategy === 'provider-oauth-header'
-    && !route.oauthToken
-  ) {
-    return {
-      localHandler: async ({ res }) => {
-        res.writeHead(401, {
-          'content-type': 'application/json; charset=utf-8',
-          'cache-control': 'no-store',
-        });
-        res.end(JSON.stringify({
-          error: {
-            type: 'authentication_error',
-            code: 'anthropic_subscription_auth_required',
-            message: 'Connect a Claude.ai subscription before using Anthropic models in Codex.',
-          },
-        }));
-      },
-    };
-  }
+  if (isClaudeSubscriptionProviderId(route.providerId)) return claudeSubscriptionCodexRefusalDecision();
   const usesProviderOAuth = route.routing.authStrategy === 'provider-oauth-header';
-  const isAnthropicSubscriptionOAuth =
-    usesProviderOAuth
-    && isClaudeSubscriptionProviderId(route.providerId);
   const buildProviderHeaders = (token: string | null): Record<string, string> => {
     const { headers: baseHeaders } = buildLocalHandlerHeaders(
       token === route.oauthToken ? route : { ...route, oauthToken: token },
       'codex',
     );
-    let headers = { ...baseHeaders };
-    if (isAnthropicSubscriptionOAuth) {
-      if (token) headers = claudeOAuthHeaders(headers, token);
-    } else if (route.routing.authStrategy === 'api-key-header') {
+    const headers = { ...baseHeaders };
+    if (route.routing.authStrategy === 'api-key-header') {
       if (route.apiKey) {
         headers['x-api-key'] = route.apiKey;
       } else if (!headerValue(headers, 'x-api-key')) {
@@ -1463,7 +1516,7 @@ function createAnthropicBridgeDecision(
   const stripPrefix = route.routing.modelIdRewrite?.stripPrefix;
   const supportsPromptCaching =
     isXdGatewayBridge || isOfficialAnthropicUpstream(upstreamBase);
-  const onUpstreamError = route.providerSource === 'user'
+  const onUpstreamError = isCustomRoutedProvider({ source: route.providerSource })
     ? ({ status, body }: { status: number; body: string }): void => {
         reportProviderUpstreamError({ agent: 'codex', providerId, providerName, status, bodyText: body });
       }
@@ -1471,7 +1524,7 @@ function createAnthropicBridgeDecision(
   const handler = createResponsesAnthropicHandler({
     upstreamBase,
     ...(route.routing.requestPath ? { requestPath: route.routing.requestPath } : {}),
-    authMode: isAnthropicSubscriptionOAuth ? 'oauth' : 'api-key',
+    authMode: 'api-key',
     buildHeaders: async () => buildProviderHeaders(route.oauthToken),
     ...(usesProviderOAuth
       ? {
@@ -1504,29 +1557,6 @@ function createAnthropicBridgeDecision(
       : () => false,
     imageCodec: desktopAnthropicImageCodec,
     ...(onUpstreamError ? { onUpstreamError } : {}),
-    // 账号额度旁路 —— 只给「内置 Anthropic + 订阅 OAuth + 官方 hostname」这一种路由
-    // 装。桥的 localHandler 绕开了 compat-proxy 的转发层, 转发层上的
-    // createClaudeRateLimitHeadersObserver 看不到这些响应(见 #2626), 所以额度只能
-    // 从这里回喂; 解析与去抖仍走 observer 那份共用状态, 不复制第二份。
-    //
-    // 其余形态一律不装: API key / 自定义兼容供应商 / XD Gateway 的响应要么没有
-    // unified headers, 要么根本不属于这个 Claude 订阅账号, 误写会污染快照。
-    ...(isAnthropicSubscriptionOAuth && isOfficialAnthropicUpstream(upstreamBase)
-      ? {
-          onUpstreamResponse: ({ responseHeaders, requestHeaders }: {
-            responseHeaders: Headers;
-            requestHeaders: Readonly<Record<string, string>>;
-          }) => {
-            // Fetch `Headers` 不支持索引取值, 直接传下去会被静默解析成 null;
-            // 迭代出的 key 一律小写, 正是解析函数要求的形态。
-            recordClaudeRateLimitHeaders({
-              upstreamBase,
-              responseHeaders: Object.fromEntries(responseHeaders),
-              requestHeaders,
-            });
-          },
-        }
-      : {}),
   }, {
     logger: log,
     fetchImpl: outboundFetch,
@@ -1622,16 +1652,46 @@ function xaiRealModelId(model: unknown): string | null {
   return model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
 }
 
-function supportsXaiReasoning(model: string | null): boolean {
+/**
+ * xAI 系 provider 判定:first-party `xai`,以及「设置 → 添加 xAI 账号」接入的独立账号
+ * (目录里 id 各不相同、`auth.native === 'xai'`,与 `providerCatalogId` 同源)。
+ * 返回实际账号 provider id,供路由归属与目录能力查询按该账号解析;非 xAI 系返回 null。
+ */
+function xaiCompatProviderId(providerId: string | null | undefined): string | null {
+  if (!providerId) return null;
+  const provider = getActiveCatalog().providers.find((candidate) => candidate.id === providerId);
+  if (!provider) return providerId === 'xai' ? providerId : null;
+  return providerCatalogId(provider) === 'xai' ? providerId : null;
+}
+
+/**
+ * 按 xAI 系 provider 解析某个 codex 目录模型:先查该账号 provider,**具体模型**未命中
+ * (账号级发现快照暂未包含它)时回退 first-party `xai`,而不只在 provider 不存在时回退——
+ * 否则通用 Grok 会被误判成不支持 reasoning、现有会话的 reasoning 配置与回放项被剥掉。
+ */
+export function resolveXaiCodexCatalogModel(
+  providers: ReadonlyArray<Pick<Provider, 'id' | 'models'>>,
+  providerId: string,
+  namespacedModel: string,
+): CatalogModel | undefined {
+  const findModel = (id: string) =>
+    (providers.find((provider) => provider.id === id)?.models.codex ?? []).find(
+      (candidate) => candidate.id === namespacedModel,
+    );
+  return findModel(providerId) ?? (providerId === 'xai' ? undefined : findModel('xai'));
+}
+
+function supportsXaiReasoning(model: string | null, providerId: string = 'xai'): boolean {
   if (!model) return true;
-  const xaiProvider = getActiveCatalog().providers.find((provider) => provider.id === 'xai');
-  const namespacedModel = `xai/${model}`;
-  const catalogModel = (xaiProvider?.models.codex ?? []).find((candidate) => candidate.id === namespacedModel);
+  const catalogModel = resolveXaiCodexCatalogModel(getActiveCatalog().providers, providerId, `xai/${model}`);
   return (catalogModel?.efforts.length ?? 0) > 0;
 }
 
-function stripUnsupportedXaiReasoning(body: Record<string, unknown>): Record<string, unknown> | null {
-  if (supportsXaiReasoning(xaiRealModelId(body.model))) return null;
+function stripUnsupportedXaiReasoning(
+  body: Record<string, unknown>,
+  providerId: string = 'xai',
+): Record<string, unknown> | null {
+  if (supportsXaiReasoning(xaiRealModelId(body.model), providerId)) return null;
 
   let changed = false;
   const next: Record<string, unknown> = { ...body };
@@ -1771,21 +1831,27 @@ function createByteDanceSeedResponsesCompatTransform(): RequestTransform {
   };
 }
 
-function createXaiResponsesCompatTransform(): RequestTransform {
-  return (body, ctx) => {
+type XaiRequestPricing = Map<number, ReturnType<typeof captureUsagePricing>>;
+
+function createXaiResponsesCompatTransform(pricing: XaiRequestPricing): RequestTransform {
+  const transform: RequestTransform = (body, ctx) => {
     if (!isPlainObject(body)) return null;
     const requestModel = typeof body.model === 'string' ? body.model : '';
     const providerContext = providerContextForRequest(ctx.headers, requestModel);
     const explicitProviderId = providerContext.providerId;
     const inferredProviderId =
       explicitProviderId ?? (typeof body.model === 'string' ? inferProviderIdForModel(body.model, 'codex') : null);
-    if (inferredProviderId !== 'xai') return null;
+    // first-party `xai` 与独立 xAI 账号(auth.native = 'xai',id 各异)都发往 api.x.ai,
+    // 必须走同一套改写;只认字面量 'xai' 会让独立账号会话裸发 —— tool-less 的
+    // /responses/compact 带着 tool_choice 直达上游即报「tool_choice 有、tools 为空」(#4888)。
+    const xaiProviderId = xaiCompatProviderId(inferredProviderId);
+    if (!xaiProviderId) return null;
     // 与路由的 scope 门同源:xai 会话里非 xai/ 前缀的请求会被 resolveSessionRouteDecision
     // 放回默认路由(ChatGPT/网关),body 不能再按 xAI 语义改写(挪 instructions / 剥
     // reasoning 会破坏默认上游的请求),transform 是否生效必须与路由是否捕获一致。
     const wireModel = providerContext.subagentRoute?.catalogModel
       ?? (typeof body.model === 'string' ? body.model : undefined);
-    if (!providerRoutingServesWireModel('xai', 'codex', wireModel)) return null;
+    if (!providerRoutingServesWireModel(xaiProviderId, 'codex', wireModel)) return null;
     let changed = false;
     let current = moveInstructionsIntoInput(body);
     if (current) changed = true;
@@ -1828,21 +1894,31 @@ function createXaiResponsesCompatTransform(): RequestTransform {
       }
     }
 
-    const withoutUnsupportedReasoning = stripUnsupportedXaiReasoning(current);
+    const withoutUnsupportedReasoning = stripUnsupportedXaiReasoning(current, xaiProviderId);
     if (withoutUnsupportedReasoning) {
       current = withoutUnsupportedReasoning;
       changed = true;
     }
 
     const withNormalizedInputItems = sanitizeXaiModelInputBody(current, {
-      supportsReasoning: supportsXaiReasoning(xaiRealModelId(current.model)),
+      supportsReasoning: supportsXaiReasoning(xaiRealModelId(current.model), xaiProviderId),
     });
     if (withNormalizedInputItems) {
       current = withNormalizedInputItems;
       changed = true;
     }
+    const withFast = rewriteFastModel(xaiProviderId, 'codex', current, current.service_tier === 'priority');
+    const sessionId = sessionIdFromHeaders(ctx.headers);
+    if (sessionId && ctx.url.split('?', 1)[0]?.endsWith('/responses') && !isGuardian) {
+      pricing.set(ctx.reqId, captureUsagePricing(sessionId,
+        withFast && withFast.model !== current.model ? 'priority' : 'standard',
+        selectedThreadIdFromHeaders(ctx.headers)));
+    }
+    if (withFast) { current = withFast; changed = true; }
     return changed ? current : null;
   };
+  transform.onRequestSettled = reqId => { pricing.delete(reqId); };
+  return transform;
 }
 
 function responsesCompatibilityRoute(
@@ -2053,7 +2129,7 @@ function isGptEncryptedHistoryModel(model: string | null | undefined): boolean {
  *
  * - 加密 compaction 仍替换成明文上下文缺失提示。
  * - 多 Agent 历史会在 agent_message.content 里夹带仅兼容 GPT Responses 上游可解的
- *   encrypted_content；ChatGPT 与版本化 gpt-* / namespace/gpt-* 模型原样透传。其它模型
+ *   encrypted_content；ChatGPT 与 GPT API 原样透传，记录线程的身份不能证明子消息的密文来源。其它模型
  *   只删除这些嵌套密文，保留可读正文与路由元数据；若消息只剩密文则整条丢弃。
  * - reasoning.encrypted_content 不属于本故障；继续交给后续供应商兼容层判断，
  *   不在这里扩大删除面。
@@ -2098,10 +2174,10 @@ export function createCrossProviderCompactionCompatTransform(): RequestTransform
     if (!ctx.upstreamBase) return null;
     const requestModel = isPlainObject(body) && typeof body.model === 'string' ? body.model : '';
     const providerContext = providerContextForRequest(ctx.headers, requestModel);
-    if (
-      isChatGptUpstreamBase(ctx.upstreamBase) ||
-      isGptEncryptedHistoryModel(providerContext.catalogModel)
-    ) return null;
+    // A subscription parent can receive messages from an independently routed API
+    // child. Native parent identity is not evidence that its ciphertext is invalid.
+    if (isChatGptUpstreamBase(ctx.upstreamBase)
+      || isGptEncryptedHistoryModel(providerContext.catalogModel)) return null;
     const replaced = rewriteCrossProviderHistoryItems(body);
     if (!replaced) return null;
     log.info('rewrote incompatible Codex history for non-GPT model', {
@@ -2429,6 +2505,86 @@ function codexCustomProviderRouteFailure(status: number, code: string): RoutingD
   };
 }
 
+function codexGuestRouteRefusal(): RoutingDecision {
+  return {
+    localHandler: async ({ res }) => {
+      res.writeHead(403, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      res.end(JSON.stringify({
+        error: {
+          type: 'invalid_request_error',
+          code: 'shared_provider_only',
+          message: 'This request is outside the provider shared with you.',
+        },
+      }));
+    },
+  };
+}
+
+/**
+ * 供应商分享受邀者任务的 proxy 守门(每个受邀者任务独占一个 proxy，鉴权形态与自定义供应商路由都冻结在
+ * 上面，路由只登记了分享的那一个供应商)。返回 undefined = 照常路由；否则直接用返回的决策：
+ *  - 自定义供应商路径：冻结路由已限定为分享的供应商与它的模型，照常；
+ *  - 无 model 的控制面请求(GET /models 等)：按冻结的鉴权形态走，那就是分享的供应商的凭证，照常；
+ *  - 推理请求：模型必须由分享的供应商提供(自动审核按它实际用的模型判断)；
+ *  - 其余请求必须属于登记过的受邀者会话(会话来源就是分享的供应商)。认不出会话时只有分享的是
+ *    网关 / ChatGPT 订阅且鉴权形态一致才按默认路由直达，不做按模型的隐式推断；其余本地拒绝。
+ */
+export function createCodexGuestRoutingGuard(
+  providerId: string,
+  frozenAuthInjection?: CodexProxyAuthInjection,
+  guestSessionId?: string,
+  frozenRoutes?: readonly CodexCustomProviderRoute[],
+): (body: unknown, ctx: RequestTransformCtx) => Promise<RoutingDecision | null | undefined> {
+  return async (body, ctx) => {
+    const requestModel = isPlainObject(body) && typeof body.model === 'string' ? body.model : '';
+    const requestSessionId = sessionIdFromHeaders(ctx.headers);
+    // This proxy belongs to one guest. Headerless calls use that binding, and
+    // headers cannot borrow another guest's grants, even on the same provider.
+    if (guestSessionId && ((requestSessionId && requestSessionId !== guestSessionId)
+      || guestProviderRouteForSession(guestSessionId)?.providerId !== providerId
+      || getSessionProvider(guestSessionId) !== providerId)) return codexGuestRouteRefusal();
+    const sessionId = requestSessionId ?? guestSessionId;
+    const customPath = parseCodexCustomProviderPath(ctx.url);
+    if (customPath.kind === 'route' && customPath.pathKind === 'images') {
+      // Image wire IDs are not catalog identities. The frozen image route checks
+      // its catalog grant after binding JSON or multipart to the deployment.
+      return customProviderRouteSnapshot(customPath.routeId, frozenRoutes)?.providerId === providerId
+        ? undefined : codexGuestRouteRefusal();
+    }
+    if (!requestModel) return undefined;
+    // Guardian's internal marker is not a catalog model. Authorize its registered
+    // parent model, including when native OpenAI keeps the marker on the wire.
+    const reviewerModel = requestModel === CODEX_AUTO_REVIEW_MODEL && guardianParentThreadIdFromHeaders(ctx.headers) && sessionId
+      ? reviewerModelBySession.get(sessionId)
+      : undefined;
+    if (!await guestProviderModelAllowed(providerId, reviewerModel ?? requestModel, sessionId)) return codexGuestRouteRefusal();
+    if (parseCodexCustomProviderPath(ctx.url).kind !== 'not-custom-provider-route') return undefined;
+    const authInjection = frozenAuthInjection ?? getCodexProxyAuthInjection();
+    if (ctx.url.split('?', 1)[0]?.endsWith('/responses')) {
+      const effectiveModel = providerAwareGuardianReviewerModel(body, ctx.headers, authInjection) ?? requestModel;
+      if (effectiveModel !== requestModel && !await guestProviderModelAllowed(providerId, effectiveModel, sessionId)) return codexGuestRouteRefusal();
+      const offered = effectiveModel === CODEX_AUTO_REVIEW_MODEL
+        ? isOpenAiSubscriptionProviderId(providerId)
+        : await guestProviderOffersModel(providerId, 'codex', effectiveModel, sessionId ?? undefined);
+      if (!offered) return codexGuestRouteRefusal();
+    }
+    if (requestSessionId) {
+      return guestProviderRouteForSession(requestSessionId)?.providerId === providerId
+        && getSessionProvider(requestSessionId) === providerId
+        ? undefined
+        : codexGuestRouteRefusal();
+    }
+    const defaultRouteIsShared = (providerId === 'xd' && authInjection === 'env-key')
+      || (isOpenAiSubscriptionProviderId(providerId) && authInjection === 'oauth-bearer');
+    return defaultRouteIsShared
+      ? decideCodexRoute({ model: requestModel, authInjection, gatewayKey: _readGatewayKey() })
+      : codexGuestRouteRefusal();
+  };
+}
+
 type CodexImageGenerationOperation = 'generation' | 'edit';
 type CodexImageGenerationPathClass = '/images/generations' | '/images/edits';
 interface CodexImageGenerationLogParams {
@@ -2639,6 +2795,7 @@ function resolveCodexCustomProviderRoutingDecision(
   body: unknown,
   ctx: RequestTransformCtx,
   frozenRoutes?: readonly CodexCustomProviderRoute[],
+  guestSessionId?: string,
 ): RoutingDecision | null | Promise<RoutingDecision | null> | undefined {
   const parsed = parseCodexCustomProviderPath(ctx.url);
   if (parsed.kind === 'not-custom-provider-route') return undefined;
@@ -2667,6 +2824,18 @@ function resolveCodexCustomProviderRoutingDecision(
     return codexCustomProviderRouteFailure(403, 'custom_provider_model_mismatch');
   }
   const wireModel = parsed.pathKind === 'responses' ? requestModel : undefined;
+  const sessionId = sessionIdFromHeaders(ctx.headers) ?? guestSessionId;
+  if (wireModel && !hostedProviderOffersModel(sessionId, route.providerId, 'codex', wireModel)) {
+    return codexCustomProviderRouteFailure(403, 'remote_model_not_allowed');
+  }
+  // Images use their own model IDs, not the parent's Responses model. The
+  // request-local transform also checks opaque multipart edits before dispatch.
+  const guestImage = !!guestSessionId || !!(sessionId && guestProviderRouteForSession(sessionId));
+  const allowsImageModel = parsed.pathKind === 'images' && sessionId && (guestImage || hasHostedSessionModelAccess(sessionId))
+    ? (model: string) => guestImage
+      ? guestProviderModelAllowed(route.providerId, model, sessionId)
+      : hostedSessionModelAllowed(sessionId, route.providerId, model)
+    : undefined;
   return resolveFrozenProviderRouteDecision(
     route.providerId,
     frozenRouting,
@@ -2675,7 +2844,10 @@ function resolveCodexCustomProviderRoutingDecision(
     _readGatewayKey(),
     wireModel,
   )
-    .then((resolved) => {
+    .then(async (resolved) => {
+      if (allowsImageModel && requestModel && !await allowsImageModel(frozenRouting.imageModel?.litellmModel ?? requestModel)) {
+        return codexCustomProviderRouteFailure(403, 'remote_model_not_allowed');
+      }
       if (!resolved?.decision || resolved.routing.disabled) {
         return codexCustomProviderRouteFailure(503, 'custom_provider_route_unavailable');
       }
@@ -2723,6 +2895,9 @@ function resolveCodexCustomProviderRoutingDecision(
         ...(headerDelete.size > 0 ? { headerDelete: [...headerDelete] } : {}),
         ...(parsed.pathKind === 'images'
           ? {
+              ...(frozenRouting.imageModel || allowsImageModel ? {
+                transformRequestBody: createCodexImageModelRewrite(frozenRouting.imageModel, allowsImageModel),
+              } : {}),
               forwardLifecycle: createCodexImageGenerationForwardLifecycleObserver(
                 parsed.routeId,
                 imagePathClass,
@@ -2743,12 +2918,67 @@ function resolveCodexCustomProviderRoutingDecision(
 export function createModelRoutingTransform(
   frozenAuthInjection?: CodexProxyAuthInjection,
   frozenCustomProviderRoutes?: readonly CodexCustomProviderRoute[],
+  sourceHostAlive: () => boolean = () => true,
+  onCrossProviderChildAuthorized?: (ctx: RequestTransformCtx) => void,
+  guestSessionId?: string,
 ): RoutingTransform {
   return (body, ctx) => {
+    const inheritedPath = parseCodexCustomProviderPath(ctx.url);
+    if (inheritedPath.kind === 'route' && inheritedPath.pathKind === 'responses' && ctx.method === 'POST') {
+      // Select the first smart child before validating the inherited parent URL.
+      // Only registered collab lineage and this parent's frozen namespace can escape.
+      const sessionId = sessionIdFromHeaders(ctx.headers);
+      const parentRoute = customProviderRouteSnapshot(inheritedPath.routeId, frozenCustomProviderRoutes);
+      if (isCollabSpawnRequest(ctx.headers) && sessionId && parentRoute
+        && getSessionProvider(sessionId) === parentRoute.providerId) {
+        const transformed = createForcedSubagentRequestTransform()(body, ctx) ?? body;
+        const childRoute = subagentRouteFromHeaders(ctx.headers);
+        if (childRoute) {
+          const threadId = selectedThreadIdFromHeaders(ctx.headers);
+          const current = () => sourceHostAlive()
+            && threadToSession.get(threadId) === sessionId
+            && getSessionProvider(sessionId) === parentRoute.providerId
+            && subagentRouteByThread.get(threadId) === childRoute
+            && !isProviderRouteMutationInProgress(parentRoute.providerId)
+            && getProviderRouteCredentialRevision(parentRoute.providerId) === parentRoute.credentialRevision
+            && !isProviderRouteMutationInProgress(childRoute.providerId)
+            && getProviderRouteCredentialRevision(childRoute.providerId) === subagentCredentialRevisions.get(childRoute);
+          if (!current()) return unresolvedCollabSpawnRouteDecision();
+          const crossesProvider = childRoute.providerId !== parentRoute.providerId;
+          const decision = crossesProvider
+            ? createModelRoutingTransform(frozenAuthInjection, frozenCustomProviderRoutes, sourceHostAlive)(
+                body, { ...ctx, url: '/responses' },
+              )
+            : resolveCodexCustomProviderRoutingDecision(transformed, ctx, frozenCustomProviderRoutes);
+          return Promise.resolve(decision).then((resolved) => {
+            if (!resolved || !current()) return unresolvedCollabSpawnRouteDecision();
+            const useProviderTransforms = crossesProvider && Boolean(onCrossProviderChildAuthorized);
+            if (useProviderTransforms) onCrossProviderChildAuthorized!(ctx);
+            return {
+              ...(crossesProvider ? { pathOverride: '/responses' } : {}),
+              ...resolved,
+              dispatchGenerationValid: () => current() && (resolved.dispatchGenerationValid?.() ?? true),
+              // Cross-provider HTTP requests use the ordinary outbound chain exactly
+              // once. Never overwrite its wire model with the catalog identity afterward.
+              // Same-provider frozen namespaces keep their dedicated identity transform.
+              ...(useProviderTransforms ? {} : { transformRequestBody: async (raw, transformCtx) => {
+                const parsed: unknown = JSON.parse(raw.toString('utf8'));
+                const routed = createForcedSubagentRequestTransform()(parsed, ctx) ?? parsed;
+                const bytes = Buffer.from(JSON.stringify(routed));
+                return resolved.transformRequestBody
+                  ? resolved.transformRequestBody(bytes, transformCtx)
+                  : { body: bytes };
+              } }),
+            } satisfies RoutingDecision;
+          });
+        }
+      }
+    }
     const customProviderRoute = resolveCodexCustomProviderRoutingDecision(
       body,
       ctx,
       frozenCustomProviderRoutes,
+      guestSessionId,
     );
     if (customProviderRoute !== undefined) return customProviderRoute;
     // body 可能为 undefined —— 无 body 的 GET(典型: codex models-manager 的 `GET /models` 轮询,
@@ -2770,6 +3000,15 @@ export function createModelRoutingTransform(
     const model = subagentRoute?.catalogModel ?? reportedModel;
     const explicitProviderId = subagentRoute?.providerId
       ?? (sessionId ? getSessionProvider(sessionId) : null);
+    const authorizationModel = model === CODEX_AUTO_REVIEW_MODEL && guardianParentThreadIdFromHeaders(ctx.headers) && sessionId
+      ? reviewerModelBySession.get(sessionId) ?? model : model;
+    if (model && !hostedProviderOffersModel(sessionId, explicitProviderId, 'codex', authorizationModel)) {
+      return codexCustomProviderRouteFailure(403, 'remote_model_not_allowed');
+    }
+    // 推理请求钉在 Claude 订阅上(旧会话 / 子代理快照):本地拒绝,不落任何默认上游。
+    if (model && explicitProviderId && isClaudeSubscriptionProviderId(explicitProviderId)) {
+      return claudeSubscriptionCodexRefusalDecision();
+    }
     const pendingRoute = sessionId && !subagentRoute
       ? resolvePendingSessionRouteDecision(sessionId, model || undefined)
       : null;
@@ -2809,7 +3048,26 @@ export function createModelRoutingTransform(
         selectedRouting?.authStrategy === 'oauth-passthrough'
         && authInjection !== 'oauth-bearer'
       ) {
-        return unresolvedCollabSpawnRouteDecision();
+        if (!readSubagentOAuth) {
+          return unresolvedCollabSpawnRouteDecision();
+        }
+        // The parent stays ephemeral. Fetch subscription credentials only when
+        // an explicit child route actually dispatches to the official backend.
+        const credentialRevision = getProviderRouteCredentialRevision(subagentRoute.providerId);
+        return readSubagentOAuth(subagentRoute.providerId).then((auth) => ({
+          upstreamOverride: CODEX_OAUTH_UPSTREAM,
+          headerOverride: {
+            authorization: `Bearer ${auth.accessToken}`,
+            ...(auth.accountId ? { 'chatgpt-account-id': auth.accountId } : {}),
+          },
+          ...(!auth.accountId ? { headerDelete: ['chatgpt-account-id'] } : {}),
+          dispatchGenerationValid: () => sourceHostAlive()
+            && !isProviderRouteMutationInProgress(subagentRoute.providerId)
+            && getProviderRouteCredentialRevision(subagentRoute.providerId) === credentialRevision
+            && threadToSession.get(threadId) === sessionId
+            && subagentRouteByThread.get(threadId) === subagentRoute
+            && auth.canDispatch(),
+        })).catch(() => unresolvedCollabSpawnRouteDecision());
       }
       if (selectedUsesLocalBridge) {
         return resolveProviderRouteById(
@@ -2932,6 +3190,9 @@ export function createModelRoutingTransform(
 function createTransformRequestChain(
   frozenAuthInjection?: CodexProxyAuthInjection,
   execAdapter = createCodexResponsesCompatibilityAdapter(),
+  pricing: XaiRequestPricing = new Map(),
+  /** 供应商分享受邀者的 proxy：不走视觉桥(视觉后端是本机用户自己的其它供应商)。 */
+  guest = false,
 ): RequestTransform[] {
   const execFunctionAdapterTransform: RequestTransform = (body, ctx) => {
     if (!isPlainObject(body)) return null;
@@ -2963,6 +3224,7 @@ function createTransformRequestChain(
     execAdapter.releaseResponse(requestId);
   };
   const transforms: RequestTransform[] = [
+    createArmedHttpRecoveryStripTransform(),
     createActiveStripTransform({
       controller: encryptedStripController,
       enabled: () => readSilentEncryptedRetrySettings().enabled,
@@ -2973,7 +3235,6 @@ function createTransformRequestChain(
       enabled: () => true,
       strip: stripImageGenerationItemsWithoutIdFromBody,
     }),
-
     // Guardian uses an isolated child thread. Resolve its parent business
     // session and select that session's real provider model before provider
     // compatibility transforms inspect the request.
@@ -3016,16 +3277,22 @@ function createTransformRequestChain(
     // ModelInput deserialize 前洗 input[]。订阅直连那条会再洗一次（幂等）。
     createXaiModelInputSanitizeTransform(),
     sanitizeDeepSeekV4CustomTools,
-    createXaiResponsesCompatTransform(),
+    createXaiResponsesCompatTransform(pricing),
     createGatewayGrokResponsesCompatTransform(frozenAuthInjection),
     createByteDanceSeedResponsesCompatTransform(),
     createMiniMaxResponsesCompatTransform(),
     createProviderModelRewriteTransform(frozenAuthInjection),
     providerRequestTransform,
+    createArmedHttpRecoveryStripTransform(true),
+    createActiveStripTransform({
+      controller: responsesReasoningContentStripController,
+      enabled: () => true,
+      strip: stripResponsesReasoningContentFromBody,
+    }),
     // 视觉桥透明替换（层 A，Responses 格式）：controller 未注入时短路透传，零干扰；
     // 注入后把纯文本模型请求 input[] 里的 input_image 转成文字描述。放在 strip 之前与
     // Anthropic 链一致，避免未来 strip 扩展覆盖 Responses input_image 时吃掉图。
-    buildVisionBridgeProxyTransform(log),
+    ...(guest ? [] : [buildVisionBridgeProxyTransform(log)]),
     // Run after every provider dialect rewrite: xAI can also turn custom calls into functions.
     // This covers native-custom routes and tool-less /responses/compact without changing call_id.
     normalizeResponsesToolItemIds,
@@ -3129,37 +3396,72 @@ export function withCodexUpstreamRecording(
   };
 }
 
-function createCodexProxyHandle(
+async function createCodexProxyHandle(
   frozenAuthInjection?: CodexProxyAuthInjection,
   frozenCustomProviderRoutes?: readonly CodexCustomProviderRoute[],
+  guestProviderId?: string,
+  guestSessionId?: string,
 ): Promise<ProxyHandle> {
   const execAdapter = createCodexResponsesCompatibilityAdapter();
-  return createAnthropicCompatProxy({
+  let alive = true;
+  const pricing: XaiRequestPricing = new Map();
+  // requestCtx and transformCtx share this request-owned headers object. A weak
+  // identity marker cannot be forged by header values or leak into the next request;
+  // it also needs no settlement bookkeeping for cancelled/local-handler requests.
+  const crossProviderRequests = new WeakSet<Readonly<Record<string, string>>>();
+  const modelRoute = createModelRoutingTransform(frozenAuthInjection, frozenCustomProviderRoutes, () => alive,
+    ctx => { crossProviderRequests.add(ctx.headers); }, guestSessionId);
+  // 供应商分享受邀者的任务：先过受邀者守门，只经分享的那一个供应商出站。
+  const guestGuard = guestProviderId ? createCodexGuestRoutingGuard(guestProviderId, frozenAuthInjection, guestSessionId, frozenCustomProviderRoutes) : undefined;
+  const route: RoutingTransform = guestGuard
+    ? async (body, ctx) => {
+      const guarded = await guestGuard(body, ctx);
+      return guarded !== undefined ? guarded : modelRoute(body, ctx);
+    }
+    : modelRoute;
+  const frozenReasoning = createCustomProviderReasoningTransform(frozenCustomProviderRoutes);
+  const routeWithUsageEncoding: RoutingTransform = (body, ctx) => {
+    const uncompressed = (decision: RoutingDecision | null): RoutingDecision | null => {
+      if (decision?.localHandler || !isXaiUpstream(decision?.upstreamOverride ?? '')
+        || ctx.method !== 'POST' || !ctx.url.split('?', 1)[0]?.endsWith('/responses')) return decision;
+      // The observer receives raw wire bytes. Negotiate plaintext so the execution-price
+      // receipt is recorded synchronously before Codex can emit the corresponding usage.
+      return { ...decision, headerOverride: { ...decision?.headerOverride, 'accept-encoding': 'identity' } };
+    };
+    const decision = route(body, ctx);
+    return decision instanceof Promise ? decision.then(uncompressed) : uncompressed(decision);
+  };
+  const handle = await createAnthropicCompatProxy({
     // 默认上游 = gateway(含 /v1)；普通模型 + oauth 由 routingTransform 覆盖到 ChatGPT。
     upstream: () => buildCodexGatewayBaseUrl(),
-    transformRequest: createTransformRequestChain(frozenAuthInjection, execAdapter).map(
+    transformRequest: createTransformRequestChain(frozenAuthInjection, execAdapter, pricing, guestProviderId !== undefined).map(
       (transform): RequestTransform => {
         // Namespaced Responses use a frozen Provider route. Preserve its native
         // fields and model. The dedicated transform below reconciles effort
         // against that same snapshot; ordinary session/catalog transforms stay out.
-        if (transform === normalizeResponsesToolItemIds) return transform;
-        const scoped: RequestTransform = (body, ctx) =>
-          isCodexCustomProviderNamespacePath(ctx.url) ? null : transform(body, ctx);
+        const scoped: RequestTransform = (body, ctx) => {
+          if (crossProviderRequests.has(ctx.headers)) {
+            return transform(body, { ...ctx, url: '/responses' });
+          }
+          return isCodexCustomProviderNamespacePath(ctx.url) && transform !== normalizeResponsesToolItemIds
+            ? null : transform(body, ctx);
+        };
         // Keep adapter rejection and request-state cleanup on ordinary routes.
         scoped.errorMode = transform.errorMode;
         scoped.onRequestSettled = transform.onRequestSettled;
         return scoped;
       },
-    ).concat(createCustomProviderReasoningTransform(frozenCustomProviderRoutes)),
+    ).concat((body, ctx) => crossProviderRequests.has(ctx.headers) ? null : frozenReasoning(body, ctx)),
     routeOpaqueRequestBody: (ctx) => isCodexCustomProviderNamespacePath(ctx.url),
     bypassRequestTransforms: (_body, ctx) => {
       const path = parseCodexCustomProviderPath(ctx.url);
-      // Image payloads (including JSON) retain their byte-for-byte bypass.
+      // Images skip chat transforms. Only a route-bound deployment alias may rewrite them.
       return path.kind !== 'not-custom-provider-route'
         && !(path.kind === 'route' && path.pathKind === 'responses');
     },
-    requestGuard: ctx => codexTextOnlyRequestGuard(isCodexTextOnly(selectedThreadIdFromHeaders(ctx.headers)), ctx),
-    webSocketTransforms: ctx => codexTextOnlyWebSocketTransforms(() => isCodexTextOnly(selectedThreadIdFromHeaders(ctx.headers))),
+    requestGuard: ctx => codexTextOnlyRequestGuard(isCodexTextOnly(selectedThreadIdFromHeaders(ctx.headers)), ctx, isChatGptUpstreamBase),
+    // Accepted WebSockets route exclusively to CODEX_OAUTH_UPSTREAM (see resolver below).
+    webSocketTransforms: ctx => codexTextOnlyWebSocketTransforms(() => isCodexTextOnly(selectedThreadIdFromHeaders(ctx.headers)), true),
     transformResponse: (ctx) => {
       const response = {
         contentType: ctx.responseHeaders['content-type'] ?? '',
@@ -3175,10 +3477,15 @@ function createCodexProxyHandle(
     // 常规 session proxy 继续读取当前全局 spawn 形态；control-plane proxy 在创建时
     // 冻结自己的形态，两个 app-server 并行时不会互相改写路由。
     routingTransform: withCodexUpstreamRecording(
-      createModelRoutingTransform(frozenAuthInjection, frozenCustomProviderRoutes),
+      routeWithUsageEncoding,
       () => buildCodexGatewayBaseUrl(),
     ),
     responseObserver: composeResponseObservers(
+      ctx => {
+        const record = pricing.get(ctx.reqId);
+        return record && ctx.status >= 200 && ctx.status < 300
+          ? createUsagePricingObserver(ctx.responseHeaders['content-type'] ?? '', record) : null;
+      },
       createCodexResponseObserver(),
       createProviderUpstreamErrorObserver({
         agent: 'codex',
@@ -3223,6 +3530,8 @@ function createCodexProxyHandle(
      */
     resolveWebSocketUpstream: ({ headers }) => {
       if ((frozenAuthInjection ?? getCodexProxyAuthInjection()) !== 'oauth-bearer') return null;
+      // Hosted owner tasks need HTTP so every model request (and later revocation) reaches the live grant check.
+      if (hasHostedSessionModelAccess(sessionIdFromHeaders(headers))) return null;
       const threadId = selectedThreadIdFromHeaders(headers);
       const recoveryReason = httpRecoveryReasonByThread.get(threadId);
       if (recoveryReason) {
@@ -3251,6 +3560,12 @@ function createCodexProxyHandle(
       return CODEX_OAUTH_UPSTREAM;
     },
   });
+  const dispose = handle.dispose.bind(handle);
+  handle.dispose = async () => {
+    alive = false;
+    await dispose();
+  };
+  return handle;
 }
 
 /**
@@ -3365,10 +3680,15 @@ export async function ensureCodexCustomContextProxyReady(
   scopeKey: string,
   authInjection: CodexProxyAuthInjection,
   routes: readonly CodexCustomProviderRoute[],
+  /** 供应商分享受邀者的任务：proxy 只经这个供应商出站(见 createCodexGuestRoutingGuard)。 */
+  guestProviderId?: string,
+  guestSessionId?: string,
 ): Promise<void> {
   const key = scopeKey.trim();
   if (!key) throw new Error('custom-context Codex proxy requires a scope key');
-  const routeSignature = codexCustomProviderRoutesSignature(routes);
+  if (guestProviderId && !guestSessionId?.trim()) throw new Error('shared-provider Codex proxy requires a guest session');
+  const routeSignature = codexCustomProviderRoutesSignature(routes)
+    + (guestProviderId ? `\u0000guest:${guestProviderId}\u0000session:${guestSessionId}` : '');
   const current = _customContextHandles.get(key);
   if (
     current?.authInjection === authInjection
@@ -3386,7 +3706,7 @@ export async function ensureCodexCustomContextProxyReady(
   let promise!: Promise<void>;
   promise = (async () => {
     try {
-      const handle = await createCodexProxyHandle(authInjection, [...routes]);
+      const handle = await createCodexProxyHandle(authInjection, [...routes], guestProviderId, guestSessionId);
       if (
         disposeGeneration !== _disposeGeneration
         || scopeGeneration !== (_customContextGenerations.get(key) ?? 0)
@@ -3507,11 +3827,9 @@ export function registerComposed(
   const providerId = opts.subagentRoute?.providerId.trim();
   const catalogModel = opts.subagentRoute?.catalogModel.trim();
   if (providerId && catalogModel) {
-    subagentRouteByParentThread.set(threadId, {
-      providerId,
-      catalogModel,
-      reasoningEffort: opts.subagentRoute?.reasoningEffort ?? null,
-    });
+    const route = { providerId, catalogModel, reasoningEffort: opts.subagentRoute?.reasoningEffort ?? null };
+    subagentCredentialRevisions.set(route, getProviderRouteCredentialRevision(providerId));
+    subagentRouteByParentThread.set(threadId, route);
   } else {
     subagentRouteByParentThread.delete(threadId);
   }
@@ -3528,7 +3846,11 @@ export function registerComposed(
         : {}),
     });
   }
-  if (smartRoutes.size > 0) smartSubagentRoutesByParentThread.set(threadId, smartRoutes);
+  for (const route of smartRoutes.values()) {
+    subagentCredentialRevisions.set(route, getProviderRouteCredentialRevision(route.providerId));
+  }
+  // Legacy locked selection wins over optional smart candidates.
+  if (!providerId && smartRoutes.size > 0) smartSubagentRoutesByParentThread.set(threadId, smartRoutes);
   else smartSubagentRoutesByParentThread.delete(threadId);
   log.debug('registered codex prompt for thread', {
     sessionId,
@@ -3601,6 +3923,10 @@ export function registerChildThread(parentThreadId: string, childThreadId: strin
     return false;
   }
 
+  // Notification and the first request can register the same child in either order.
+  // Never replace its resolved selection with a parent's route on the second call.
+  if (previousSessionId === sessionId && registry.get(childThreadId) !== undefined) return true;
+
   const threads = sessionToThreads.get(sessionId) ?? new Set<string>();
   threads.add(childThreadId);
   sessionToThreads.set(sessionId, threads);
@@ -3609,14 +3935,14 @@ export function registerChildThread(parentThreadId: string, childThreadId: strin
   const inheritedSubagentRoute =
     subagentRouteByThread.get(parentThreadId)
     ?? subagentRouteByParentThread.get(parentThreadId);
-  if (inheritedSubagentRoute) {
+  const inheritedSmartRoutes =
+    smartSubagentRoutesByThread.get(parentThreadId)
+    ?? smartSubagentRoutesByParentThread.get(parentThreadId);
+  if (inheritedSubagentRoute && !inheritedSmartRoutes) {
     subagentRouteByThread.set(childThreadId, inheritedSubagentRoute);
   } else {
     subagentRouteByThread.delete(childThreadId);
   }
-  const inheritedSmartRoutes =
-    smartSubagentRoutesByThread.get(parentThreadId)
-    ?? smartSubagentRoutesByParentThread.get(parentThreadId);
   if (inheritedSmartRoutes) smartSubagentRoutesByThread.set(childThreadId, inheritedSmartRoutes);
   else smartSubagentRoutesByThread.delete(childThreadId);
   log.debug('registered codex child thread route', {
@@ -3649,6 +3975,8 @@ function clearSessionThreads(sessionId: string): string[] {
       smartSubagentRoutesByThread.delete(threadId);
       observedSubagentIdentityByThread.delete(threadId);
       httpRecoveryReasonByThread.delete(threadId);
+      pendingHttpRecoveryStripByThread.delete(threadId);
+      responsesReasoningContentStripController.clear(threadId);
     }
   }
   return threadIds;
@@ -3686,6 +4014,7 @@ export async function disposeCodexProxy(): Promise<void> {
   dumpSeq = 0;
   for (const threadId of threadToSession.keys()) {
     registry.delete(threadId);
+    responsesReasoningContentStripController.clear(threadId);
   }
   sessionToThread.clear();
   sessionToThreads.clear();
@@ -3697,6 +4026,7 @@ export async function disposeCodexProxy(): Promise<void> {
   observedSubagentIdentityByThread.clear();
   reviewerModelBySession.clear();
   httpRecoveryReasonByThread.clear();
+  pendingHttpRecoveryStripByThread.clear();
 
   if (_startPromise) {
     await _startPromise.catch(() => undefined);

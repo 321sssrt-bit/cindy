@@ -1,6 +1,8 @@
-import { Button, Image, ProgressView, Text, Toggle } from '@expo/ui/swift-ui';
-import { disabled, font, foregroundStyle, frame } from '@expo/ui/swift-ui/modifiers';
+import { NativeErrorNotice } from '@/components/NativeErrorNotice.ios';
+import { Button, Image, Picker, ProgressView, Text, Toggle } from '@expo/ui/swift-ui';
+import { disabled, font, foregroundStyle, frame, pickerStyle, tag, tint } from '@expo/ui/swift-ui/modifiers';
 import { useTranslation } from 'react-i18next';
+import { workspacePathsEqual } from './workspaceSelection';
 import { iconSize, useTheme } from '@/theme';
 import { ComposerSheet } from './ComposerSheet';
 import { ComposerNativeRow } from './ComposerNativeRow';
@@ -22,6 +24,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
     <ComposerSheet
       visible={p.page !== null}
       onClose={p.onClose}
+      onClosed={p.onClosed}
       onBack={browsing ? p.onBack : undefined}
       backLabel={t('shared.back')}
       title={t(p.page === 'device' ? 'session.new.selectControlledDevice' : browsing ? 'session.new.chooseOtherFolder' : 'session.new.selectWorkspace')}
@@ -33,7 +36,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
           modifiers={[...glassStyle, disabled(unavailable || !p.path || !!p.error)]}
           testID="newSession.remoteBrowseSelectCurrent"
         >
-          <Text modifiers={[frame({ maxWidth: Infinity, minHeight: 44 })]}>{t('session.new.useCurrent')}</Text>
+          <Text modifiers={[foregroundStyle(colors.ctaText), frame({ maxWidth: Infinity, minHeight: 44 })]}>{t('session.new.useCurrent')}</Text>
         </Button>
       ) : undefined}
     >
@@ -51,7 +54,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
         {p.workspaces.length ? <Section>
           {p.workspaces.map(workspace => <ComposerNativeRow key={workspace.workingDir}
             title={workspace.title} subtitle={workspace.workingDir} leading={icon('folder')}
-            selected={p.workspaceKind === 'project' && p.workingDir.trim() === workspace.workingDir}
+            selected={p.workspaceKind === 'project' && workspacePathsEqual(p.workingDir, workspace.workingDir)}
             disabled={p.busy} onPress={() => p.onProject(workspace.workingDir)} testID="newSession.workspaceProjectOption" />)}
         </Section> : null}
         <Section>
@@ -65,11 +68,17 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
           <ComposerNativeRow title={t('session.new.parentDir')} leading={icon('arrow.up')}
             disabled={!p.parent || unavailable} onPress={() => { if (p.parent) p.onEnter(p.parent); }}
             testID="newSession.remoteBrowseParentButton" />
+          {p.drives.length ? <Picker label={t('session.new.drive')}
+            selection={p.drives.find(drive => drive.current)?.path ?? ''}
+            onSelectionChange={(next: string) => { if (next && !unavailable) p.onEnter(next); }}
+            modifiers={[pickerStyle('menu'), disabled(unavailable)]} testID="newSession.remoteBrowseDrivePicker">
+            {p.drives.map(drive => <Text key={drive.path} modifiers={[tag(drive.path)]}>{drive.name}</Text>)}
+          </Picker> : null}
           <Toggle label={newSessionText('showHiddenDirectories')} isOn={p.showHidden}
-            onIsOnChange={p.onShowHidden} modifiers={[disabled(p.busy)]} testID="newSession.remoteBrowseShowHidden" />
+            onIsOnChange={p.onShowHidden} modifiers={[disabled(p.busy), tint(colors.inputCaret)]} testID="newSession.remoteBrowseShowHidden" />
         </Section>
         {p.loading ? <Section><ProgressView /></Section> : null}
-        {p.error ? <Section><Text modifiers={[foregroundStyle(colors.errorText)]}>{p.error}</Text></Section> : null}
+        {p.error ? <Section><NativeErrorNotice message={p.error} /></Section> : null}
         <Section>
           {!p.loading && !p.error && p.entries.length === 0 ? <Text>{newSessionText('emptyDirectory')}</Text> : null}
           {p.entries.map(entry => <ComposerNativeRow key={entry.path} title={entry.name}

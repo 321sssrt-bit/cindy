@@ -230,7 +230,7 @@ export interface Schedule {
    * true → runner fire 时透传给 codex agent，落到 app-server 的 ServiceTier.Fast，
    * 输出更快。Claude agent 忽略此字段。undefined/false → 标准 tier。
    */
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   /**
    * New-session workspace semantics.
    * - project: workingDir is a user-selected project directory.
@@ -258,7 +258,8 @@ export interface Schedule {
   /**
    * 静默运行:true → 成功 run 默认不发通知、不产生未读小红点;任务 prompt 可自行说明
    * 哪些业务条件值得提醒,agent 在满足时调用 schedule_notify_current_run 主动上报。
-   * 失败/异常仍然通知。默认 false(每轮成功都按通知渠道提醒,旧行为)。
+   * 失败/异常仍然通知。未明确分类的新任务默认 false；检查入口显式设 true。
+   * 存量已存选择保持不变。
    */
   silentWhenIdle?: boolean;
   /** Execution mode; omitted/legacy schedules run an agent. */
@@ -361,7 +362,7 @@ export interface CreateScheduleInput {
   providerId?: string;
   effort?: string;
   /** Codex Fast 模式开关，仅 Codex 有意义。详见 Schedule.fastMode。 */
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   /** Defaults to 'project' for backwards compatibility. */
   workspaceKind?: ScheduleWorkspaceKind;
   workingDir?: string;
@@ -369,7 +370,7 @@ export interface CreateScheduleInput {
   targetSessionId?: string;
   /** 默认 false。详见 Schedule.persistentSession。 */
   persistentSession?: boolean;
-  /** 默认 false。详见 Schedule.silentWhenIdle("静默运行")。 */
+  /** 仅明确判定为检查型的创建入口显式设 true；未分类 agent 与 script 缺省 false。存量与显式选择保持不变。 */
   silentWhenIdle?: boolean;
   /** Execution mode; defaults to agent for legacy schedules. */
   executionMode?: ScheduleExecutionMode;
@@ -494,7 +495,7 @@ export interface ScheduleTemplate {
   providerId?: string;
   effort?: string;
   /** Codex Fast 模式开关，仅 Codex 有意义。详见 Schedule.fastMode。 */
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   useWorktree?: boolean;
   persistentSession?: boolean;
   silentWhenIdle?: boolean;

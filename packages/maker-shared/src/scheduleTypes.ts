@@ -34,13 +34,14 @@ export interface RemoteScheduleWriteInput {
   model?: string;
   providerId?: string;
   effort?: string;
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   workspaceKind?: RemoteScheduleWorkspaceKind;
   workingDir?: string;
   useWorktree: boolean;
   targetSessionId?: string;
   persistentSession?: boolean;
   silentWhenIdle?: boolean;
+  preRunHook?: { command: string; timeoutMs?: number } | null;
   notify: RemoteScheduleNotifyConfig;
 }
 
@@ -69,7 +70,7 @@ export interface RemoteScheduleTemplate {
   model?: string;
   providerId?: string;
   effort?: string;
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   useWorktree?: boolean;
   persistentSession?: boolean;
   notify?: RemoteScheduleNotifyConfig;
@@ -105,13 +106,14 @@ export interface RemoteSchedule {
   model?: string;
   providerId?: string;
   effort?: string;
-  fastMode?: boolean;
+  fastMode?: boolean | 'ultrafast';
   workspaceKind?: RemoteScheduleWorkspaceKind;
   workingDir?: string;
   useWorktree?: boolean;
   targetSessionId?: string;
   persistentSession?: boolean;
   silentWhenIdle?: boolean;
+  preRunHook?: { command: string; timeoutMs?: number } | null;
   notify?: RemoteScheduleNotifyConfig;
   status: RemoteScheduleStatus;
   createdAt?: RemoteTimestamp;

@@ -26,6 +26,8 @@ const h = vi.hoisted(() => ({
   head: 'c'.repeat(40),
   tree: 'd'.repeat(40),
   dirty: false,
+  building: false,
+  manualClaimed: false,
   projected: undefined as CindyMakeMergeState | undefined,
   source: {
     status: 'ready',
@@ -34,6 +36,7 @@ const h = vi.hoisted(() => ({
     ref: 'main',
   } as MakeSourceStatus,
   fetch: vi.fn(),
+  recordRef: vi.fn(async () => {}),
 }));
 vi.mock('electron', () => ({
   app: {
@@ -90,11 +93,20 @@ vi.mock('../sourceContent.js', async (importOriginal) => ({
   snapshotContent: async () => h.tree,
 }));
 vi.mock('../versionStore.js', () => ({ hasPublishedPersonalVersionCommit: () => false }));
+// No installed original is known here: Sync follows the latest version as before.
+vi.mock('../versionStartup.js', () => ({
+  describeOriginalVersion: () => {
+    throw new Error('unknown original');
+  },
+}));
 vi.mock('../toolchainEnvironment.js', () => ({
   createMakeToolchainEnvironment: async () => ({}),
   resolveMakeToolEnvironment: async () => ({}),
 }));
-vi.mock('../sourcePreparation.js', () => ({ readCurrentCindySourceStatus: async () => h.source }));
+vi.mock('../sourcePreparation.js', () => ({
+  readCurrentCindySourceStatus: async () => h.source,
+  recordCindySourceRef: h.recordRef,
+}));
 vi.mock('../sourceGit.js', () => ({
   runSourceGit: async (_env: unknown, args: string[]) => h.git(args),
 }));
@@ -118,6 +130,12 @@ vi.mock('../manager.js', () => ({
       }
     },
     isPreparingSource: () => false,
+    isPersonalBuildRunning: () => h.building,
+    claimManualSourceSync: () => {
+      if (h.building || h.manualClaimed) throw Object.assign(new Error('busy'), { code: 'busy' });
+      h.manualClaimed = true;
+      return () => { h.manualClaimed = false; };
+    },
     refreshSourceStatus: async () => {},
   },
 }));
@@ -213,6 +231,8 @@ beforeEach(() => {
   h.head = 'c'.repeat(40);
   h.tree = 'd'.repeat(40);
   h.dirty = false;
+  h.building = false;
+  h.manualClaimed = false;
   h.actualRollback = false;
   h.afterReadError = undefined;
   h.refs = new Map();
@@ -260,6 +280,8 @@ beforeEach(() => {
     }
     if (args[0] === 'status') return h.dirty ? ' M preserve-user-edit.txt' : '';
     if (args[0] === 'merge-base') return '';
+    // The sync target is fetched before it is compared or used.
+    if (args[0] === 'fetch') return '';
     if (args[0] === 'update-ref') {
       if (args[1] === '-d') h.refs.delete(args[2]);
       else h.refs.set(args[1], args[2]);
@@ -291,6 +313,8 @@ it.each(['dev', 'beta', 'release'] as const)(
       ref,
       upstreamCommit: 'f'.repeat(40),
     });
+    // Settings now names the official version the personal version is on.
+    expect(h.recordRef).toHaveBeenCalledWith(expect.any(String), ref);
     const api = 'https://api.github.com/repos/makecindy/cindy';
     expect(h.fetch.mock.calls.map(([url]) => url)).toEqual([
       ...(channel === 'dev'
@@ -300,6 +324,47 @@ it.each(['dev', 'beta', 'release'] as const)(
     ]);
   },
 );
+it('keeps an operation with its account across a new sign-in of the same account', async () => {
+  const id = '12345678-1234-1234-1234-123456789abc';
+  // Written by an older client with the session generation in the owner.
+  h.saved = JSON.stringify({
+    state: {
+      id,
+      status: 'conflict',
+      ref: 'main',
+      upstreamCommit: 'a'.repeat(40),
+      baselineCommit: 'b'.repeat(40),
+      strategy: 'rebase',
+      hasWorkspace: true,
+      sessionId: 'resolver',
+    },
+    sessionOwner: 'cloud:user-1:1',
+  });
+  h.workspace = true;
+  h.current = 'cloud:user-1:2';
+  configureUpstreamMerge(() => false);
+  expect(h.projected).toMatchObject({ id, sessionId: 'resolver' });
+  expect(h.projected?.ownedByAnotherAccount).toBeUndefined();
+  h.current = 'cloud:user-2:3';
+  configureUpstreamMerge(() => false);
+  expect(h.projected).toMatchObject({ id, ownedByAnotherAccount: true });
+  // A stable owner is read back as it is, also when the account id is a number.
+  h.saved = JSON.stringify({ ...JSON.parse(h.saved!), sessionOwner: 'cloud:12345' });
+  h.current = 'cloud:12345:7';
+  configureUpstreamMerge(() => false);
+  expect(h.projected?.ownedByAnotherAccount).toBeUndefined();
+});
+it('rejects a manual source sync during a personal build without queuing it', async () => {
+  h.building = true;
+  await expect(actUpstreamMerge({ action: 'update' })).rejects.toThrow('busy');
+  expect(h.fetch).not.toHaveBeenCalled();
+  expect(h.projected).toBeUndefined();
+});
+it('releases the manual source reservation after an update', async () => {
+  h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
+  await actUpstreamMerge({ action: 'update' });
+  expect(h.manualClaimed).toBe(false);
+});
 it('uses the same fresh official sync before a task worktree is created', async () => {
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
   await syncSourceBeforeCindyMakeTask(new AbortController().signal);
@@ -317,6 +382,7 @@ it('stops task preparation when latest source cannot be fetched', async () => {
   });
 });
 it('publishes source sync as a distinct personal build step', async () => {
+  h.building = true;
   h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'f'.repeat(40) })));
   const publish = vi.fn(async () => {});
   await syncSourceBeforeCindyMakeBuild(new AbortController().signal, publish);

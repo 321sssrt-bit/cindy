@@ -1,3 +1,5 @@
+import { SessionTaskMenu } from './sidebar/SessionTaskMenu';
+import { TaskMigrationStatus } from './TaskMigrationStatus';
 /**
  * SessionContentHeader — 会话视图注入 ContentHeader 的中部内容
  * ---------------------------------------------------------------------------
@@ -21,8 +23,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Ellipsis, Pin } from 'lucide-react';
+import { ArrowLeft, Ellipsis, Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
@@ -38,16 +42,7 @@ import { useCCSessions } from '@/hooks/useCCSessions';
 import { useProjectPickerOptions } from '@/hooks/useProjectPickerOptions';
 import { useSessionRunningStatus } from '@/hooks/useSessionRunningStatus';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { WINDOW_NO_DRAG_STYLE, useManualWindowDrag } from '@/components/layout/windowDrag';
 import { recentWorkdirsStore } from '@/lib/recentWorkdirsStore';
 import { useRegisterContentHeader } from '../feature-context';
@@ -64,29 +59,76 @@ import {
 import { isOrcaLeadSession, resolveSessionRoute } from '@/lib/orcaSessionIdentity';
 import { revalidateWorkersProjection } from './hooks/workerProjectionStore';
 import { GitContextBadge } from './GitContextBadge';
+import { OrcaRemoteLeadBadge } from './OrcaRemoteLeadBadge';
+import { BotTaskOwnerChip } from '@/features/bots/BotTaskOwnerChip';
 import { SessionRenameInput } from './SessionRenameInput';
 import { useSessionBoundSchedules } from '@/features/scheduler/lib/scheduleSessionBinding';
+import {
+  archiveConfirmDescription,
+  loadActiveBoundScheduleNames,
+} from '@/features/scheduler/lib/archiveScheduleWarning';
 import { ScheduleBindingBadge } from './sidebar/ScheduleBindingBadge';
 import { RemoteProjectIcon } from './sidebar/RemoteProjectIcon';
-import {
-  MENU_CONTENT_CLASS,
-  MENU_ITEM_CLASS,
-  MENU_ROW_CLASS,
-  MENU_SEPARATOR_CLASS,
-  MENU_SUB_CONTENT_CLASS,
-} from './sidebar/menuStyles';
+import { VendorIcon, agentKindToVendor } from '@/components/sidebar/VendorIcon';
+import { MENU_ITEM_CLASS } from './sidebar/menuStyles';
 import { SessionProjectMoveSubmenu } from './sidebar/SessionProjectMoveSubmenu';
 import type { SessionMoveTarget } from './sidebar/sessionMoveTarget';
 import { SessionShareExportDialog } from './sidebar/SessionShareExportDialog';
-import { SessionBranchTreeDialog } from './SessionBranchTreeDialog';
 import { useRemoteProjectSessions } from '@/features/device-link/remoteProjectsStore';
 import { isRemoteSessionWriteBlocked } from './lib/remoteSessionWriteGuard';
 import { Tip } from '@/components/ui/tooltip';
+import { Spinner } from '@/components/ui/spinner';
 import { TaskTagDots, TaskTagMenuSection, TaskTagEditor } from '@/features/task-tags/TaskTags';
-import { SharedTaskButton } from '@/features/device-link/SharedTaskButton';
 import { isSharedTaskPeer } from '@cindy/device-link';
+import { useDeviceLinkDeviceList } from '@/features/device-link/useDeviceLinkDeviceList';
+import { useProviderShareAgentDevices } from '@/features/provider-share/useProviderShareAgentDevices';
 
 const log = createLogger('SessionContentHeader');
+
+/**
+ * 任务在本机、Agent 在同账号另一台电脑上运行:标明那台电脑，离线时如实提示(不自动改在本机跑)。
+ * 图标与侧栏同款:Agent 图标 + 右上信号波纹。
+ */
+function AgentDeviceIndicator({
+  deviceId,
+  agentKind,
+}: {
+  deviceId: string;
+  agentKind: Session['agentKind'];
+}) {
+  const { t } = useTranslation();
+  const devices = useDeviceLinkDeviceList();
+  // 分享来的供应商(`share:<id>`)不在同账号设备列表里，名字取自已收到的分享。
+  const { nameFor: providerShareDeviceName } = useProviderShareAgentDevices();
+  const device = devices?.find((item) => item.deviceId === deviceId);
+  const name = device?.name || providerShareDeviceName(deviceId) || deviceId;
+  const offline = device ? !device.online : false;
+  const vendor = agentKindToVendor(agentKind);
+  return (
+    <Tip
+      text={t(
+        offline ? 'ccAgent.sessionHeader.agentDeviceOffline' : 'ccAgent.sessionHeader.agentDevice',
+        { device: name },
+      )}
+    >
+      <span
+        role="img"
+        aria-label={t('ccAgent.sessionHeader.agentDevice', { device: name })}
+        className="inline-flex"
+        style={WINDOW_NO_DRAG_STYLE}
+      >
+        {/* 波纹向右上溢出约 3px,右边距比其它标题前缀图标多留一些。 */}
+        <VendorIcon
+          vendor={vendor}
+          size={vendor === 'cc' ? 14 : 13}
+          remote
+          colorClassName="text-[var(--cmd-palette-item-meta)]"
+          className={cn('mr-2', offline && 'opacity-75')}
+        />
+      </span>
+    </Tip>
+  );
+}
 
 /**
  * 注册器组件：由路由直挂的 CCAgentSessionView 条件渲染（仅当该实例"拥有"
@@ -101,10 +143,12 @@ const log = createLogger('SessionContentHeader');
 export function SessionContentHeaderRegistration({
   session,
   remoteSessionUnavailable = false,
+  remoteSyncing = false,
   readOnly = false,
 }: {
   session: Session;
   remoteSessionUnavailable?: boolean;
+  remoteSyncing?: boolean;
   readOnly?: boolean;
 }) {
   useRegisterContentHeader(
@@ -113,10 +157,11 @@ export function SessionContentHeaderRegistration({
         <SessionContentHeader
           session={session}
           remoteSessionUnavailable={remoteSessionUnavailable}
+          remoteSyncing={remoteSyncing}
           readOnly={readOnly}
         />
       ),
-      [readOnly, session, remoteSessionUnavailable],
+      [readOnly, session, remoteSessionUnavailable, remoteSyncing],
     ),
   );
   return null;
@@ -125,19 +170,19 @@ export function SessionContentHeaderRegistration({
 interface SessionContentHeaderProps {
   session: Session;
   remoteSessionUnavailable?: boolean;
+  remoteSyncing?: boolean;
   readOnly?: boolean;
 }
 
 export function SessionContentHeader({
   session: sessionProp,
   remoteSessionUnavailable = false,
+  remoteSyncing = false,
   readOnly = false,
 }: SessionContentHeaderProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { sessions, patchLocal } = useCCSessions();
-  // 分叉家族要看见已归档的父/子任务,不能只扫 active 桶。与 sidebar attention
-  // / SplitGroup 同一口径,复用已有 includeArchived:'all',不另造加载通道。
-  const { sessions: familySessions } = useCCSessions({ includeArchived: 'all' });
   const remoteProjectSessions = useRemoteProjectSessions();
   const routeSessionById = useMemo(
     () => new Map([...sessions, ...remoteProjectSessions].map((s) => [s.id, s])),
@@ -172,7 +217,7 @@ export function SessionContentHeader({
     !session.deviceLinkDeviceId;
   const projectOptions = useProjectPickerOptions();
   // heartbeat schedule 绑定标识,与 SessionItem 同源数据;删除/过期后自动消失。
-  const boundSchedules = useSessionBoundSchedules(session.id);
+  const boundSchedules = useSessionBoundSchedules(session.id, session.deviceLinkDeviceId);
   const displayTitle =
     getSessionDisplayTitle(session, t('ccAgent.common.unnamedSession'), t)?.trim() ||
     t('ccAgent.sessionHeader.untitled');
@@ -189,6 +234,7 @@ export function SessionContentHeader({
           输入框本体 + Magic AI 改名按钮统一在 SessionRenameInput） ---- */
   const [isEditing, setIsEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   useEffect(() => {
     setMenuOpen(false);
@@ -411,24 +457,6 @@ export function SessionContentHeader({
 
   /* ---- 导出会话(.cshare)---- 弹窗仅打开时挂载,与 SessionItem 同款。 */
   const [shareExportOpen, setShareExportOpen] = useState(false);
-  const [branchTreeOpen, setBranchTreeOpen] = useState(false);
-  const allKnownSessions = useMemo(
-    () => [...familySessions, ...remoteProjectSessions],
-    [familySessions, remoteProjectSessions],
-  );
-  const hasSessionFamily = useMemo(
-    () =>
-      Boolean(session.parentSessionId) ||
-      allKnownSessions.some(
-        (item) => item.parentSessionId === session.id || item.id === session.parentSessionId,
-      ),
-    [allKnownSessions, session.id, session.parentSessionId],
-  );
-  // 只给 Cindy 任务分叉家族保留入口。Pi 原生 branch tree 不再单凭 agentKind=pi 露出,
-  // 避免普通 Pi 任务把 overflow 撑长。当前任务带 parentSessionId,或 all 桶里能扫到
-  // 父/子(含归档),都算家族成员。
-  const canShowBranchTree = !isEmpty && hasSessionFamily;
-
   /* ---- Archive / Delete / Unarchive ----
    * 执行序列共用 useSessionLifecycleActions（与 CCAgentSidebarUpper 同一实现）；
    * 本组件只保留前置检查与确认弹窗。header 操作的恒为当前打开的会话，
@@ -454,29 +482,38 @@ export function SessionContentHeader({
       toast.warning(t('ccAgent.sidebar.archiveBlocked.attached'));
       return;
     }
+    // 绑定了 active 自动化:归档后会暂停,需要确认。读本地缓存,排在 worktree 预检之前。
+    const scheduleNames =
+      (await loadActiveBoundScheduleNames([
+        { id: session.id, deviceLinkDeviceId: session.deviceLinkDeviceId },
+      ])).get(session.id) ?? [];
     // **worktree 预检必须是最后一个前置条件**(codex review):原来这里用 Promise.all
     // 一起等,dirty 先返回 clean、接管查询还在飞的那段时间就是 clean 结论的失效窗口。
     // 改成接管结算之后再 resolve —— clean 一律重查(见 worktreeRemovalWarning),
     // 拿到的是此刻的结论;菜单打开时的 prefetch 仍然热了 git cache。
+    // 预检与确认期间保留当前任务，确定归档后再由 runSessionAction 隐藏并跳离。
     const preflight = await resolveWorktreeRemovalPreflight(session.id, session.deviceLinkDeviceId);
     // 归档不弹确认框 —— 可逆操作(菜单里就有「恢复」),与 sidebar 同口径。
     // 免确认的判据是「**确认**干净」:worktree 脏、或预检失败拿不到结论('unknown')
     // 都要确认 —— 归档会顺带回收 worktree,不能静默带走改动(greptile review)。
     // 'unknown' 只弹普通归档确认,不摆 dirty 警告文案(那会谎称有未提交改动)。
-    if (preflight !== 'clean') {
+    if (preflight !== 'clean' || scheduleNames.length > 0) {
       const ok = await confirmDialog({
         title: t('ccAgent.sidebar.confirmArchive.title'),
-        description:
-          t('ccAgent.sidebar.confirmArchive.description') +
-          (preflight === 'dirty'
-            ? ' ' + t('ccAgent.sidebar.confirmArchive.dirtyWorktreeWarning')
-            : ''),
+        description: archiveConfirmDescription(t, {
+          dirtyWorktree: preflight === 'dirty',
+          scheduleNames,
+        }),
         confirmText: t('ccAgent.sidebar.confirmArchive.confirm'),
         cancelText: t('ccAgent.sidebar.confirmArchive.cancel'),
       });
-      if (!ok) return;
+      if (!ok) {
+        return;
+      }
     }
-    await runSessionAction(session.id, 'archive', { activeSessionId: session.id });
+    await runSessionAction(session.id, 'archive', {
+      activeSessionId: session.id,
+    });
   }, [
     confirmDialog,
     remoteWritesBlocked,
@@ -541,7 +578,17 @@ export function SessionContentHeader({
   ]);
 
   return (
-    <div className="flex w-full min-w-0 items-center gap-0.5 pl-1">
+    <div className="flex min-w-0 items-center gap-0.5 pl-1">
+      {session.source === 'side-chat' && session.parentSessionId && (
+        <Tip text={t('chat.sideChat.returnMain')}>
+          <Button variant="secondary" tone="quiet" size="sm" className="w-7 p-0" style={WINDOW_NO_DRAG_STYLE}
+            aria-label={t('chat.sideChat.returnMain')}
+            onClick={() => void resolveSessionRoute(session.parentSessionId!).then(route => navigate(route))
+              .catch(() => toast.error(t('chat.sideChat.failed')))}>
+            <ArrowLeft size={16} />
+          </Button>
+        </Tip>
+      )}
       {isPinned && (
         <Pin
           size={13}
@@ -551,7 +598,12 @@ export function SessionContentHeader({
       )}
       {boundSchedules.length > 0 && (
         <span style={WINDOW_NO_DRAG_STYLE}>
-          <ScheduleBindingBadge schedules={boundSchedules} size={13} className="mr-1 size-4" />
+          <ScheduleBindingBadge
+            schedules={boundSchedules}
+            deviceLinkDeviceId={session.deviceLinkDeviceId}
+            size={13}
+            className="mr-1 size-4"
+          />
         </span>
       )}
       {!isEditing && remoteIconKind && (
@@ -566,6 +618,9 @@ export function SessionContentHeader({
             className="mr-1 text-[var(--cmd-palette-item-meta)]"
           />
         </Tip>
+      )}
+      {!isEditing && !remoteIconKind && session.agentDeviceId && (
+        <AgentDeviceIndicator deviceId={session.agentDeviceId} agentKind={session.agentKind} />
       )}
 
       {isEditing ? (
@@ -601,6 +656,20 @@ export function SessionContentHeader({
         </span>
       )}
 
+      {remoteSyncing && (
+        <Tip text={t('ccAgent.remoteSession.syncing')}>
+          <span
+            role="status"
+            aria-label={t('ccAgent.remoteSession.syncing')}
+            aria-busy="true"
+            className="mx-1 inline-flex shrink-0 text-[var(--text-tertiary)]"
+            style={WINDOW_NO_DRAG_STYLE}
+          >
+            <Spinner size={14} />
+          </span>
+        </Tip>
+      )}
+
       {!isEditing && !!session.tags?.length && (
         <span
           className="mx-1 shrink-0 [--task-tag-ring-bg:hsl(var(--content-area))]"
@@ -610,26 +679,25 @@ export function SessionContentHeader({
         </span>
       )}
 
-      {/* Task identity stays left; shared-task actions belong to the trailing toolbar. */}
-      {!readOnly && session.status === 'active' && <>
-        <GitContextBadge session={session} />
-        <div className="min-w-0 flex-1" aria-hidden />
-        <SharedTaskButton key={session.id} session={session} />
-      </>}
+      {!isEditing && <OrcaRemoteLeadBadge session={session} />}
 
-      {!isEditing && !readOnly && !sharedGuest && (
+      {!isEditing && <BotTaskOwnerChip session={session} />}
+
+      {!isEditing && !readOnly && (!sharedGuest || session.status === 'active') && (
         // 菜单打开就把归档/删除的 dirty 预检发出去:用户从展开菜单到点条目至少
         // 一次反应时间,足够这次 git status 跑完,点下去时命中缓存、零等待。
         <DropdownMenu
           open={menuOpen}
           onOpenChange={(open) => {
             setMenuOpen(open);
-            if (open) prefetchDirtyWorktreeForRemoval(session.id, session.deviceLinkDeviceId);
+            if (open && !sharedGuest)
+              prefetchDirtyWorktreeForRemoval(session.id, session.deviceLinkDeviceId);
           }}
         >
           <DropdownMenuTrigger asChild>
             <Tip text={t('ccAgent.sessionHeader.moreActions')} side="bottom">
               <button
+                ref={menuTriggerRef}
                 className={cn(
                   'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
                   'text-[var(--cmd-palette-item-meta)] transition-colors',
@@ -643,193 +711,60 @@ export function SessionContentHeader({
               </button>
             </Tip>
           </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            sideOffset={4}
-            className={cn(MENU_CONTENT_CLASS, 'min-w-32 overflow-hidden')}
-          >
-            {/* 菜单变体、条目与分组顺序对齐 SessionItem 右键菜单：
-                - Archived：Rename / Unarchive / [导出会话] / Copy ‖ Delete
-                - Draft：Rename / Copy ‖ Delete
-                - 标准：Pin↔Unpin / Rename / [移动到项目 ▸] ‖ Copy / 新窗口打开 /
-                  [导出会话] ‖ Archive / Delete
-                Pi 专属入口（导出 HTML / 压缩上下文）暂不进 overflow 菜单。
-                压缩仍走对话区 context ring。任务分支只在存在 Cindy 分叉家族时显示。 */}
-            {isArchived ? (
-              <>
+          <SessionTaskMenu
+            key={`${session.deviceLinkDeviceId ?? ''}:${session.id}`}
+            session={session}
+            open={menuOpen}
+            writeBlocked={remoteWritesBlocked}
+            returnFocus={() => menuTriggerRef.current?.focus()}
+            onRename={startEdit}
+            onPin={() => void handleTogglePin()}
+            onArchive={() => void handleArchive()}
+            onUnarchive={() => void handleUnarchive()}
+            onDelete={() => void handleDelete()}
+            onOpenInNewWindow={handleOpenInNewWindow}
+            tags={tagMenu}
+            copy={
+              <DropdownMenuItem
+                onSelect={() => void handleCopyDeepLink()}
+                className={MENU_ITEM_CLASS}
+              >
+                {t('ccAgent.sidebar.sessionMenu.copySessionLink')}
+              </DropdownMenuItem>
+            }
+            exportShare={
+              canExportShare && (
                 <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={startEdit}
+                  onSelect={() => setShareExportOpen(true)}
                   className={MENU_ITEM_CLASS}
                 >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
+                  {t('ccAgent.sidebar.sessionMenu.exportShare')}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleUnarchive()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.unarchive')}
-                </DropdownMenuItem>
-                {canExportShare && (
-                  <DropdownMenuItem
-                    onSelect={() => setShareExportOpen(true)}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    {t('ccAgent.sidebar.sessionMenu.exportShare')}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem
-                  onSelect={() => void handleCopyDeepLink()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.copySessionLink')}
-                </DropdownMenuItem>
-                {canShowBranchTree && (
-                  <DropdownMenuItem
-                    onSelect={() => setBranchTreeOpen(true)}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    {t('ccAgent.sidebar.sessionMenu.sessionBranches')}
-                  </DropdownMenuItem>
-                )}
-                {tagMenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleDelete()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            ) : isEmpty ? (
-              <>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={startEdit}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => void handleCopyDeepLink()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.copySessionLink')}
-                </DropdownMenuItem>
-                {tagMenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleDelete()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            ) : (
-              <>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleTogglePin()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {isPinned
-                    ? t('ccAgent.sidebar.sessionMenu.unpin')
-                    : t('ccAgent.sidebar.sessionMenu.pin')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={startEdit}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.rename')}
-                </DropdownMenuItem>
-                {canMoveToProject && (
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className={MENU_ROW_CLASS}>
-                      <span className="flex-1">
-                        {t('ccAgent.sidebar.sessionMenu.moveToProject')}
-                      </span>
-                      <ChevronRight
-                        size={14}
-                        className="ml-2 shrink-0 text-[var(--cmd-palette-item-meta)]"
-                      />
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent
-                      sideOffset={4}
-                      className={cn(MENU_SUB_CONTENT_CLASS, 'w-[320px] overflow-hidden')}
-                    >
-                      <SessionProjectMoveSubmenu
-                        projectOptions={projectOptions}
-                        currentWorkingDir={
-                          session.workspaceKind === 'project' ? session.workingDir : null
-                        }
-                        isDialogue={session.workspaceKind === 'dialogue'}
-                        onSelectProject={(workingDir) =>
-                          void handleMoveSession({ kind: 'project', workingDir })
-                        }
-                        onBrowseProject={() => void handleMoveSession({ kind: 'browseProject' })}
-                        onMoveToDialogue={() => void handleMoveSession({ kind: 'dialogue' })}
-                      />
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                )}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  onSelect={() => void handleCopyDeepLink()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.copySessionLink')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={handleOpenInNewWindow}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.openInNewWindow')}
-                </DropdownMenuItem>
-                {canShowBranchTree && (
-                  <DropdownMenuItem
-                    onSelect={() => setBranchTreeOpen(true)}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    {t('ccAgent.sidebar.sessionMenu.sessionBranches')}
-                  </DropdownMenuItem>
-                )}
-                {canExportShare && (
-                  <DropdownMenuItem
-                    onSelect={() => setShareExportOpen(true)}
-                    className={MENU_ITEM_CLASS}
-                  >
-                    {t('ccAgent.sidebar.sessionMenu.exportShare')}
-                  </DropdownMenuItem>
-                )}
-                {tagMenu}
-                <DropdownMenuSeparator className={MENU_SEPARATOR_CLASS} />
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleArchive()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.archived')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={remoteWritesBlocked}
-                  onSelect={() => void handleDelete()}
-                  className={MENU_ITEM_CLASS}
-                >
-                  {t('ccAgent.sidebar.sessionMenu.delete')}
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
+              )
+            }
+            move={
+              canMoveToProject && (
+                <SessionProjectMoveSubmenu
+                  projectOptions={projectOptions}
+                  currentWorkingDir={
+                    session.workspaceKind === 'project' ? session.workingDir : null
+                  }
+                  isDialogue={session.workspaceKind === 'dialogue'}
+                  onSelectProject={(workingDir) =>
+                    void handleMoveSession({ kind: 'project', workingDir })
+                  }
+                  onBrowseProject={() => void handleMoveSession({ kind: 'browseProject' })}
+                  onMoveToDialogue={() => void handleMoveSession({ kind: 'dialogue' })}
+                />
+              )
+            }
+          />
         </DropdownMenu>
       )}
 
-      {/* session-git-pr-context:当前分支 + 关联 PR 徽标(非 git 目录 / dialogue 会话自动隐藏) */}
-      {(readOnly || session.status !== 'active') && <GitContextBadge session={session} />}
+      {/* session-git-pr-context:当前分支 + 关联 PR 徽标(项目任务与对话一致;非 git 目录且无 PR 时自动隐藏) */}
+      <GitContextBadge session={session} />
+      <TaskMigrationStatus session={session} />
 
       {tagEditorOpen && <TaskTagEditor session={session} onClose={() => setTagEditorOpen(false)} />}
 
@@ -839,16 +774,6 @@ export function SessionContentHeader({
           open={shareExportOpen}
           sessionId={session.id}
           onOpenChange={setShareExportOpen}
-        />
-      )}
-      {branchTreeOpen && (
-        <SessionBranchTreeDialog
-          open={branchTreeOpen}
-          onOpenChange={setBranchTreeOpen}
-          session={session}
-          sessions={allKnownSessions}
-          running={runningSessionIds.has(session.id)}
-          writeBlocked={remoteWritesBlocked}
         />
       )}
     </div>

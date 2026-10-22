@@ -22,7 +22,7 @@ import { searchConversations } from '../conversationSearch.js';
 const conversationSearchSource = readFileSync(
   resolve(__dirname, '..', 'conversationSearch.ts'),
   'utf8',
-);
+).replace(/\r\n?/g, '\n');
 
 describe('conversationSearch source invariants', () => {
   it('includes visible AskUser cards in content search roles', () => {
@@ -44,12 +44,6 @@ describe('conversationSearch source invariants', () => {
   // 不把某次请求时的 locale 固化进返回数据(本 PR 第 8 条不变量)。
   it('keeps the raw stored title in the session summary', () => {
     expect(conversationSearchSource).toContain('title: row.title,');
-  });
-
-  it('keeps ordinary task search on the desktop-visible source boundary by default', () => {
-    expect(conversationSearchSource).toContain(
-      'hostScope.sessionSources === undefined\n    ? DESKTOP_VISIBLE_SESSION_SOURCES',
-    );
   });
 
   it('applies grouping-normalized workingDirs so remote project search is not window-bound', () => {
@@ -84,6 +78,7 @@ function createSearchDb(): Database.Database {
       working_dir TEXT,
       workspace_kind TEXT NOT NULL DEFAULT 'project',
       model TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
+      scheduled_model_baseline TEXT,
       effort TEXT NOT NULL DEFAULT 'high',
       permission_mode TEXT NOT NULL DEFAULT 'ask',
       status TEXT NOT NULL DEFAULT 'active',
@@ -95,10 +90,12 @@ function createSearchDb(): Database.Database {
       total_cost_is_approximate INTEGER NOT NULL DEFAULT 0,
       context_tokens INTEGER NOT NULL DEFAULT 0,
       context_window INTEGER NOT NULL DEFAULT 0,
+      context_window_runtime INTEGER,
       fast_mode INTEGER NOT NULL DEFAULT 0,
       plan_mode_enabled INTEGER NOT NULL DEFAULT 0,
       cleared_at INTEGER,
       pinned_at INTEGER,
+      hidden_at INTEGER,
       summary TEXT,
       provider_id TEXT,
       user_send_at INTEGER,
@@ -112,12 +109,15 @@ function createSearchDb(): Database.Database {
       feishu_bot_app_id TEXT,
       im_bot_context_id TEXT,
       im_user_id TEXT,
+      im_default_route TEXT,
       used_project_context INTEGER NOT NULL DEFAULT 0,
       codex_history_has_product_prompt INTEGER,
       codex_plan_json TEXT,
       extra_dirs TEXT NOT NULL DEFAULT '[]',
       writable_dirs TEXT NOT NULL DEFAULT '[]',
       remote_host_id TEXT,
+      agent_device_id TEXT,
+      orca_remote_lead TEXT,
       active_turn_started_at INTEGER,
       active_turn_pid INTEGER,
       last_turn_ended_at INTEGER,
@@ -138,6 +138,12 @@ function createSearchDb(): Database.Database {
       agent_kind TEXT,
       created_at INTEGER NOT NULL,
       rewind_at INTEGER
+    );
+    CREATE TABLE bot_profiles (
+      id TEXT PRIMARY KEY, display_name TEXT NOT NULL, status TEXT NOT NULL, hidden_at INTEGER
+    );
+    CREATE TABLE bot_session_links (
+      session_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, role TEXT NOT NULL
     );
   `);
   return db;
@@ -208,6 +214,79 @@ describe('conversationSearch recent activity SQL filtering', () => {
           sessionActivityFromMs: now - 3 * day,
         }),
       );
+    } finally {
+      clearCurrentDbClient(client);
+      db.close();
+    }
+  });
+});
+
+describe('conversationSearch plugin background tasks', () => {
+  it('excludes hidden tasks from title and content candidates', async () => {
+    const db = createSearchDb();
+    const client = makeSearchDbClient(db);
+    setCurrentDbClient(client, 'test-user');
+    mocks.searchChatHistoryHybrid.mockResolvedValue({
+      hits: [], sessions: {}, vectorUsed: false, vectorSkipReason: null,
+      nextOffset: null, hasMore: false, poolSize: 0, poolCapped: false,
+    });
+    try {
+      insertSearchSession(db, 'shown', 10, null);
+      insertSearchSession(db, 'background', 20, null);
+      db.prepare('UPDATE sessions SET hidden_at = 5 WHERE id = ?').run('background');
+      const response = await searchConversations({ query: 'needle', semanticMode: 'keyword' });
+      expect(response.results.map((result) => result.session.id)).toEqual(['shown']);
+      expect(mocks.searchChatHistoryHybrid).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionIds: ['shown'] }),
+      );
+    } finally {
+      clearCurrentDbClient(client);
+      db.close();
+    }
+  });
+});
+
+// Production search entry + real SQLite. The prior source-only test could not
+// catch missing personal history or leaked imported channel lanes. Unit tier.
+describe('conversationSearch personal companion chats', () => {
+  it('finds hidden/archived personal threads and imported history, excluding internal lanes and deleted tasks', async () => {
+    const db = createSearchDb();
+    const client = makeSearchDbClient(db);
+    setCurrentDbClient(client, 'test-user');
+    mocks.searchChatHistoryHybrid.mockResolvedValue({
+      hits: [], sessions: {}, vectorUsed: false, vectorSkipReason: null,
+      nextOffset: null, hasMore: false, poolSize: 0, poolCapped: false,
+    });
+    try {
+      db.exec("INSERT INTO bot_profiles VALUES ('bot', 'Melody', 'active', 5)");
+      for (const [id, source, role, status] of [
+        ['main', 'bot', 'canonical', 'active'],
+        ['old', 'bot', 'history', 'archived'],
+        ['imported', 'feishu', 'history', 'archived'],
+        ['group', 'bot', 'group', 'active'],
+        ['channel', 'desktop', 'channel', 'active'],
+        ['deleted', 'bot', 'history', 'deleted'],
+        ['task', 'desktop', 'delegation', 'active'],
+        ['review', 'review', null, 'active'],
+      ]) {
+        insertSearchSession(db, id!, 10, null);
+        db.prepare('UPDATE sessions SET source = ?, status = ? WHERE id = ?').run(source, status, id);
+        if (role) db.prepare('INSERT INTO bot_session_links VALUES (?, ?, ?)').run(id, 'bot', role);
+      }
+      const result = await searchConversations({ query: 'needle', semanticMode: 'keyword' });
+      expect(result.results.map(item => item.session.id).sort()).toEqual(['imported', 'main', 'old', 'task']);
+      expect(result.results.find(item => item.session.id === 'old')?.session.companion).toEqual({
+        id: 'bot', name: 'Melody', role: 'history', readOnly: true,
+      });
+      expect(result.results.find(item => item.session.id === 'main')?.session.companion?.readOnly).toBe(false);
+      expect(result.results.find(item => item.session.id === 'task')?.session.companion).toBeUndefined();
+      expect(mocks.searchChatHistoryHybrid.mock.calls[0][0].sessionIds.sort()).toEqual(['imported', 'main', 'old', 'task']);
+      expect(mocks.searchChatHistoryHybrid.mock.calls[0][0].sessionSources).toBeNull();
+      const remote = await searchConversations({ query: 'needle' }, { remoteVisibleOnly: true });
+      expect(remote.results.map(item => item.session.id)).toEqual(['task']);
+      db.exec("UPDATE bot_profiles SET hidden_at = NULL");
+      const visibleRemote = await searchConversations({ query: 'needle', filters: { status: 'archived' } }, { remoteVisibleOnly: true });
+      expect(visibleRemote.results.map(item => item.session.id).sort()).toEqual(['imported', 'old']);
     } finally {
       clearCurrentDbClient(client);
       db.close();

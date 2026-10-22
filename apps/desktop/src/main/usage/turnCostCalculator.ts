@@ -67,7 +67,7 @@ export function normalizeTurnUsageSegments(value: unknown): TurnUsageSegment[] {
       raw.priceVariant === 'standard' ||
       raw.priceVariant === 'priority' ||
       raw.priceVariant === 'fast' ||
-      raw.priceVariant === 'batch'
+      raw.priceVariant === 'batch' || raw.priceVariant === 'ultrafast'
     ) {
       segment.priceVariant = raw.priceVariant;
     }
@@ -112,6 +112,8 @@ export interface TurnPricingContext {
   providerId: string | null;
   billingRoute: BillingRoute;
   region: CindyRegion;
+  /** Captured when the request starts, so logout cannot reclassify an in-flight enterprise turn. */
+  accessKind?: 'subscription' | 'api' | 'managed' | null;
 }
 
 export type TurnCostSource = 'sdk' | 'gateway' | 'reference' | 'sdk-fallback' | 'subscription';
@@ -145,7 +147,7 @@ export function computeGatewayTurnCost(
   variant: PriceVariant = 'standard',
 ): number | null {
   if (!price) return null;
-  if (variant === 'batch') return null;
+  if (variant === 'batch' || variant === 'ultrafast') return null;
   const priority = variant === 'priority' || variant === 'fast';
   const tariff = priority ? price.priority : price;
   if (!tariff) return null;
@@ -317,6 +319,13 @@ export function resolveTurnCost(args: {
     context.billingRoute === 'provider-api'
       ? getModelPriceQuote(pricing, context.providerId, model, 'claude-code')
       : undefined;
+  if (context.accessKind === 'managed') {
+    return {
+      model,
+      money: providerQuote ? computePriceQuoteTurnMoney(tokens, providerQuote, ledgerCurrency, segments) : null,
+      source: 'reference',
+    };
+  }
   const hasTokenDeltas =
     tokens.inputTokens > 0 ||
     tokens.outputTokens > 0 ||

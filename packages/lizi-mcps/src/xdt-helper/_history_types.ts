@@ -66,6 +66,14 @@ export interface HistorySession {
   status: string;
   source: string;
   orcaRole: string | null;
+  orcaRemoteLead?: {
+    leadDeviceId: string;
+    leadDeviceName: string;
+    leadSessionId: string;
+    leadTitle: string;
+    workerLabel: string;
+    releasedAt?: number;
+  };
   parentSessionId: string | null;
   createdAt: number; // unix ms
   updatedAt: number;
@@ -209,6 +217,7 @@ export interface SearchChatHistoryResult {
 // ── Deps interface ─────────────────────────────────────────────────────────
 
 export interface XdtHelperHistoryDeps {
+  remote?: import('./_history_devices.js').HistoryRemoteDeps;
   /** Resolve the maximum history scope for the current runtime Session. */
   resolveSessionScope?: (args: {
     callerSessionId?: string;
@@ -222,4 +231,14 @@ export interface XdtHelperHistoryDeps {
   searchChatHistory: (
     args: SearchChatHistoryArgs,
   ) => Promise<ControlResult<{ result: SearchChatHistoryResult }>>;
+  /** get_task_digest:一件任务的短摘要(本机 id 或 deviceId::sessionId)。不注入则不注册该工具。 */
+  taskDigest?: (args: {
+    sessionId: string;
+    callerSessionId?: string;
+  }) => Promise<
+    ControlResult<
+      { digest: import('./get_task_digest.js').TaskDigestWire },
+      'NOT_FOUND' | 'REMOTE_UNAVAILABLE' | 'INVALID_ARGS'
+    >
+  >;
 }

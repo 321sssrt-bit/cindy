@@ -27,7 +27,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { Logger } from '../../../interfaces/logger.js';
 import type { CodexSessionMcpConfigInput, CodexSubagentRoutingProfile } from '../../base-agent.js';
-import { AppServerClient } from './client.js';
+import { AppServerClient, type RequestProgressDeadline } from './client.js';
 import { CODEX_EXTERNAL_AUTH_REFRESH, CodexExternalAuthSession, assertCodexEphemeralAuth, type CodexExternalAuth } from './external-auth.js';
 import type { Transport } from './transport.js';
 import {
@@ -110,6 +110,12 @@ const NOTIFICATIONS_TO_OPT_OUT = [
   'item/plan/delta',
   'item/commandExecution/outputDelta',
   'item/fileChange/outputDelta',
+  // 以下高频通知全仓无消费方 (client 只会落一条 unhandled notification 日志, 实测合计
+  // ~2万条/天)。要消费其中任一项时, 先从这里移除再加进 SUBSCRIBED_METHODS。
+  'turn/moderationMetadata',
+  'mcpServer/startupStatus/updated',
+  'remoteControl/status/changed',
+  'item/commandExecution/terminalInteraction',
 ];
 
 const DEFAULT_THREAD_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
@@ -329,6 +335,9 @@ interface BufferedNotification {
   ts: number;
 }
 
+/** All native attempts have exited before this error is exposed to a task startup. */
+export class CodexNativeInitializationStoppedError extends Error {}
+
 export class AppServerHost {
   private readonly externalAuth: CodexExternalAuthSession | undefined;
   private readonly connectionId = randomUUID();
@@ -337,8 +346,13 @@ export class AppServerHost {
   private readonly threadUnsubscribeTimeoutMs: number;
 
   private client: AppServerClient | null = null;
+  // Negative proof belongs to the exact transport, not readiness or provider.
+  // Any application RPC may load a thread (including future protocol methods).
+  // Bootstrap initialize/config/auth and the read-only writer probe do not.
+  private readonly writerCandidates = new WeakSet<AppServerClient>();
   /** 同次 ensureStarted 并发调用共享一个 init Promise (避免重复 spawn)。 */
   private startPromise: Promise<InitializeResponse> | null = null;
+  private nativeInitializationEpoch = 0;
 
   private readonly subscribers = new Map<string, ThreadEventHandlers>();
   /** root / descendant threadId → 当前拥有该子树订阅的 root threadId。 */
@@ -365,7 +379,17 @@ export class AppServerHost {
    * 账号配额最近一次 snapshot, 给新 subscribeThread 立即重放 — 用户打开新 codex
    * session 时不必等下次 turn 完成才看到 chip 数据。整个 host 生命周期共享一份 (账号级)。
    */
-  private lastAccountRateLimits: AccountRateLimitsUpdatedNotification['params'] | null = null;
+  private readonly lastAccountRateLimits = new Map<string, AccountRateLimitsUpdatedNotification['params']>();
+  /**
+   * 没有 limitId 的稀疏更新按「合并进最近观察到的 bucket」约定处理 (usageBroadcaster), 不能当独立
+   * bucket 去重或按插入序回放; 仅当它是最新一条时作为最后一份回放, 之后来了带 limitId 的即作废。
+   */
+  private lastIdlessAccountRateLimits: AccountRateLimitsUpdatedNotification['params'] | null = null;
+  /**
+   * 记录最近一次已 fan-out 的配额 payload (limitId + JSON), 仅用于丢弃连续重复。app-server 会以秒级间隔
+   * 重复推送内容不变的快照 (实测 ~64% 与上一条相同), 相同内容不再重复广播与记日志。
+   */
+  private lastFannedOutRateLimitsKey: string | null = null;
 
   private shuttingDown = false;
   private shutdownPromise: Promise<void> | null = null;
@@ -624,6 +648,7 @@ export class AppServerHost {
         started,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
+            this.nativeInitializationEpoch++;
             reject(new Error(`app-server startup (for ${label}) timed out after ${timeoutMs}ms`));
           }, timeoutMs);
           timer.unref?.();
@@ -637,11 +662,19 @@ export class AppServerHost {
     }
   }
 
-  private async bootstrap(capabilities?: InitializeCapabilities): Promise<InitializeResponse> {
+  private async bootstrap(
+    capabilities?: InitializeCapabilities,
+    nativeAttempt = 0,
+    nativeEpoch = this.nativeInitializationEpoch,
+  ): Promise<InitializeResponse> {
     const client = new AppServerClient({
       createTransport: this.opts.createTransport,
       logger: this.opts.logger,
-      onTransportError: (err) => this.handleTransportError(err),
+      onTransportError: (err) => {
+        // Keep the shared startPromise while recovering this one pre-protocol
+        // failure. Every other transport error retains the normal host lifecycle.
+        if (!client.nativeSqliteInitializationFailed()) this.handleTransportError(err);
+      },
       onAuthInvalidated: this.opts.onAuthInvalidated,
       captureCredentialGeneration: this.opts.captureCredentialGeneration,
     });
@@ -665,7 +698,10 @@ export class AppServerHost {
     // 注册 notification handlers BEFORE initialize: server 在握手响应前可能就推了
     // banner / 启动 notification, 漏接就丢。
     for (const method of SUBSCRIBED_METHODS) {
-      client.onNotification(method, (params) => this.routeNotification(method, params));
+      client.onNotification(method, (params) => {
+        if (extractThreadId(method, params)) this.writerCandidates.add(client);
+        this.routeNotification(method, params);
+      });
     }
 
     // ServerRequest handlers (Phase 2 approval) — 同样在 initialize 前注册,
@@ -834,7 +870,21 @@ export class AppServerHost {
       optOutNotificationMethods: NOTIFICATIONS_TO_OPT_OUT,
       ...capabilities,
     };
-    const resp = await client.initialize(this.opts.clientInfo, mergedCapabilities);
+    let resp: InitializeResponse;
+    try {
+      resp = await client.initialize(this.opts.clientInfo, mergedCapabilities);
+    } catch (error) {
+      if (!client.nativeSqliteInitializationFailed()) throw error;
+      // No task/config/authentication RPC has been submitted. The transport
+      // proves natural exit; still use the existing strict close barrier.
+      await client.close({ reason: 'native SQLite initialization failed', throwOnTransportError: true });
+      if (nativeAttempt >= 2 || nativeEpoch !== this.nativeInitializationEpoch
+        || this.retired || this.shuttingDown || this.client !== client) {
+        throw new CodexNativeInitializationStoppedError('Codex native SQLite initialization stopped', { cause: error });
+      }
+      this.logger.warn('retrying exited native SQLite initialization', { attempt: nativeAttempt + 2, maxAttempts: 3 });
+      return this.bootstrap(capabilities, nativeAttempt + 1, nativeEpoch);
+    }
     if (this.opts.requireEphemeralAuth || this.externalAuth) {
       // Requirements can override CLI configuration. Reject before any task RPC
       // or token installation; initialization has already loaded native config.
@@ -861,11 +911,12 @@ export class AppServerHost {
    * `opts.timeoutMs` 按需传入: 裸 RPC 默认**无超时** (协议上 response 可能任意晚),
    * 但 turn/start 这类「daemon 失联就永远挂住」的关键路径应显式给上限 —
    * 超时 reject 后上层按 turn 启动失败收口, 而不是让 UI 无限 generating。
+   * `extendWhileProgress` 只顺延请求本身的等待, startup 仍按 timeoutMs 计。
    */
   async request<R = unknown>(
     method: string,
     params?: unknown,
-    opts?: { timeoutMs?: number },
+    opts?: { timeoutMs?: number; beforeDispatch?: () => void; extendWhileProgress?: RequestProgressDeadline },
   ): Promise<R> {
     // 冷启动 / transport 重建时 ensureStarted 本身也可能永不返回 (远端 daemon
     // bootstrap 挂死 / SSH 通道无响应) — 调用方显式给 timeoutMs 时同样给它
@@ -882,6 +933,7 @@ export class AppServerHost {
           started,
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => {
+              this.nativeInitializationEpoch++;
               reject(new Error(`app-server startup (for ${method}) timed out after ${opts.timeoutMs}ms`));
             }, opts.timeoutMs);
             timer.unref?.();
@@ -900,10 +952,14 @@ export class AppServerHost {
         throw new Error(`app-server startup (for ${method}) consumed the entire ${opts.timeoutMs}ms timeout budget`);
       }
       if (!this.client) throw new Error('AppServerHost: client missing after ensureStarted (unreachable)');
+      opts?.beforeDispatch?.();
+      if (method !== 'thread/loaded/list') this.writerCandidates.add(this.client);
       return this.client.request<R>(method, params, { ...opts, timeoutMs: remaining });
     }
     await started;
     if (!this.client) throw new Error('AppServerHost: client missing after ensureStarted (unreachable)');
+    opts?.beforeDispatch?.();
+    if (method !== 'thread/loaded/list') this.writerCandidates.add(this.client);
     return this.client.request<R>(method, params, opts);
   }
 
@@ -930,6 +986,7 @@ export class AppServerHost {
     reason = 'AppServerHost.shutdown()',
     opts?: { throwOnTransportError?: boolean },
   ): Promise<void> {
+    this.nativeInitializationEpoch++;
     if (!this.shutdownPromise) {
       this.shuttingDown = true;
       const client = this.client;
@@ -1084,6 +1141,7 @@ export class AppServerHost {
     if (this.subscribers.has(threadId)) {
       this.logger.warn('overwriting thread subscription', { threadId });
     }
+    if (this.client) this.writerCandidates.add(this.client);
     this.subscribers.set(threadId, handlers);
     this.lineageRoots.set(threadId, threadId);
     this.notifyThreadHandlerWaiters(threadId);
@@ -1099,9 +1157,13 @@ export class AppServerHost {
     this.replayBufferedDescendantThreadStarts(threadId);
 
     // 账号配额 snapshot replay — 让新 session 立即看到当前账号配额, 不必等下次 turn。
-    if (this.lastAccountRateLimits && handlers.accountRateLimitsUpdated) {
+    if ((this.lastAccountRateLimits.size > 0 || this.lastIdlessAccountRateLimits) && handlers.accountRateLimitsUpdated) {
+      // 按 limitId 各回放最新一份: 去重后不变的快照不会再被推送, 只回放一条会让新会话缺其余 limit。
       try {
-        handlers.accountRateLimitsUpdated(this.lastAccountRateLimits);
+        for (const snapshot of this.lastAccountRateLimits.values()) {
+          handlers.accountRateLimitsUpdated(snapshot);
+        }
+        if (this.lastIdlessAccountRateLimits) handlers.accountRateLimitsUpdated(this.lastIdlessAccountRateLimits);
       } catch (e) {
         this.logger.error('accountRateLimitsUpdated replay threw', { message: (e as Error).message });
       }
@@ -1151,10 +1213,25 @@ export class AppServerHost {
     // 缓存最近 snapshot (给新 subscribe replay) + 广播给所有 active subscriber 各一份。
     if (method === 'account/rateLimits/updated') {
       const p = params as AccountRateLimitsUpdatedNotification['params'];
-      this.lastAccountRateLimits = p;
-      this.logger.info('accountRateLimits fan-out', {
+      // replay 快照始终跟随最新一条 (哪怕内容未变), 新 subscriber 拿到的与旧行为一致。
+      const limitKey = p.rateLimits?.limitId;
+      const rawJson = JSON.stringify(p.rateLimits ?? null);
+      if (limitKey) {
+        // 删后再插, 让 Map 顺序反映最近观察顺序; 带 limitId 的更新使稀疏更新的回放作废。
+        this.lastAccountRateLimits.delete(limitKey);
+        this.lastAccountRateLimits.set(limitKey, p);
+        this.lastIdlessAccountRateLimits = null;
+      } else {
+        this.lastIdlessAccountRateLimits = p;
+      }
+      // 只丢弃与上一条已广播更新完全相同的连续重复: 它不改变「最近观察的 bucket」, 下游
+      // (usageBroadcaster) 依赖这个顺序把稀疏更新合并进正确的 bucket; A,B,A 中最后的 A 不能丢。
+      const fanOutKey = `${limitKey ?? ''}\u0000${rawJson}`;
+      if (this.lastFannedOutRateLimitsKey === fanOutKey) return;
+      this.lastFannedOutRateLimitsKey = fanOutKey;
+      this.logger.debug('accountRateLimits fan-out', {
         subscribers: this.subscribers.size,
-        rawJson: JSON.stringify(p.rateLimits ?? null),
+        rawJson,
       });
       for (const handlers of this.subscribers.values()) {
         try {
@@ -1658,6 +1735,15 @@ export class AppServerHost {
   /** Whether this process already owns the live state for a root thread. */
   hasThreadSubscription(threadId: string): boolean {
     return this.subscribers.has(threadId);
+  }
+
+  /**
+   * Opaque concrete process identity which may own a writer. Null proves no
+   * application request/thread evidence in this process. A failed shutdown keeps
+   * the client (and evidence); a confirmed exit/restart gets a fresh identity.
+   */
+  get writerCandidate(): object | null {
+    return this.client && this.writerCandidates.has(this.client) ? this.client : null;
   }
 
   /** 是否已经 spawn 过子进程 (但可能已 close)。 */

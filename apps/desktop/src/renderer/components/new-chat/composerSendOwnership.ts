@@ -162,10 +162,8 @@ export function persistDetachedVoiceToDraft(
       attachments: existing?.attachments ?? [],
       quotes: existing?.quotes ?? [],
       browserComments: existing?.browserComments ?? [],
+      ...(existing?.builtInSkillIntent ? { builtInSkillIntent: existing.builtInSkillIntent } : {}),
       ...(existing?.pendingGhostId ? { pendingGhostId: existing.pendingGhostId } : {}),
-      ...(existing?.pendingHostCapabilityGhostId
-        ? { pendingHostCapabilityGhostId: existing.pendingHostCapabilityGhostId }
-        : {}),
       ...(existing?.focusAtEnd ? { focusAtEnd: true } : {}),
     },
     { silent: false },

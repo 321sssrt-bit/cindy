@@ -16,6 +16,8 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
   (`anthropic-compat-proxy-host.ts`)。凭证走 `$CINDY_PI_API_KEY` env 插值,不落盘。
 - **system prompt**:`--append-system-prompt` 追加 host 产品段 + 用户段,**保留 pi 默认
   prompt**(不用 `--system-prompt` 整体替换 —— 那会丢掉 pi 自己调好的工具用法/工程约定)。
+  追加段的文本写在会话 `configHome/append-system-prompt.md`,命令行只传该文件路径(pi 接受
+  `<text|path>`):伙伴提示词轻易两三万字符,内联会顶穿 Windows 的 spawn 命令行预算。
 - **权限执行**:pi 原生无工具审批(security.md 明确:非沙箱、不限制工具)。Cindy 用注入的
   `cindy-bridge.ts` 扩展在 pi 进程内 `pi.on('tool_call')` 拦截,经 `extension_ui_request`
   子协议冒泡到 `index.ts handleExtensionUiRequest`,映射成 `InteractionRequest` 交 Cindy
@@ -64,9 +66,26 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
   MCP 请求接入 Pi 的取消信号；Bun fetch 的独立空闲计时关闭，由既有请求期限统一约束响应头与
   正文。取消只中止本次 HTTP 等待，不承诺撤销服务端已执行的动作。网络错误只附白名单错误码，
   仅 JSON-RPC `-32602` 明确参数错误附 schema，工具业务错误保留原反馈。
-- **plan 模式**:挂 pi 自带 plan-mode 扩展,`/plan` toggle 驱动;Cindy 维护镜像态并在 resume
-  时从本机 session JSONL 校正（只打开启动时 `--session-dir` 真身内的普通文件，
-  并有字节/时间预算，超限回退 RPC）；远端仍走 `get_entries`。
+- **plan 模式**:自动挂载 Pi 分发包自带的 plan-mode 扩展，无需用户另装。UI 勾选是下一条
+  消息的一次性意图，与原生运行态分开；`StartSessionOptions.planMode` 设置起始档，
+  `SendOptions.planMode` 快照决定本轮，切档与 prompt 在同一 RPC 串行段执行。发送后消耗
+  勾选不关闭在途计划轮；下一条普通消息恢复普通工具。扩展缺失或切档失败时拒绝计划请求，
+  不悄悄按普通模式执行。缺失扩展不阻止会话启动，启动计划意图保留到发送时拒绝；
+  取消计划后普通消息仍可发送。resume 和原生 Execute/Refine 续轮从本机 session JSONL
+  校正运行态；远端仍走 `get_entries`。原生续轮校正期间 Host 写操作保持不可用。
+  启动校正失败且没有显式计划意图时，发送前重新读取原生状态；仍未知则拒绝发送及包变更，
+  读回后沿用原生档位并按正常接受边界消耗一次性计划意图，不默认关闭计划模式。
+
+> Cindy 自有子代理的委派、控制、结果收口与测试边界见 [Pi 子代理设计](../research/pi-subagent-delegation.md)。与 Orca 协作模式分别维护。
+
+### 原生请求 Fast 偏好
+
+支持 Fast 的原生模型在 `before_provider_request` 中经现有 RPC 通道发出
+`cindy:request-preferences` 只读查询。宿主按当前运行实例、精确 provider/model 与
+内存中的 Fast 开关返回结果，不接受查询传入的开关值；不弹用户确认，不增加模型工具。
+开关不再写入 `runtime/request-prefs-*.json`，遗留文件不参与判定。关闭实例、查询失败、
+超时或回复无效时使用普通档；已开启的正常请求仍发送 `service_tier: priority`。
+这修复偏好文件被改写或重放的路径，不改变 Pi Full Access 的原生 shell 权限边界。
 
 ## 2. 配置面:Cindy 显式设置 vs 放任 pi 默认
 
@@ -74,6 +93,10 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
 提前拦截。目录、原生模型资料或用户配置明确声明 `supportsImageInput: false` / `input: ['text']`
 时仍保持仅文本；此默认值不写回用户配置，也不代表上游接口保证支持图片。活动任务沿用启动时
 能力快照。回归见 `pi-provider-routing.test.ts` 与 `piNativeProviders.test.ts`。
+
+Codex / Claude Code 复用的 `pi-provider-transport.ts` 原生桥接也沿用此缺省口径：
+活动目录的显式图片开关或模态声明优先于原生兜底资料，只有均未声明时才允许图片。
+此行为只决定图片是否进入原生 SDK 请求，不保证上游识图；回归见 `piProviderTransport.test.ts`。
 
 Cindy 显式设置:models.json、`settings.json` 的 `transport:sse` 与 `retry.maxRetries=6`
 （`retry.provider.maxRetries` 保持 0）、`--append-system-prompt`、`--session-dir`、启动时 RPC
@@ -85,13 +108,30 @@ Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveT
 模型容量用于 Pi 原生请求长度裁剪，不能随小预算缩到 1K；工作预算只调整原生压缩阈值，
 并作为已应用预算进入 Cindy 的用量快照。
 大窗切小窗先由 Desktop 的统一目标窗口事务按目标窗口 90% 固定压力线评估（独立于 Pi
-日常自动压缩百分比），命中时换干净原生窗口；未命中时 Pi 重写 settings 后调用
-`switch_session`，必须重新 `set_model` 并用 `get_state` 校验
-provider／model／contextWindow，因为 Pi 会用进程初始 CLI route 重建 runtime。校验完成前
-子代理 route 保持 pending，失败则终止该 live 任务。Claude Code 仍用独立百分比。env:`CINDY_PI_API_KEY`、
+日常自动压缩百分比），命中时复用既有上下文接续事务；未命中时，已加载的 Pi 1.0 模型使用启动时写入的
+`compaction.modelOverrides["provider/modelId"].reserveTokens`，再用原生 `set_model` 与
+`get_state` 确认 provider／model／contextWindow。百分比沿用任务启动快照；工作预算按来源和模型解析。
+如果新目录或工作预算要求的保留量与运行中 Pi 实际配置不同，预览返回既有 `rebuild`，
+由宿主恢复流程加载配置；不得谎称文件改写已更新 Pi 内存。旧 Pi 不支持按模型配置时，
+同保留量的选择仍可热切，需变化时走同一预览分支。
+普通切模不得用 `switch_session` 或扩展 `/reload` 重读压缩配置：两者会重建会话或扩展状态，
+不能当成无损配置刷新。忙时选择必须在回合结束后走同一切换与容量事务，不能由延后服务
+直接关闭 Pi。原生校验完成前，子代理 route 保持 pending；确认并持久化目标路由后才放行
+排队消息。
+Claude Code 仍用独立百分比。env:`CINDY_PI_API_KEY`、
 `CINDY_PI_SESSION_ID`、`PI_CODING_AGENT_DIR`、`CINDY_PI_PERMISSION_FILE`、`CINDY_PI_MCP_BRIDGE`、
 外部 MCP 专用动态 env、`PI_OFFLINE=1`(关启动期联网)、`NO_PROXY` 兜底 loopback(防全局代理
 打穿本地 proxy 与 MCP bridge)。
+
+用户重试已被 Pi 接受但零产出的失败输入时，用持久化的原生 user entry id 精确定位当前
+分支；确认后续只有空的错误响应及模型／推理档位变更记录，再通过原生树导航回到输入之前重发。
+导航只回退消息，保留当前模型和推理档位；重新打开任务时仍由 Cindy 已保存的选择恢复设置。
+回归见 `session-tree.test.ts` 与 `pi-provider-routing.test.ts`。旧失败分支完整保留，
+不按文本去重，也不重放已有工具结果。若该轮明确遇到 HTTP 413，用户这次重试在重发前
+调用一次原生 compact；压缩失败（包括 RPC 超时、普通错误或无法压缩）时，沿用原请求的
+413 证据，本机锁存下一次发送前换窗，并在持久错误中记录专用恢复失败标记，关闭运行时后
+仍能恢复。用户取消不触发换窗，SSH 保留错误。
+这一恢复由用户重试触发，不改变正常轮次由 Pi 自己管理自动压缩的约定。
 
 Pi 同样消费 `AgentRuntimeConfig.behaviorFlags`（静态对象或按来源、凭证形态、执行位置求值）。
 Desktop 复用既有工具链并行度设置，向本机 Pi 注入 `VITEST_MAX_FORKS`、`VITEST_MAX_THREADS`、
@@ -103,6 +143,30 @@ SSH 不套用本机限核值。沿用现有默认值与 override 存储，不新
 `transport`、`retry.maxRetries=6`（provider 级保持 0）与 `compaction.reserveTokens`；
 未配置 Pi 百分比且未缩小工作预算时不写 `reserveTokens`，沿用 Pi 默认 16384；
 显式小预算仍以默认 90% 计算触发阈值。
+
+### 运行中的模型目录与凭据更新
+
+模型目录更新沿用 Cindy 的统一目录和 Pi 的原生 provider 配置，不能另建一份模型权威表。
+先预览目标资料和容量，再在现有串行切换边界应用配置；扩展调用公开的
+`ctx.modelRegistry.refresh({ allowNetwork: false })` 刷新目录，
+即使 provider/model ID 未变也须通过 `set_model` 应用新 descriptor。刷新结果中的
+`aborted` 或 provider errors 表示未完整成功，不能仅凭 RPC `success: true` 继续。
+
+新增原生适配器使用 Pi 公开的 `unregisterProvider`／`registerProvider` 与模型目录刷新，
+不重建用户扩展。模型凭据仅通过宿主发起、绑定本次运行实例和随机 nonce 的私有交接进入
+Pi 内存，不进入 prompt、聊天历史、日志或明文配置文件。交接同时维护 bash 凭据剥离名单、
+后续子代理的启动配置和来源专用授权；已运行子代理仍保留其独立身份。私有命令的 prompt
+响应不等于配置成功，必须收到对应 nonce 的完成回执。来源一致性检查不可因热切而删除。
+
+**只适配官方 Pi，不修改 Pi 源码或二进制。** `refresh_models` 与
+`set_compaction_reserve_tokens` 不是官方 RPC，不得作为 Cindy 的运行依赖，也不再维护
+配套补丁。Pi 上游缺陷与 Cindy 适配缺陷分别记录；不得为了使检查变绿而定制 runtime。
+
+同一私有桥接的只读 `inspect` 操作通过运行期 `pi.getSettings()` 返回配置副本与 Pi
+版本；不修改凭据、不重载扩展。旧版没有该 API 时使用启动时读取的私有设置快照。
+Pi action API 不能在扩展加载期间调用。查询命令的归属与 nonce 必须验证，避免未知 slash
+命令变成实际模型输入；设置回执确认后才继续切模。官方接口与恢复边界见
+[`../research/pi-native-model-refresh.md`](../research/pi-native-model-refresh.md)。
 
 
 Skill 停用适配同时保存物理身份与管理页已扫描的词法发现入口；启动前只采用仍指向该
@@ -279,10 +343,40 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
 - provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／
   control 判断未结算工作，保留缺终态时的有界 watchdog；已送达的成功终态不能被后续退出
   改判成失败，provider continuation claim 也不能被当作最终结束。
+- 本机 stdio 的 stdout EOF／关闭／错误或 stdin 错误是明确 RPC 失联，不等同于
+  正常长工具静默，也不是进程退出证明。EOF 的写栅栏先于 JSONL reader 的无换行尾帧
+  flush 生效，尾帧不得再写响应或启动 Host 包 mutation。在 250ms 退出确认窗口内
+  继续读取已写出的 stdout 尾帧；未确认退出且轮次仍未结算时才报 `pi-rpc-disconnected`，
+  工具结果保持未知。待开始的新 prompt 不继承上一轮 retry 耗尽的终态判重标记；
+  窗口内 Stop 仍登记对应 generation 的取消意图，不向失联管道写 abort。
+  已收到的 settled 成功结果、最终正文与用量不改判。管道失联／关闭中的 executor
+  即使已送达成功或取消尾帧，也保持 Session 下一轮准入关闭，直到退出或显式 close
+  完成；用户跟发与 Host 续跑沿用既有排队／重建流程。此清理栅栏不是 steer 准入：
+  steer 在准备前、异步准备后和串行 RPC 边界检查可用性，Host 包 mutation 不得先行。
+  已 settled 的不可用 turn 用既有 `NO_ACTIVE_TURN` 路径回到普通排队／重建；仍未结算
+  的 turn 保留失联失败，不仅凭断管道宣称已结束。派发准备或串行 RPC 等待后
+  若已确定管道不可用且未接受任何工作，按未派发拒绝，不伪报接受结果未知；pending
+  轮次标记仅在实际 prompt RPC 边界登记。已完成的 Host 包 mutation 不退回可重放状态。
+  复用原退出确认流程退役 root Pi，不重放输入、不重跑构建、不杀后代进程树；
+  退出未确认时仍保留进程登记和 runtime 文件。SSH daemon 断链保活语义不变。
+  缺 settled 但 RPC 仍通的情况仍走已有有界 watchdog，丢失工具结果不伪造。
+  回归见 `pi-long-tool-lifecycle.test.ts`、`transport.test.ts` 与 `rpc-client.test.ts`。
 - Pi 的 `Request was aborted` 只在无当前 generation 的 Host Stop 时归入请求断流失败；
   无错误正文的 bare abort 仍保持取消。复用既有错误收口及重试预算，不重放包命令或工具。
+- Pi 未归类的缺码临时服务故障（如 `Service temporarily unavailable` 或明确的模型
+  availability degraded）由 Cindy 的既有有界续跑守卫兜底；结构化状态／错误类别优先，
+  不把裸 `unavailable`／`degraded` 当重试依据，不伪造 HTTP 503。已有正文或工具结果时
+  发送续跑指令，保留已有结果；用户 Stop 取消待续跑。Pi `auto_retry_end(success=false)`
+  已用尽原生预算时保持 `pi-gateway-drop` 终态，不再叠加 Host 重试。本规则不修改受管
+  Pi 二进制、版本或原生重试上限；原生分类兼容需由 Pi 上游独立修正。
 - SDK 成功与正文入库／交付分开取证。只见 JSONL 成功但 SQLite 缺正文时，不能自动重跑
   已成功的工作；应沿 RPC → translator → Session → persistence 查丢失边界。
+
+- 代输入 askpass(2026-10-13):Pi 本机任务的 Agent 进程 env 合入 `runtimeConfig.taskShellEnv`,
+  只在 `!remote && !hosted && !reviewMode` 时合入,且按 sessionId 确定(respawn 字节一致)。这只是给
+  sudo/ssh/git 提供口令来源,不改 Pi 原生命令、扩展或权限行为;Pi 自身的 bash 工具照常执行,口令由宿主
+  核验进程链后写回发起进程。见 [`maker-core-and-agent-behavior.md`](maker-core-and-agent-behavior.md)
+  「代输入：任务 shell 环境与工具说明」。
 
 ## 5. 已交付(2026-07 里程碑)
 
@@ -324,7 +418,9 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
       最终启动 smoke 仍由对应发布 runner 执行。2026-08 起 pi 与 cc/codex 一样只走
       CDN 运行时分发链(`agent-binaries` + splash prepare):CDN manifest 的可选 `pi`
       字段指向整包 tar.gz(归档根即完整目录分发,SHA256 为 tar.gz 的),启动时按
-      manifest 版本下载到 `userData/pi/<version>/` 并清理更旧版本；prepare 会先对所有带
+      manifest 版本下载到 `userData/pi/<version>/` 并清理更旧版本。用户通过 About／受管
+      命令选择版本后，`pi/selected.json` 的显式选择优先于 manifest 版本与高版本残留；
+      该路径不清理旧目录，不改变下面的联网启动边界。没有显式选择时，prepare 会先对所有带
       `.verified` 的本地候选执行有界 `--version` 探针，真实 semver 不低于 manifest 时直接
       保留该安装（包括原地自更新后目录名仍旧的情况），不下载也不清理。只有 manifest
       版本更高，或探针没有得到可用候选时，才沿用原 CDN 安装流程。正式安装包不内置 Pi；
@@ -353,8 +449,33 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
       `bypassPermissions` 的契约测试已补；Pi bridge 的 auto allow/deny 也用真二进制覆盖。
 - [x] **resume 边界**:已用 Pi v0.82.1 真二进制创建 JSONL，再由 v0.83.0 恢复；
       invalid resume 在适配层先校验文件存在并遵守 CAS，precise rewind/fork 后 resume 有真二进制测试。
-- [x] **prompt cache**:Pi 子进程默认注入 `PI_CACHE_RETENTION=long`；不支持的 provider
-      忽略该选项。已用 ChatGPT 订阅实例确认 `cacheRead` 命中会端到端落库与展示。
+- [x] **prompt cache**:Pi 子进程默认注入 `PI_CACHE_RETENTION=long`；明确拒收该可选字段的
+      provider 由 compat 自愈学习并关掉该字段(见下条)。已用 ChatGPT 订阅实例确认 `cacheRead`
+      命中会端到端落库与展示。
+- [x] **provider compat 自愈**:上游以 `invalid_request_error` 明确拒收某个可选请求字段时
+      (已知形态:Console Go / OpenCode Zen-Go 的 GLM 上游拒收 `prompt_cache_retention`,提示改用
+      `prompt_cache_options`;自定义政企/内网网关只拒 `prompt_cache_key`
+      ，见 issue #5878),Pi translator 打稳定 reason `unsupported-request-option`。
+      仅接受被点名字段与明确拒收关系；普通 400、鉴权、限流、其他参数错误不学习。
+      Desktop 先将 `supportsLongCacheRetention: false` 原子记入
+      `<userData>/pi-native-compat-overrides.json` 的 `routes` 表；键为 JSON 数组
+      `[连接 ID, wire 模型 ID, SHA256(协议 + 真实端点)]`，端点包含路径、端口、查询参数，
+      不保存原始 URL 或错误正文。连接、端点或协议变化均不复用旧记录；无身份不学习，
+      损坏文件保留原样且不授权恢复。未发布 #4791 的无端点记录无法精确归属，不自动套用。
+      当前运行时另持有启动/原生 registry 刷新成功时的应用快照；磁盘已学习不代表旧进程
+      已应用。成功落盘后仅退役空闲的旧实例，新进程重建 models.json 并校验同一路由已应用。
+      Pi 1.0.2 普通 URL 下 compat 会移除两字段，但 URL 含 api.openai.com 时 key 仍可发送；
+      因此既有 before_provider_request hook 按私有运行时规则的 provider/model/baseUrl 精确
+      删除这两个字段，其他路由保持原生行为。原生子代理冻结继承相同规则；刷新失败回滚
+      models/settings 与规则文件，不保留半套配置。
+      自动恢复只对本地 `source=desktop` Pi：整轮无文字/思考/工具调用或执行，原输入仍是
+      最新输入，实例/轮次未更换、未取消、未切路由且无外部恢复 owner。同一输入最多一次，
+      必须存在原生 user entry，使用原生分支重试以保持一条有效输入；缺失 entry 或应用确认
+      时直接失败，禁止追加重复输入。恢复后仍拒收正常报错，不循环、不自动扩展降级。
+      外部派单可学习并退役空闲旧实例，重试由原 owner 负责；原生子代理继承已有学习但不将
+      子错误归给父任务学习/重放。SSH 不消费本地记录；设备互联/手机控制本地桌面任务走同一
+      宿主路径，无新 IPC/UI。恢复只影响出错任务的空闲 Pi 实例，不重启应用、连接或其它任务。
+      删除精确记录并重新创建运行时可重新探测；无后台探测、无自动到期，避免恢复失败循环。
 
 ## 7. 上线后路线图(已与 Chris 对齐)
 

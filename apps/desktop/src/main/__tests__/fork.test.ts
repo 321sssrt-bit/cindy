@@ -14,12 +14,15 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CodexResumePreparationBlockedError } from '@cindy/maker-core';
 import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-input-projection';
 import { projectSessionContextWindow } from '../../shared/sessionContextWindow';
 import { computeForkSourceMessagesDigest } from '../localDb/forkRecoverySnapshot.js';
+import { MAKER_INVOKE } from '../maker-ipc/channels.js';
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -28,7 +31,27 @@ const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 // maker.forkSdkSession 内部已包含 SDK 调用 + uuidMap 构建; 业务测试只关心其入参
 // (确认 fork 把对的 sourceSdkSessionId / upToMessageId / title / workingDir 传下去)
 // 和返回值 (uuidMap 决定 messages.agentMeta remap 结果)。
+const { ipcHandlers, sessionCreatedMock } = vi.hoisted(() => ({
+  ipcHandlers: new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>(),
+  sessionCreatedMock: vi.fn(),
+}));
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (
+      channel: string,
+      handler: (event: unknown, ...args: unknown[]) => Promise<unknown>,
+    ) => {
+      ipcHandlers.set(channel, handler);
+    },
+  },
+}));
+vi.mock('../localDb/ipc/sessionCreatedBroadcast.js', () => ({
+  emitSessionCreated: sessionCreatedMock,
+}));
+
 const forkSdkSessionMock = vi.fn();
+const remoteInvokeMock = vi.fn();
+vi.mock('../device-link/index.js', () => ({ remoteBackgroundInvoke: (...args: unknown[]) => remoteInvokeMock(...args) }));
 vi.mock('../maker-host/index.js', () => ({
   getMaker: () => ({
     forkSdkSession: forkSdkSessionMock,
@@ -44,6 +67,7 @@ vi.mock('../maker-host/provider-route.js', () => ({
 // 每个 select() 调用按入栈顺序消费 selectQueue 的下一个返回值。
 type SelectStep = unknown[];
 const selectQueue: SelectStep[] = [];
+let messageDb: ReturnType<typeof drizzle> | null = null;
 const txCalls: Array<{ name: string; args: unknown }> = [];
 
 type SelectChain = Record<string, unknown> & {
@@ -59,7 +83,8 @@ function makeChain(rows: unknown[]) {
 }
 
 const fakeDb = {
-  select: vi.fn(() => {
+  select: vi.fn((projection?: Record<string, unknown>) => {
+    if (messageDb && projection && Object.keys(projection).length <= 5) return messageDb.select(projection as never);
     const next = selectQueue.shift() ?? [];
     return makeChain(next);
   }),
@@ -89,12 +114,16 @@ vi.mock('../localDb/client/current', () => ({
 }));
 
 let forkSessionAtMessage: typeof import('../maker-orchestration/fork').forkSessionAtMessage;
+let createSideChat: typeof import('../maker-orchestration/fork').createSideChat;
+let listSideChats: typeof import('../maker-orchestration/fork').listSideChats;
 let forkSessionStripEncrypted: typeof import('../maker-orchestration/fork').forkSessionStripEncrypted;
 const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalXdtUserDataDir = process.env.XDT_USER_DATA_DIR;
 const tempDirs: string[] = [];
 
 beforeEach(async () => {
+  ipcHandlers.clear();
+  sessionCreatedMock.mockClear();
   if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   if (originalXdtUserDataDir === undefined) delete process.env.XDT_USER_DATA_DIR;
@@ -109,6 +138,7 @@ beforeEach(async () => {
   commitContextRebuildMock.mockClear();
   createMessageMock.mockClear();
   forkSdkSessionMock.mockReset();
+  remoteInvokeMock.mockReset();
   inferProviderIdForModelMock.mockReset();
   inferProviderIdForModelMock.mockReturnValue(null);
   // 默认空 uuidMap 让 agentMeta 字段被去掉 (无映射)。具体测试按需 override。
@@ -119,11 +149,14 @@ beforeEach(async () => {
   if (!forkSessionAtMessage) {
     const mod = await import('../maker-orchestration/fork');
     forkSessionAtMessage = mod.forkSessionAtMessage;
+    createSideChat = mod.createSideChat;
+    listSideChats = mod.listSideChats;
     forkSessionStripEncrypted = mod.forkSessionStripEncrypted;
   }
 });
 
 afterEach(async () => {
+  if (vi.isMockFunction(os.homedir)) vi.mocked(os.homedir).mockRestore();
   if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   if (originalXdtUserDataDir === undefined) delete process.env.XDT_USER_DATA_DIR;
@@ -204,7 +237,146 @@ async function writeClaudeJsonlInConfigDir(
 
 // ── tests ──────────────────────────────────────────────────────────────────
 
+describe('disabled Cindy Make fork boundaries', () => {
+  const cases = ['cindy-make', 'cindy-make-merge'].flatMap((source) =>
+    [MAKER_INVOKE.FORK, MAKER_INVOKE.FORK_STRIP_ENCRYPTED].flatMap((channel) =>
+      ['orchestration', 'legacy IPC'].map((entryPoint) => ({ source, channel, entryPoint })),
+    ),
+  );
+
+  it.each(cases)(
+    'rejects $source through $entryPoint $channel before reading history or creating a child',
+    async ({ source, channel, entryPoint }) => {
+      selectQueue.push(
+        [makeSourceRow({ source, agentKind: 'codex' })],
+        [makeMessageRow({ clientId: 'legacy-message' })],
+      );
+      const args =
+        channel === MAKER_INVOKE.FORK
+          ? ['src-session', 'legacy-message']
+          : ['src-session'];
+      let operation: Promise<unknown>;
+      if (entryPoint === 'legacy IPC') {
+        const { registerMakerForkIpc } = await import('../maker-ipc/fork.js');
+        registerMakerForkIpc();
+        operation = ipcHandlers.get(channel)!({}, ...args);
+      } else {
+        operation =
+          channel === MAKER_INVOKE.FORK
+            ? forkSessionAtMessage('src-session', 'legacy-message')
+            : forkSessionStripEncrypted('src-session');
+      }
+
+      await expect(operation).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+      expect(selectQueue).toHaveLength(1);
+      expect(forkSdkSessionMock).not.toHaveBeenCalled();
+      expect(txMock).not.toHaveBeenCalled();
+      expect(queryOneMock).not.toHaveBeenCalled();
+      expect(queryMock).not.toHaveBeenCalled();
+      expect(createMessageMock).not.toHaveBeenCalled();
+      expect(commitContextRebuildMock).not.toHaveBeenCalled();
+      expect(sessionCreatedMock).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe('forkSessionAtMessage', () => {
+  // Unit, PR #6529 archived-discovery regression: evaluate the real list WHERE
+  // against SQLite. The old queue fake cannot detect status filtering. Minimal
+  // input: active/archived/deleted children plus a different parent and source.
+  it('lists archived side chats with active siblings, excluding deleted and unrelated tasks', async () => {
+    const sqlite = new Database(':memory:');
+    try {
+      sqlite.exec('CREATE TABLE sessions (id TEXT, parent_session_id TEXT, source TEXT, status TEXT, created_at INTEGER)');
+      const insert = sqlite.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?)');
+      for (const row of [
+        ['active', 'main', 'side-chat', 'active', 20],
+        ['archived', 'main', 'side-chat', 'archived', 10],
+        ['deleted', 'main', 'side-chat', 'deleted', 30],
+        ['other-parent', 'other', 'side-chat', 'archived', 5],
+        ['ordinary', 'main', 'desktop', 'archived', 6],
+      ]) insert.run(...row);
+      messageDb = drizzle(sqlite);
+      expect(await listSideChats('main')).toEqual([{ id: 'archived' }, { id: 'active' }]);
+    } finally {
+      messageDb = null;
+      sqlite.close();
+    }
+  });
+
+  // Unit, #6529: the old queue fake never evaluated anchor ordering/WHERE.
+  // A running turn with two steers must copy only the preceding completed turn.
+  // Execute both production message lookups against SQLite; keep SDK/writes fake.
+  it.each([3000, 2501])('excludes the entire running turn even after steers (question at %i)', async questionAt => {
+    const sqlite = new Database(':memory:');
+    try {
+      sqlite.exec(`CREATE TABLE messages (id TEXT, client_id TEXT, session_id TEXT,
+        role TEXT, created_at INTEGER, rewind_at INTEGER)`);
+      const insert = sqlite.prepare('INSERT INTO messages VALUES (?, ?, ?, ?, ?, NULL)');
+      for (const [id, role, at] of [
+        ['old-question', 'user', 2000], ['reply', 'assistant', 2500],
+        ['busy-question', 'user', questionAt], ['partial', 'assistant', 3100],
+        ['steer-one', 'user', 3200], ['steer-two', 'user', 3300],
+      ] as const) insert.run(id, id, 'src-session', role, at);
+      const source = makeSourceRow({ source: 'desktop', activeTurnStartedAt: 3001, lastTurnEndedAt: 2600 });
+      selectQueue.push([source], [source], [makeMessageRow({ role: 'assistant', createdAt: 2500, agentMeta: JSON.stringify({ uuid: 'prior-uuid' }) })], [makeSourceRow({ id: 'child' })]);
+      messageDb = drizzle(sqlite);
+      await createSideChat('src-session');
+      expect(txCalls.find(call => call.name === 'fork.session')?.args).toMatchObject({ targetCreatedAt: questionAt });
+      expect(forkSdkSessionMock).toHaveBeenCalledWith('claude-code', expect.objectContaining({ upToMessageId: 'prior-uuid' }));
+    } finally {
+      messageDb = null;
+      sqlite.close();
+    }
+  });
+  // Side-chat creation must preserve the parent runtime and route while making an independent child.
+  // Existing message-level forks lack the automatic busy-parent boundary and source marker (unit).
+  it('opens a separate side task before the busy parent question', async () => {
+    const source = makeSourceRow({ source: 'desktop', activeTurnStartedAt: 3001, lastTurnEndedAt: 2501 });
+    const question = makeMessageRow({ clientId: 'busy-question', createdAt: 3000 });
+    const reply = makeMessageRow({ role: 'assistant', createdAt: 2500, agentMeta: JSON.stringify({ uuid: 'prior-uuid' }) });
+    selectQueue.push([source], [{ clientId: reply.clientId }], [source], [reply], [question], [reply], [makeSourceRow({ id: 'child', source: 'side-chat' })]);
+    const child = await createSideChat('src-session');
+    expect(child.id).toBe('child');
+    const transaction = txCalls.find(call => call.name === 'fork.session')?.args as { newSession: Record<string, unknown>; targetCreatedAt: number };
+    expect(transaction.targetCreatedAt).toBe(3000);
+    expect(transaction.newSession).toMatchObject({ source: 'side-chat', parentSessionId: 'src-session', permissionMode: 'ask', providerId: 'xd', workingDir: '/work' });
+    expect(forkSdkSessionMock).toHaveBeenCalledWith('claude-code', expect.objectContaining({ sourceSdkSessionId: 'sdk-uuid-source', upToMessageId: 'prior-uuid' }));
+    expect(txCalls).toHaveLength(1);
+  });
+
+  // Unit, #6529: future-dated inherited rows must not move the child's visible
+  // boundary beyond its first live message. Existing creation cases use old dates.
+  it('keeps a side chat creation boundary at wall-clock time with future history', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    try {
+      const source = makeSourceRow({ source: 'desktop' });
+      const reply = makeMessageRow({ role: 'assistant', createdAt: 70_000, agentMeta: JSON.stringify({ uuid: 'future-reply' }) });
+      selectQueue.push([source], [{ clientId: reply.clientId }], [source], [reply], [], [reply], [makeSourceRow({ id: 'child', source: 'side-chat' })]);
+      await createSideChat('src-session');
+      expect(txCalls.find(call => call.name === 'fork.session')?.args).toMatchObject({
+        newSession: { createdAt: 10_000, updatedAt: 10_000, userSendAt: 10_000 },
+      });
+    } finally { clock.mockRestore(); }
+  });
+
+  // Unit, #6529: an archived parent was accepted although it cannot own new work.
+  // Existing cases covered deletion/nesting only; no SDK call or child may result.
+  it.each([{ status: 'deleted' }, { status: 'archived' }, { source: 'side-chat' }, { source: 'review' }])('rejects unavailable or nested side-chat sources: %j', async overrides => {
+    selectQueue.push([makeSourceRow(overrides)]);
+    await expect(createSideChat('src-session')).rejects.toMatchObject({
+      code: 'status' in overrides ? 'SOURCE_NOT_FOUND' : 'UNSUPPORTED_HISTORY',
+    });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    expect(txCalls).toHaveLength(0);
+  });
+
+  it('leaves an empty parent untouched when there is no completed reply', async () => {
+    selectQueue.push([makeSourceRow()], []);
+    await expect(createSideChat('src-session')).rejects.toMatchObject({ code: 'NO_PRIOR_ASSISTANT' });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    expect(txCalls).toHaveLength(0);
+  });
   it.each([
     { marker: 200000, projectedWindow: 200000 },
     { marker: null, projectedWindow: 272000 },
@@ -989,6 +1161,82 @@ describe('forkSessionAtMessage', () => {
     expect(txArgs.newMessageIds).toHaveLength(2);
   });
 
+  // Shared-model fork: the original bug rejected agentDeviceId before reading history.
+  // Unit coverage of the real orchestration + wire client; no live devices or model calls.
+  it.each(['ready', 'old-peer', 'timeout'])('forks on the provider device without a local fallback: %s', async (mode) => {
+    selectQueue.push([makeSourceRow({ agentDeviceId: 'device-b', providerId: 'shared-provider' })]);
+    selectQueue.push([makeMessageRow({ clientId: 'target-user', createdAt: 3000 })]);
+    selectQueue.push([makeMessageRow({ role: 'assistant', agentMeta: JSON.stringify({ uuid: 'old-anchor' }) })]);
+    selectQueue.push([makeSourceRow({ id: 'child', agentDeviceId: 'device-b' })]);
+    remoteInvokeMock.mockImplementation(async (_device, _channel, [request]) => {
+      if (request.op === 'caps') return { ok: true, result: {
+        version: 1, agents: [], maxRuns: 16, uploadChunkBytes: 1024, maxPayloadBytes: 2048,
+        ...(mode !== 'old-peer' ? { nativeFork: true } : {}),
+      } };
+      if (mode === 'timeout') return { ok: false, error: { code: 'TIMEOUT', message: 'unknown outcome' } };
+      return { ok: true, result: { newSdkSessionId: 'native-child', uuidMap: [['old-anchor', 'new-anchor']] } };
+    });
+    if (mode === 'ready') {
+      await forkSessionAtMessage('src-session', 'target-user');
+      const args = txCalls[0].args as { newSession: Record<string, unknown>; uuidMap: unknown };
+      expect(args.newSession).toMatchObject({ agentDeviceId: 'device-b', providerId: 'shared-provider', sdkSessionId: 'native-child' });
+      expect(args.uuidMap).toEqual([['old-anchor', 'new-anchor']]);
+      expect(remoteInvokeMock).toHaveBeenLastCalledWith('device-b', 'maker:remote-agent:v1', [
+        expect.objectContaining({ op: 'fork', sourceSessionId: 'src-session', newSessionId: args.newSession.id, upToMessageId: 'old-anchor' }),
+      ]);
+    } else {
+      await expect(forkSessionAtMessage('src-session', 'target-user')).rejects.toThrow(
+        mode === 'old-peer' ? 'REMOTE_AGENT_PEER_TOO_OLD' : /unknown outcome|TIMEOUT|UNREACHABLE/,
+      );
+      expect(txCalls).toHaveLength(0);
+    }
+    expect(remoteInvokeMock).toHaveBeenCalledTimes(mode === 'old-peer' ? 1 : 2);
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+  });
+
+  // Review #6563: native history stays on the recorded device across switches.
+  // Cover remote->remote, local->remote and remote->local through orchestration.
+  it.each([
+    ['old-device', 'current-device'],
+    [null, 'current-device'],
+    ['old-device', null],
+  ])('forks the historical device %s after moving to %s', async (fromAgentDeviceId, currentDevice) => {
+    selectQueue.push([makeSourceRow({ agentKind: 'codex', agentDeviceId: currentDevice })]);
+    selectQueue.push([makeMessageRow({ clientId: 'target-user', createdAt: 3000, rowid: 30 })]);
+    selectQueue.push([]);
+    selectQueue.push([makeSourceRow({ agentKind: 'codex', agentDeviceId: fromAgentDeviceId })]);
+    queryOneMock.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      content: JSON.stringify({ fromAgentKind: 'codex', fromAgentDeviceId, fromProviderId: 'openai',
+        fromModel: 'gpt-5.4', fromSdkSessionId: 'historical-native' }),
+      created_at: 4000, rowid: 40,
+    });
+    remoteInvokeMock.mockImplementation(async (_device, _channel, [request]) => ({
+      ok: true, result: request.op === 'caps'
+        ? { version: 1, agents: [], maxRuns: 16, uploadChunkBytes: 1024, maxPayloadBytes: 2048, nativeFork: true }
+        : { newSdkSessionId: 'native-child', uuidMap: [] },
+    }));
+    await forkSessionAtMessage('src-session', 'target-user');
+    if (fromAgentDeviceId) {
+      expect(remoteInvokeMock).toHaveBeenLastCalledWith(fromAgentDeviceId, 'maker:remote-agent:v1', [
+        expect.objectContaining({ op: 'fork', sourceSdkSessionId: 'historical-native' }),
+      ]);
+      expect(forkSdkSessionMock).not.toHaveBeenCalled();
+    } else {
+      expect(forkSdkSessionMock).toHaveBeenCalledWith('codex', expect.objectContaining({ sourceSdkSessionId: 'historical-native' }));
+      expect(remoteInvokeMock).not.toHaveBeenCalled();
+    }
+    expect((txCalls[0].args as { newSession: Record<string, unknown> }).newSession.agentDeviceId).toBe(fromAgentDeviceId);
+  });
+
+  it('refuses the encrypted-content fork for a Codex task whose agent runs on another computer', async () => {
+    selectQueue.push([makeSourceRow({ agentKind: 'codex', agentDeviceId: 'device-b' })]);
+
+    await expect(forkSessionStripEncrypted('src-session')).rejects.toMatchObject({
+      code: 'REMOTE_NOT_SUPPORTED',
+    });
+    expect(forkSdkSessionMock).not.toHaveBeenCalled();
+  });
+
   it('throws SOURCE_NEVER_RAN when source.sdkSessionId is null; maker not invoked', async () => {
     selectQueue.push([makeSourceRow({ sdkSessionId: null })]);
     selectQueue.push([makeMessageRow({ clientId: 'any-msg' })]);
@@ -1091,7 +1339,14 @@ describe('forkSessionAtMessage', () => {
     expect(createMessageMock).toHaveBeenCalled();
   });
 
-  it('uses the rebuild boundary engine when history crosses a later engine switch', async () => {
+  // Review #6563: native-session routing tests did not cover rebuild-before-switch.
+  // Public fork entry must persist the historical device even without a reusable SDK session (unit).
+  it.each([
+    ['device-b', 'device-c', 'device-b'],
+    [null, 'device-c', null],
+    ['device-b', null, 'device-b'],
+    [undefined, 'device-c', 'device-c'],
+  ])('uses the rebuild boundary engine and historical device %s after moving to %s', async (historicalDevice, currentDevice, expectedDevice) => {
     const target = makeMessageRow({
       id: 'historical-claude-assistant',
       clientId: 'historical-claude-assistant-client',
@@ -1111,6 +1366,7 @@ describe('forkSessionAtMessage', () => {
     selectQueue.push([
       makeSourceRow({
         agentKind: 'codex',
+        agentDeviceId: currentDevice,
         model: 'gpt-5.6',
         sdkSessionId: 'current-codex-thread',
       }),
@@ -1143,6 +1399,7 @@ describe('forkSessionAtMessage', () => {
       .mockResolvedValueOnce({
         content: JSON.stringify({
           fromAgentKind: 'cc',
+          ...(historicalDevice !== undefined ? { fromAgentDeviceId: historicalDevice } : {}),
           toAgentKind: 'codex',
           fromModel: 'claude-sonnet-4-6',
           fromSdkSessionId: null,
@@ -1158,6 +1415,9 @@ describe('forkSessionAtMessage', () => {
     };
     expect(txArgs.newSession.agentKind).toBe('cc');
     expect(txArgs.newSession.model).toBe('claude-sonnet-4-6');
+    expect(txArgs.newSession.agentDeviceId).toBe(expectedDevice);
+    expect(txArgs.newSession.sdkSessionId).toBeNull();
+    expect(remoteInvokeMock).not.toHaveBeenCalled();
     expect(forkSdkSessionMock).not.toHaveBeenCalled();
   });
   it('rejects a historical engine boundary without a parked native session id', async () => {
@@ -1908,9 +2168,12 @@ describe('forkSessionAtMessage', () => {
     });
   });
 
-  it('claude path: locates JSONL under XDT_USER_DATA_DIR claude-home when main env has no CLAUDE_CONFIG_DIR', async () => {
+  it('claude path: falls back to the legacy dev XDT_USER_DATA_DIR/claude-home when ~/.claude lacks the JSONL', async () => {
     const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-user-data-'));
     tempDirs.push(userDataDir);
+    const emptyHome = await fs.mkdtemp(path.join(os.tmpdir(), 'xdt-empty-home-'));
+    tempDirs.push(emptyHome);
+    vi.spyOn(os, 'homedir').mockReturnValue(emptyHome);
     delete process.env.CLAUDE_CONFIG_DIR;
     process.env.XDT_USER_DATA_DIR = userDataDir;
     await writeClaudeJsonlInConfigDir(
@@ -2122,5 +2385,73 @@ describe('forkSessionAtMessage', () => {
 
     expect(forkSdkSessionMock).not.toHaveBeenCalled();
     expect(txCalls).toHaveLength(0);
+  });
+});
+
+describe('isCodexNativeThreadStart (#4994)', () => {
+  const user = (createdAt: number) => ({ role: 'user', content: '', agentMeta: null, createdAt });
+  const agentSwitch = (createdAt: number, fromAgentKind: 'cc' | 'codex', fromSdkSessionId: string | null) => ({
+    role: 'agent_switch',
+    content: JSON.stringify({ fromAgentKind, toAgentKind: fromAgentKind === 'cc' ? 'codex' : 'cc', fromSdkSessionId }),
+    agentMeta: null,
+    createdAt,
+  });
+  const contextRebuild = (createdAt: number) => ({ role: 'context_rebuild', content: '{}', agentMeta: null, createdAt });
+
+  it('treats an empty timeline as the thread start', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([], 'thread-x')).toBe(true);
+  });
+
+  it('rejects when the current thread already has an earlier user turn', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([user(1000)], 'thread-x')).toBe(false);
+  });
+
+  it('ignores turns of the engine the session switched away from', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([user(1000), agentSwitch(2000, 'cc', 'claude-sdk')], 'thread-x')).toBe(true);
+  });
+
+  it('counts earlier turns of a resumed parked thread across switch boundaries', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([
+      user(1000),
+      agentSwitch(2000, 'codex', 'thread-x'),
+      user(3000),
+      agentSwitch(4000, 'cc', 'claude-sdk'),
+    ], 'thread-x')).toBe(false);
+  });
+
+  it('ignores turns before a context rebuild', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([user(1000), contextRebuild(2000)], 'thread-x')).toBe(true);
+  });
+
+  it('does not let a pre-rebuild switch restore the current thread', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([
+      user(1000),
+      agentSwitch(2000, 'codex', 'thread-x'),
+      user(3000),
+      agentSwitch(4000, 'cc', 'claude-sdk'),
+      contextRebuild(5000),
+    ], 'thread-x')).toBe(true);
+  });
+
+  it('withholds thread start when a switch boundary is unparseable', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([
+      user(1000),
+      { role: 'agent_switch', content: '{not-json', agentMeta: null, createdAt: 2000 },
+    ], 'thread-x')).toBe(false);
+  });
+
+  it('withholds thread start when a switch boundary has no fromSdkSessionId', async () => {
+    const { isCodexNativeThreadStart } = await import('../maker-orchestration/fork');
+    expect(isCodexNativeThreadStart([
+      user(1000),
+      agentSwitch(2000, 'cc', null),
+    ], 'thread-x')).toBe(false);
   });
 });

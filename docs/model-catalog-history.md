@@ -3,6 +3,145 @@
 > 参考记录，不是当前配置或部署状态。当前维护规则见 [模型配置与下发](dev-rules/model-catalog-maintenance.md)。
 > 下列文字记录各批次当时的事实，不能相互当作后续状态的证明。引用时须带日期、来源和验证范围。
 
+## Google Gemini 4 Argon（2026-10-14）
+
+Google 于 2026-09-30 发布 Gemini 4 Argon，2026-10-13 在 Gemini API 正式可用（稳定版，无 preview 后缀）。依据
+Gemini API 官方[模型页](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon)、
+[思考](https://ai.google.dev/gemini-api/docs/thinking)、[价格](https://ai.google.dev/gemini-api/docs/pricing)
+页（核验日 2026-10-14），在 Server 正本与客户端离线 Registry 同步新增：
+
+- 公共型号 `google/gemini-4-argon`（精确 alias `gemini-4-argon`，名称 Gemini 4 Argon）：1,048,576 上下文
+  （输入输出合计），文字 / 图片输入、文字输出（官方另支持视频、音频、PDF 输入，Cindy 现有字段只登记已使用的
+  文字与图片），low / medium / high 三档，官方默认 medium。官方只文档化 `thinking_level`，没有 `minimal`
+  与关闭档，不登记。
+- 最大输出登记默认同步上限 65,536。官方另有 long decode 可到 1,048,576，需单独启用，Cindy 未接入该模式，
+  不把它当作默认输出上限。
+- global 官方 Standard 参考价分两段（USD，每百万 tokens，输出含思考）：2026-10-13 起 2 / 10 / 缓存读 0.1，
+  至 2026-12-01（不含）；2026-12-01 起 4 / 20 / 缓存读 0.2。沿用既有 `effectiveFrom` / `effectiveUntil`
+  区间，未新增机制。官方只有隐式缓存，无缓存写价，保持未知；Batch / Flex 五折与 Priority 档不属于
+  `standard` 变体，未登记。
+- **不加 Registry 接入条目或 XD route**，与 Gemini 3.8 Flash 相同。XD Gateway 近期的 Gemini 型号以
+  `google/` 前缀上架（核验时本机 XD 价格缓存有 `google/gemini-3.7-flash`、`google/gemini-3.8-flash`，
+  旧型号为裸 ID），而两端在没有匹配 route 时都按公共 ID / alias 回落公共资料：`google/gemini-4-argon`
+  与裸 `gemini-4-argon` 在 Claude Code / Codex / Pi 三个引擎得到同一份名称、窗口、图片输入与档位，
+  原生协议由已有 `gemini-` 家族规则给出，不必猜测 Gateway 实际 ID。Google API Key 直连（发现到
+  `gemini-4-argon`）同样经 alias 取得资料。
+
+成员仍以 Gateway `/models` 与各连接的模型发现为准：核验时本机 XD 价格缓存（2026-10-14）没有 Argon，
+本批只是资料先行。Google 说明该型号不在免费层与 Google AI Pro 提供，因此未加入 Google Gemini API 预设的
+推荐清单；默认推荐、排序与默认显示均未改。Pi 上游生成目录 `provider-models.json` 未重新导入，
+其中尚无该型号的渠道记录。revision 为 `2026-10-14T00:00:00.000Z`，与 Server 正本同内容。
+
+## Meta Muse Wonder（2026-10-13）
+
+Meta 于 2026-10-12 发布 Muse Wonder / Muse Wonder Full。依据 Meta Model API 官方
+[模型](https://dev.meta.ai/docs/models)、[推理档位](https://dev.meta.ai/docs/reasoning)、
+[价格](https://dev.meta.ai/docs/pricing-rate-limits) 页（核验日 2026-10-13），在 Server 正本与客户端离线
+Registry 同步新增：
+
+- 公共型号 `meta/muse-wonder-1.0`（精确 alias `muse-wonder-1.0`，名称 Muse Wonder）：1,048,576 上下文，
+  文字 / 图片输入、文字输出（官方另支持视频、音频、PDF 输入，Cindy 现有字段只登记已使用的文字与图片），
+  minimal / low / medium / high / xhigh / max 六档（官方 `none` 返回 400，不登记）。官方未公布最大输出，
+  留空，不按 Muse Spark 或聚合商数字补；官方请求缺省档位由模型自定，默认档按 Cindy 的 medium 优先规则取 medium。
+- global 官方参考价 USD 4 / 20 / 缓存读 0.2（每百万 tokens），自发布日 2026-10-12 生效；Wonder 无
+  Contributor 折扣，官方未列缓存写价，保持未知。
+- XD 独立条目 `xd/meta-muse-wonder-1.0` → Gateway `meta/muse-wonder-1.0`，Claude Code / Codex 路由，
+  原生协议 OpenAI Responses；`meta/muse-wonder-` 家族规则与 Muse Spark 同形态。
+- **Muse Wonder Full 不登记**：官方说明它只在 Muse Code 订阅中提供，不经 Model API；把 API 档位设为
+  `max` 也不等于 Full。
+- Codex 发送档位时原本只对 Seed 2.1 Pro、GLM-5.2 保留 `minimal`，其余收敛为 `low`；本批把
+  `meta/muse-wonder-1.0` 与官方 ID `muse-wonder-1.0` 加入同一白名单，使目录开放的 `minimal` 原样下发。
+  Claude Code 本身没有 `minimal`（对所有型号映射为 `low`），Pi 原样透传。
+
+成员仍以 Gateway `/models` 为准：核验时本机 XD 价格缓存（2026-10-13）只有 `meta/muse-spark-1.3`，
+没有 Wonder，因此本批只是资料先行，Gateway 上架前选择器不会出现该型号。默认推荐、排序与默认显示均未改。
+revision 为 `2026-10-13T00:00:00.000Z`，与 Server 正本同内容。
+
+## Claude Haiku 5.5 与 Sonnet 5.5（2026-10-10）
+
+XD Gateway 已上架 `anthropic/claude-haiku-5-5`、`anthropic/claude-sonnet-5-5`，但 Registry 没有这两个型号；
+上游未实报 `reasoning` 时 `/models` 无档位可回落，客户端因而不显示思考强度。本批在 Server 正本与客户端
+离线 Registry 同步新增两者的公共资料与 Claude Code / Codex 官方路由（与 Opus 5.5 相同形态）：adaptive 思考、
+图片输入、1M 上下文、128K 输出、low / medium / high / xhigh / max，默认 medium（官方 API 默认 Haiku 5.5 为
+medium、Sonnet 5.5 为 high，此处沿用 Cindy 的 medium 优先）。排序紧接在 Haiku 4.5 / Sonnet 5 之前。
+参考价、Pi 显式成员与默认显示设置本批未改。revision 为 `2026-10-10T16:00:00.000Z`，与 Server 正本同内容。
+
+同批修正两处按名称猜型号的旧逻辑：Anthropic 动态发现在目录缺失时只把 Haiku 4 及更早当作 200K、
+不可调档（Haiku 5 起按当代模型处理）；导入本机 Claude Code 会话时不再把 Haiku 5.5 归为 Haiku 4.5、
+Sonnet 5.5 归为 Sonnet 5。依据：[模型总览](https://platform.claude.com/docs/en/about-claude/models/overview)、
+[Effort](https://platform.claude.com/docs/en/build-with-claude/effort)，核验日 2026-10-10。
+
+## 第三方预设与服务端对齐（2026-09-26）
+
+依据各厂商官方文档（2026-09-26 核对）处理下线、别名与不存在的型号，并以线上服务端推荐清单为基础
+与客户端对齐（连接设置沿用客户端的原生协议地址）：
+
+- 百炼 Token Plan：`qwen3.8-max-preview` 已下线（旧 id 路由到 `qwen3.8-max`），改为 `qwen3.8-max`；
+  按官方清单补 Qwen3.8-Flash、DeepSeek-V4.1-Flash、GLM-5.3；团队版删去 10-10 下架的 DeepSeek-V3.2。
+  Coding Plan 改为官方推荐的 Qwen3.7-Plus、Qwen3.6-Plus、Kimi K2.5、GLM-5、MiniMax-M2.5，保留两个 Coder。
+  窗口取官方最大输入，默认开思考的型号取思考模式最大输入（Qwen3.x 为 983,616）。
+- GLM Coding Plan：官方只支持 `glm-5.3`、`glm-5.3-flash`，5.2/5.1 已路由到 5.3；Claude Code 用官方
+  `[1m]` 写法，删去文档中不存在的 `glm-5.2[1m]`。
+- DeepSeek：`deepseek-v4-flash` 为临时别名，改用官方推荐的 `deepseek-flash`（1,048,576，支持图片）。
+- OpenCode Go：MiMo V2.5 于 2026-10-21 下线且无转发，改为 MiMo-V2.6-Pro / Flash，并补兼容层配置。
+- OpenRouter：删去平台上不存在的 `qwen/qwen3.8-max`。
+- Kimi Code：`api.kimi.com` 为国内地址、`api.kimi.ai` 为海外地址，均为官方地址，不改。
+- Codex 桥接图片白名单补上官方确认支持图片的 Kimi（Moonshot / Kimi Code）与 Qwen 型号。
+- DeepSeek 直连条目以 `deepseek-flash` 为首条路由，`deepseek-v4-flash` 旧别名路由保留在后，只供已有
+  连接解析参考价。两条路由都不在路由级声明图片输入（路由默认值会作用到 Codex 的 Chat 桥接），
+  图片能力按预设各引擎声明。
+- 客户端 Registry revision 为 `2026-09-26T12:00:00.005Z`：服务端 `2026-09-26T12:00:00.004Z` 不含
+  客户端独有、需先随客户端发布的 Grok 4.7 Fast（#5060），两份内容不同故使用不同 revision。
+
+## 订阅默认只显示最新一代（2026-09-26）
+
+客户端离线 Registry revision 更新为 `2026-09-26T12:00:00.000Z`。GPT 订阅默认只显示
+GPT-6 Sol / Luna / Astra，GPT-5.6 Sol / Terra / Luna 标记 `defaultEnabled: false`；
+Claude 订阅默认显示各系列最新版 Opus 5.5、Fable 5.1、Sonnet 5、Haiku 4.5、Mythos 5，
+Opus 5、Fable 5、Opus 4.8 标记不默认显示。所有与订阅或其他供应商共用条目的 XD 路由
+（Claude 9 个、DeepSeek V4 Pro/Flash、GPT-5.4 Nano，共 13 个）拆为独立 `xd/*` 条目，
+沿用改动前的显示设置；对比 50 条 XD 路由的解析资料，拆分前后无差异。
+用户已有显示开关不变。Server 正本需同步同一改动后才会下发。
+
+## GPT-6 Sol / Luna 与 Claude Opus 5.5（2026-09-23）
+
+客户端离线 Registry revision 更新为 `2026-09-23T00:00:00.003Z`，新增
+`openai/gpt-6-sol`、`openai/gpt-6-luna`、`anthropic/claude-opus-5-5` 公共资料和官方接入路由。
+保留既有型号、参考价历史及用户已选型号；不新增未经实报的 XD 路由。
+沿用最新家族成员推荐规则，Claude Code 的 Opus 推荐项会从 5 自动更新为 5.5。
+
+依据 [OpenAI 发布记录](https://developers.openai.com/api/docs/changelog)、
+[Sol 规格](https://developers.openai.com/api/docs/models/gpt-6-sol)、
+[Luna 规格](https://developers.openai.com/api/docs/models/gpt-6-luna)、
+[Opus 5.5 规格](https://platform.claude.com/docs/en/models/opus-5-5/overview)，
+三个型号均于 2026-09-22 发布，支持文本/图片输入、文本输出和 128K 最大输出。
+GPT 容量为 1,050,000，Claude 为 1,000,000；GPT 的 Claude Code / Codex 工作默认仍为 272,000。
+三者均登记 low / medium / high / xhigh / max，默认 medium；GPT 官方另支持 none，
+但现有 Registry effort 枚举不能表达，本批不扩展协议，也不把 none 错映为 minimal。
+GPT 原生接口采用 Responses，避免 Chat Completions 在非 none 档位下不支持工具调用的限制。
+Opus 5.5 的 adaptive thinking 始终开启，不能发送 disabled；Responses→Anthropic 桥沿用
+已有 always-on 处理，显式关闭降到 low，并保留 xhigh 参数；真实引擎调用仍需验证。
+
+参考价依据 [OpenAI 定价](https://developers.openai.com/api/docs/pricing)与
+[Claude 定价](https://platform.claude.com/docs/en/about-claude/pricing)，核验日 2026-09-23，
+生效日 2026-09-22。每百万 tokens 标准输入/输出：Sol $2/$10，Luna $0.10/$0.50，
+Opus 5.5 $4/$20；包含缓存读写、Claude 1h 写入、标准/Fast 价格及 GPT 的 272K 分档。
+Claude Fast 参考价不等于订阅账号具备 Fast 权限，本批不强制开启该能力。
+
+配套 Server PR 同步三个型号的完整公共资料/路由/参考价，并补 Pi 显式成员。
+后续收口将此前仅在客户端的 13 个公共型号、8 个媒体接入条目及 Cyber 能力补项并入
+Server 正本，两端完整 Registry 内容与 revision `2026-09-23T00:00:00.003Z` 一致。
+客户端目录请求新增 `registryMedia=1`（见 [媒体发布前置条件](model-registry-v4-media.md#发布前置条件)）。
+服务端仅向明确支持媒体扩展的 V4/V5 请求返回完整正本；无标识或未知标识保持更新前的
+固定兼容快照及其 revision，避免不完整的新版本整表覆盖旧客户端内置媒体资料。
+旧兼容快照不继续加型号、抬 revision；后续维护只更新完整正本，再同步客户端离线副本。
+旧模型与价格均保留；两端修改与生产部署须分别核验。
+尚未发布或验证账号调用。
+核对 Global 公共接口 `/api/model-catalog/catalog?registrySchemaVersion=5` 时，线上 revision 为
+`2026-09-22T00:00:00.000Z`，三个新公共型号均缺失。合并部署后还需验证实际下发；
+Pi 成员沿服务端显式列表/账号发现，不复制订阅名单到公共 API。客户端离线 Pi 快照仍由
+固定版本上游生成，本次没有伪造上游生成数据；新型号可由服务端目录或账号发现补入。
+
 ## 小米 MiMo V2.6 系列（2026-09-22，同日第一批）
 
 客户端 `catalog/providers.json` 两个 MiMo 预设（`xiaomi-mimo-api-cn` / `xiaomi-mimo-token-plan-cn`）
@@ -179,6 +318,13 @@ low / medium / high / max，实际能力仍以实报为准，不把兼容 medium
 - GPT-5.5 Auto、GPT-5.6 Cyber、Muse Spark 1.2、DeepSeek V4 Flash Vision Exp 和 Hy4 preview
   尚无本轮可确认、适用于现有 schema 的完整公共档位。网关实报不替代公共型号证据；
   DeepSeek 搜索摘要与实际打开的当前 API 型号列表不一致，因此未据摘要补实验型号。
+
+## 本地模型复核（2026-09-24）
+
+本轮从 7 个逻辑模型扩展到 8 个，新增 Laguna S 2.1 编程候选和 Flash-Next 的跨平台
+Q4 包装，复核 AA v4.3.2 与全部 17 个下载标签。正式推荐仍保留 Qwen3.8 27B，
+未将其他运行时实测冒充 Ollama 本机证据。完整来源、取舍、门槛和发布边界见
+[2026-09-24 调研记录](local-model-audit-2026-09-24.md)。
 
 ## 本地模型配置与证据快照（2026-09-05）
 

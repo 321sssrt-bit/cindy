@@ -73,10 +73,10 @@ import {
 import { LocalPackagingTag } from './LocalPackagingTag';
 import { ModelAdvancedDrawer } from './ModelAdvancedDrawer';
 import {
-  compareModelNames,
   groupModelsForManagement,
   MANAGEMENT_KIND_ORDER,
   modelBrand,
+  sortModelsForManagement,
   type ManagementKind,
   type ManagementView,
 } from './modelManagementPresentation';
@@ -227,6 +227,9 @@ export function buildUnionRows(provider: ProviderView): UnionModelRow[] {
     disabled?: boolean;
     availability?: CatalogModel['availability'];
     group: 'image' | 'video' | 'embedding' | 'audio' | 'tts' | 'stt' | 'realtime';
+    displayPricing?: CatalogModel['displayPricing'];
+    currency?: CatalogModel['currency'];
+    costDiscount?: number;
     mode?: string;
     modalities?: CatalogModel['modalities'];
     defaultEnabled?: boolean;
@@ -248,6 +251,7 @@ export function buildUnionRows(provider: ProviderView): UnionModelRow[] {
   for (const m of media) {
     if (realIds.has(m.id) || byKey.has(m.id)) continue;
     const entry: CatalogModel = {
+      ...(m.displayPricing && m.currency ? { displayPricing: m.displayPricing, currency: m.currency, costDiscount: m.costDiscount } : {}),
       id: m.id,
       name: m.name,
       contextWindow: 0,
@@ -401,6 +405,18 @@ function rowModelIds(row: UnionModelRow): string[] {
 function rowCategory(row: UnionModelRow): ModelCategory {
   const rep = row.byAgent[row.avail[0]];
   return rep ? classifyModel(rep) : 'ungrouped';
+}
+
+/** 沉底分区与分组同口径排序:sortOrder 取自每行代表条目。 */
+function sortRowsForManagement(rows: readonly UnionModelRow[]): UnionModelRow[] {
+  return sortModelsForManagement(
+    rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      sortOrder: row.byAgent[row.avail[0]]?.sortOrder,
+      row,
+    })),
+  ).map(({ row }) => row);
 }
 
 export function managementKindsOfRow(row: UnionModelRow, userProvider: boolean): ManagementKind[] {
@@ -777,8 +793,8 @@ export function UnifiedModelList({
         brand: g.brand,
         rows: g.models.map((m) => repByRow.get(m.id)).filter((r): r is UnionModelRow => !!r),
       })),
-      hiddenRows: [...hidden].sort(compareModelNames),
-      disabledRows: [...disabled].sort(compareModelNames),
+      hiddenRows: sortRowsForManagement(hidden),
+      disabledRows: sortRowsForManagement(disabled),
     };
     // visibilityVersion:沉底判定读 modelVisibilityPrefs,开关一拨行要立刻迁移。
   }, [
@@ -973,6 +989,8 @@ export function UnifiedModelList({
                 是用来在读到某个模型名时顺手知道它贵不贵。拿不到报价就整个
                 不渲染 —— 不画假的「$」也不画「—」。 */}
         {(() => {
+          // Mixed-unit quotes are shown in the existing model details only.
+          if (rep.displayPricing && rep.currency) return null;
           const display = rowPriceDisplay(row);
           if (!display) return null;
           if (display.kind === 'free') {

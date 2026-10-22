@@ -27,6 +27,7 @@ import {
   type Catalog,
   type CatalogModel,
   type AgentKind,
+  isCustomRoutedProvider,
 } from '@cindy/model-providers';
 import type { ModelDescriptor } from '@cindy/maker-core';
 import type { ModelCatalogOverrides } from './model-plane/localCatalogOverrides.js';
@@ -38,7 +39,7 @@ interface ModelCapabilitiesTarget {
 
 interface SeenModelProjection {
   index: number;
-  includesUserProvider: boolean;
+  includesCustomRoutedProvider: boolean;
 }
 
 /** CatalogModel → ModelDescriptor。仅透传 ModelDescriptor 需要的字段；可选字段缺省时不写键。 */
@@ -57,8 +58,11 @@ function toDescriptor(m: CatalogModel): ModelDescriptor {
   // 实际路由解析 —— 见下方 resolveVerifiedContextWindow(provenance 只活在 host 侧,
   // 不进这份跨端 descriptor)。
   if (m.description !== undefined) d.description = m.description;
+  // 「未声明档位」要跟着走到准入:否则 sendToSession/新建任务会把占位的 [] 当成明确无档位(#5535)。
+  d.effortsUnknown = m.effortsUnknown === true;
   if (m.effortDisplayNames !== undefined) d.effortDisplayNames = m.effortDisplayNames;
   if (m.supportsFastMode !== undefined) d.supportsFastMode = m.supportsFastMode;
+  if (m.supportsUltrafastMode !== undefined) d.supportsUltrafastMode = m.supportsUltrafastMode;
   if (m.group !== undefined) d.group = m.group;
   if (m.sortOrder !== undefined) d.sortOrder = m.sortOrder;
   if (m.mode !== undefined) d.mode = m.mode;
@@ -94,7 +98,10 @@ function intersectPiEffortCapabilities(
         ? next.defaultEffort
         : (efforts[0] ?? null);
   }
-  return { ...first, efforts, defaultEffort };
+  const merged: ModelDescriptor = { ...first, efforts, defaultEffort };
+  // 只要有一条路由声明过档位,交集就是已声明的结论;两条都未声明才保留「未知」。
+  merged.effortsUnknown = first.effortsUnknown === true && next.effortsUnknown === true;
+  return merged;
 }
 
 /**
@@ -129,15 +136,16 @@ export function deriveAvailableModels(catalog: Catalog, agent: AgentKind): Model
       // availableModels 是旧 mobile / device-link 等消费方的新选择清单，不能依赖下游
       // 再理解 retired。运行中会话仍从持久化 model + 完整 catalog 解析实际路由。
       const userProvider = provider.source === 'user';
+      const customRoutedProvider = isCustomRoutedProvider(provider);
       if (isLegacyGptContextProfile(provider, m.id)) continue;
       if (!isModelSelectableForNewRoute(m, { userProvider })) continue;
       const descriptor = toDescriptor(m);
       const previous = seen.get(m.id);
       if (previous) {
         let merged = out[previous.index];
-        if (agent === 'pi' && (previous.includesUserProvider || userProvider)) {
+        if (agent === 'pi' && (previous.includesCustomRoutedProvider || customRoutedProvider)) {
           merged = intersectPiEffortCapabilities(merged, descriptor);
-          previous.includesUserProvider ||= userProvider;
+          previous.includesCustomRoutedProvider ||= customRoutedProvider;
         }
         // 只有鉴权后的 XD /models 会被 active-catalog 投影成区域默认；公共 Registry 与
         // user provider 均不能借同 id 碰撞改变默认策略。
@@ -147,7 +155,7 @@ export function deriveAvailableModels(catalog: Catalog, agent: AgentKind): Model
         out[previous.index] = merged;
         continue;
       }
-      seen.set(m.id, { index: out.length, includesUserProvider: userProvider });
+      seen.set(m.id, { index: out.length, includesCustomRoutedProvider: customRoutedProvider });
       out.push(descriptor);
     }
   }
@@ -168,7 +176,7 @@ export function resolvePiRuntimeModelDescriptor(
 ): ModelDescriptor | null {
   const providers =
     providerId === 'cindy'
-      ? catalog.providers.filter((provider) => provider.source !== 'user')
+      ? catalog.providers.filter((provider) => !isCustomRoutedProvider(provider))
       : providerId
         ? catalog.providers.filter((provider) => provider.id === providerId)
         : catalog.providers;

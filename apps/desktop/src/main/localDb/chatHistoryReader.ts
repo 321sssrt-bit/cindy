@@ -18,6 +18,8 @@ import { and, asc, desc, eq, gt, gte, lt, inArray, isNotNull, isNull, ne, or, sq
 import { getDbClient } from './client/current';
 import { sessions, messages } from './schema';
 import { messageToCamel } from './mapper';
+import { parseOrcaRemoteLead, type OrcaRemoteLead } from '../../shared/orcaRemoteWorker.js';
+import { remoteVisibleSessionSql } from './ipc/botRemoteVisibility.js';
 import {
   managedDialogueRootLikePatterns,
   normalizeHistoryWorkingDir,
@@ -25,6 +27,11 @@ import {
 } from './workingDirHistoryFilter';
 
 const messageRowid = sql<number>`"messages"."rowid"`;
+
+function remoteOrcaHistoryIdentity(raw: unknown): { orcaRemoteLead?: OrcaRemoteLead } {
+  const lead = parseOrcaRemoteLead(raw);
+  return lead ? { orcaRemoteLead: lead } : {};
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -163,6 +170,8 @@ export async function listWorkdirsForHistory(
 // ── list_sessions ───────────────────────────────────────────────────────────
 
 export interface ListSessionsParams {
+  /** Set only by the authorized remote history handler, never by tool input. */
+  remoteVisibleOnly?: boolean;
   sessionIds?: string[] | null;
   workdir: string | null;
   fromMs: number | null;
@@ -184,6 +193,7 @@ export interface SessionSummary {
   status: string;
   source: string;
   orcaRole: string | null;
+  orcaRemoteLead?: OrcaRemoteLead;
   parentSessionId: string | null;
   createdAt: number; // unix ms
   updatedAt: number;
@@ -202,6 +212,7 @@ export async function listSessionsForHistory(
   const orderFn = params.order === 'asc' ? asc : desc;
 
   const conds = [];
+  if (params.remoteVisibleOnly) conds.push(sql.raw(remoteVisibleSessionSql('sessions')));
   if (scopedSessionIds !== null) conds.push(inArray(sessions.id, scopedSessionIds));
   if (!params.includeDeleted) conds.push(ne(sessions.status, 'deleted'));
   if (params.workdir !== null) {
@@ -247,6 +258,7 @@ export async function listSessionsForHistory(
       status: sessions.status,
       source: sessions.source,
       orcaRole: sessions.orcaRole,
+      orcaRemoteLead: sessions.orcaRemoteLead,
       parentSessionId: sessions.parentSessionId,
       createdAt: sessions.createdAt,
       updatedAt: sessions.updatedAt,
@@ -285,6 +297,7 @@ export async function listSessionsForHistory(
     status: r.status,
     source: r.source,
     orcaRole: r.orcaRole,
+    ...remoteOrcaHistoryIdentity(r.orcaRemoteLead),
     parentSessionId: r.parentSessionId,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -324,6 +337,8 @@ export interface GetMessagesParams {
 
 export interface HistoryMessage {
   id: string;
+  /** Stable send/terminal identity, distinct from the storage row ID. */
+  clientId?: string;
   sessionId: string;
   sessionWorkingDir: string | null;
   sessionAgentKind: string;
@@ -462,6 +477,7 @@ export async function getMessagesForHistory(
     const camel = messageToCamel(r.m);
     return {
       id: camel.id,
+      clientId: camel.clientId,
       sessionId: camel.sessionId,
       sessionWorkingDir: r.sWorkingDir,
       sessionAgentKind: r.sAgentKind,

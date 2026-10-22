@@ -1,6 +1,19 @@
 import { resolveRemoteText } from '@cindy/device-link';
 import type { HostedRemoteCollectionItem } from '@/device-link/remoteResources';
 import type { LastTeammateIdentity } from './homeViewPreferenceStore';
+import type { RemoteSession } from './types';
+
+/** Presentation skeleton only; cacheSeeded blocks dispatch until host metadata replaces it. */
+export function teammateSessionPreview(hosted: HostedRemoteCollectionItem, userId: string, locale: string): RemoteSession | null {
+  const target = hosted.item.links.find(link => link.rel === 'conversation')?.target;
+  if (hosted.item.ref.kind !== 'bot' || target?.kind !== 'session' || !target.sessionId) return null;
+  return {
+    id: target.sessionId, userId, source: 'bot', title: resolveRemoteText(hosted.item.display.title, locale),
+    cacheSeeded: true, workingDir: null, workspaceKind: 'dialogue', model: '', effort: '',
+    permissionMode: 'ask', fastMode: false, agentKind: 'cc', status: 'active', userSendAt: null,
+    createdAt: '', updatedAt: '',
+  };
+}
 
 export function teammateIdentity(hosted: HostedRemoteCollectionItem): LastTeammateIdentity | null {
   return hosted.item.ref.kind === 'bot' ? {
@@ -8,15 +21,19 @@ export function teammateIdentity(hosted: HostedRemoteCollectionItem): LastTeamma
     resourceKind: 'bot', resourceId: hosted.item.ref.id,
   } : null;
 }
-export function sameTeammate(a: LastTeammateIdentity | null, b: LastTeammateIdentity | null): boolean {
-  return !!a && !!b && a.deviceId === b.deviceId && a.collectionId === b.collectionId
-    && a.resourceKind === b.resourceKind && a.resourceId === b.resourceId;
-}
-/** Never guess the default from a display name or use another teammate when the saved one is gone. */
-export function findLastTeammate(last: LastTeammateIdentity | null, items: readonly HostedRemoteCollectionItem[]) {
-  return items.find((item) => sameTeammate(last, teammateIdentity(item))) ?? null;
-}
 export function teammateResourceRoute(hosted: HostedRemoteCollectionItem, locale: string) {
+  const conversation = hosted.item.links.find(link => link.rel === 'conversation')?.target;
+  // The link is a display/navigation hint only. The destination revalidates the
+  // permanent resource before allowing sends, controls or read receipts.
+  if (hosted.item.ref.kind === 'bot' && conversation?.kind === 'session') return {
+    pathname: '/sessions/[sessionId]' as const,
+    params: {
+      sessionId: conversation.sessionId,
+      deviceId: hosted.host.deviceId, deviceName: hosted.host.deviceName,
+      resourceCollectionId: hosted.item.ref.collectionId,
+      resourceId: hosted.item.ref.id, resourceKind: hosted.item.ref.kind,
+    },
+  };
   return {
     pathname: '/resources/[collectionId]/[resourceId]' as const,
     params: {
@@ -26,6 +43,30 @@ export function teammateResourceRoute(hosted: HostedRemoteCollectionItem, locale
       title: resolveRemoteText(hosted.item.display.title, locale),
     },
   };
+}
+
+/**
+ * The read-only cloud view of a companion whose main computer is offline
+ * (docs/product-rules/cloud-companions.md §3.1). The row's computer is that main computer.
+ */
+export function cloudCompanionRoute(hosted: HostedRemoteCollectionItem, actorId: string, locale: string) {
+  return {
+    pathname: '/companions/cloud/[actorId]' as const,
+    params: {
+      actorId, botId: hosted.item.ref.id,
+      deviceId: hosted.host.deviceId, deviceName: hosted.host.deviceName,
+      title: resolveRemoteText(hosted.item.display.title, locale),
+    },
+  };
+}
+
+/** Reuse the actual home route; retired collection routes are replaced. */
+export function homeDismissCount(routes: readonly { name: string; params?: unknown }[]): number | null {
+  for (let index = routes.length - 1; index >= 0; index--) {
+    const route = routes[index];
+    if (route.name === 'devices/index' || route.name === 'index') return routes.length - 1 - index;
+  }
+  return null;
 }
 export function orderedTeammates(items: readonly HostedRemoteCollectionItem[], query: string, locale: string) {
   const needle = query.normalize('NFKC').trim().toLocaleLowerCase(locale);

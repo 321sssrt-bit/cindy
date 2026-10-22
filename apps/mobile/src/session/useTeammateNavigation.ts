@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { Keyboard } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/auth/AuthContext';
@@ -8,15 +8,18 @@ import type { HostedRemoteCollectionItem, RemoteResourceHostTarget } from '@/dev
 import { useGuardedPush } from '@/utils/useGuardedPush';
 import { useHomeMode } from './useHomeMode';
 import type { HomeMode } from './homeViewPreferenceStore';
-import { teammateIdentity, teammateResourceRoute } from './teammateNavigation';
+import { homeDismissCount, teammateIdentity, teammateResourceRoute, teammateSessionPreview } from './teammateNavigation';
+import { remoteSessionStore } from './remoteSessionStore';
+import { readRemoteCollectionCache, writeRemoteCollectionCache } from '@/device-link/remoteResourceAvailability';
 
-/** Public header integration. Push keeps the current chat/composer mounted; resolver replaces only its own route. */
+/** Push keeps the current chat/composer mounted; known teammates validate in the destination. */
 export function useTeammateNavigation() {
   const preferences = useHomeMode();
-  const { accountGeneration } = useAuth();
+  const { user, accountGeneration } = useAuth();
   const { i18n } = useTranslation();
   const push = useGuardedPush();
   const router = useRouter();
+  const navigation = useNavigation();
   const current = useRef(accountGeneration); current.current = accountGeneration;
   const pendingAccount = useRef<number | null>(null);
   const mounted = useRef(true);
@@ -27,10 +30,27 @@ export function useTeammateNavigation() {
     Keyboard.dismiss();
     try {
       await preferences.setMode(mode);
-      if (mounted.current && current.current === accountGeneration) router.dismissTo('/devices');
+      if (mounted.current && current.current === accountGeneration) {
+        const state = navigation.getState();
+        const routes = state?.routes.slice(0, state.index + 1) ?? [];
+        const count = homeDismissCount(routes);
+        // Pop by position to preserve the mounted home's state.
+        if (count === null) {
+          const legacyIndex = routes.findIndex(route => route.name === 'resources/[collectionId]'
+            && (route.params as { collectionId?: string } | undefined)?.collectionId === 'teammates');
+          // POP_TO only replaces the top when home is absent, leaving the retired route underneath.
+          if (legacyIndex >= 0) navigation.reset({
+            index: legacyIndex,
+            routes: [...routes.slice(0, legacyIndex), { name: 'devices/index' }],
+          } as never);
+          else router.dismissTo('/devices');
+        }
+        else if (count > 0) router.dismiss(count);
+      }
     } finally { if (pendingAccount.current === accountGeneration) pendingAccount.current = null; }
-  }, [accountGeneration, preferences.setMode, router]);
-  const openTeammate = useCallback(async (hosted: HostedRemoteCollectionItem) => {
+  }, [accountGeneration, navigation, preferences.setMode, router]);
+  /** `replace` swaps the current screen (the cloud view handing over to the new main computer). */
+  const openTeammate = useCallback(async (hosted: HostedRemoteCollectionItem, options?: { replace?: boolean }) => {
     const identity = teammateIdentity(hosted);
     if (!identity || pendingAccount.current === accountGeneration) return;
     // Fence rapid taps before the async preference write, not only at router.push.
@@ -38,9 +58,24 @@ export function useTeammateNavigation() {
     Keyboard.dismiss();
     try {
       await preferences.selectTeammate(identity);
-      if (mounted.current && current.current === accountGeneration) push(teammateResourceRoute(hosted, i18n.language));
+      if (mounted.current && current.current === accountGeneration) {
+        const owner = `${user?.id ?? ''}:${accountGeneration}`;
+        const cached = readRemoteCollectionCache(owner, identity.collectionId);
+        // Seed presentation from the clicked row, never an authorization result.
+        writeRemoteCollectionCache(owner, identity.collectionId, [hosted, ...cached.filter(row => row.key !== hosted.key)].slice(0, 200));
+        const preview = teammateSessionPreview(hosted, user?.id ?? '', i18n.language);
+        // The home task cache is bounded and may not contain this canonical task.
+        // Seed only missing local presentation, never replace real metadata or create a task.
+        if (preview && !remoteSessionStore.getSessions().some(session => session.id === preview.id)
+          && !remoteSessionStore.getSessionDeviceId(preview.id)) {
+          remoteSessionStore.upsertDeviceSession(hosted.host.deviceId, hosted.host.deviceName, preview);
+        }
+        const route = teammateResourceRoute(hosted, i18n.language);
+        if (options?.replace) router.replace(route);
+        else push(route);
+      }
     } finally { if (pendingAccount.current === accountGeneration) pendingAccount.current = null; }
-  }, [accountGeneration, i18n.language, preferences.selectTeammate, push]);
+  }, [accountGeneration, i18n.language, preferences.selectTeammate, push, router, user?.id]);
   const openCreatedTeammate = useCallback(async (host: RemoteResourceHostTarget, ref: RemoteResourceRef) => {
     if (!mounted.current || current.current !== accountGeneration || !host.deviceId || !ref.id || !ref.collectionId
       || ref.kind !== 'bot' || pendingAccount.current === accountGeneration) return;

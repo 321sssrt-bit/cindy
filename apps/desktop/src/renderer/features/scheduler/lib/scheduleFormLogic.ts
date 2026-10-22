@@ -404,31 +404,36 @@ export function resolveTemplateAgentFields(
   form: ScheduleFormState,
   template: Pick<ScheduleTemplate, 'agentKind' | 'model' | 'providerId' | 'effort' | 'fastMode'>,
   defaults: TemplateAgentDefaults,
-): Pick<ScheduleFormState, 'agentKind' | 'model' | 'providerId' | 'effort' | 'fastMode'> {
+): Pick<ScheduleFormState, 'agentKind' | 'model' | 'providerId' | 'effort' | 'fastMode' | 'modelAgentDeviceId'> {
   const agentKind = template.agentKind ?? form.agentKind;
   const agentChanged = agentKind !== form.agentKind;
-  const agentPrefs = agentChanged ? defaults.getAgentPrefs(agentKind) : null;
   const templateModel = typeof template.model === 'string' ? template.model.trim() : '';
   const templateProviderId = typeof template.providerId === 'string' ? template.providerId.trim() : undefined;
+  const selectsLocalRoute = agentChanged || !!templateModel || templateProviderId !== undefined;
+  // Retaining a route also retains its location. An explicit local template must
+  // resolve missing fields from local defaults, never from the previous share.
+  const useLocalDefaults = agentChanged || (!!form.modelAgentDeviceId && selectsLocalRoute);
+  const agentPrefs = useLocalDefaults ? defaults.getAgentPrefs(agentKind) : null;
   const templateEffort = template.effort && isEffortValue(template.effort) ? template.effort : undefined;
-  // 模板没给模型、换了 agent 时用默认路由:限定在模板 / 任务记忆的来源内,模型与来源整对应用。
+  // 模板没给模型、切换引擎或回到本机时用本机默认路由,模型与来源整对应用。
   const defaultRoute =
-    agentChanged && !templateModel
+    useLocalDefaults && !templateModel
       ? defaults.getDefaultRoute(agentKind, templateProviderId ?? (agentPrefs?.providerId || null))
       : null;
 
   return {
     agentKind,
-    model: templateModel || (agentChanged ? (defaultRoute?.model ?? '') : form.model),
+    modelAgentDeviceId: selectsLocalRoute ? '' : form.modelAgentDeviceId,
+    model: templateModel || (useLocalDefaults ? (defaultRoute?.model ?? '') : form.model),
     providerId:
       templateProviderId ??
-      (agentChanged
+      (useLocalDefaults
         ? defaultRoute
           ? (defaultRoute.providerId ?? '')
           : (agentPrefs?.providerId ?? '')
         : form.providerId),
-    effort: templateEffort ?? (agentChanged ? (agentPrefs?.effort ?? '') : form.effort),
-    fastMode: template.fastMode ?? (agentChanged ? (agentPrefs?.fastMode ?? false) : form.fastMode),
+    effort: templateEffort ?? (useLocalDefaults ? (agentPrefs?.effort ?? '') : form.effort),
+    fastMode: template.fastMode ?? (useLocalDefaults ? (agentPrefs?.fastMode ?? false) : form.fastMode),
   };
 }
 

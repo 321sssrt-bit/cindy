@@ -56,6 +56,32 @@ describe('saved automation model selection', () => {
     category: 'code-quality', source: 'builtin',
   };
 
+  // PR #6830: the hook used to reset location separately from the retained route.
+  // Unit/jsdom: apply a same-Harness template to a shared choice, then serialize it.
+  it('keeps the shared route when a template only repeats the current Harness', () => {
+    const { result } = renderHook(() => useScheduleForm(null));
+    const route = { agentKind: 'claude-code' as const, model: 'remote-model', providerId: 'remote-provider',
+      modelAgentDeviceId: 'shared:owner', effort: 'high' as const, fastMode: true };
+    act(() => result.current.selectModelConfiguration(route));
+    act(() => result.current.applyTemplateAgentFields({ ...template, agentKind: route.agentKind }));
+    expect(result.current.toInput()).toMatchObject({ modelAgentDeviceId: route.modelAgentDeviceId,
+      agentKind: route.agentKind, model: route.model, providerId: route.providerId });
+  });
+
+  // A partial local template must not combine its model/provider with the old share.
+  it.each([
+    { model: 'local-model' },
+    { providerId: 'local-provider' },
+  ])('discards inherited shared fields when applying a local route %j', (override) => {
+    const { result } = renderHook(() => useScheduleForm(null));
+    act(() => result.current.selectModelConfiguration({ agentKind: 'claude-code', model: 'remote-model',
+      providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner', effort: 'high', fastMode: true }));
+    act(() => result.current.applyTemplateAgentFields({ ...template, ...override }));
+    expect(result.current.form).toMatchObject({ ...override, modelAgentDeviceId: '' });
+    expect(result.current.form.model).not.toBe('remote-model');
+    expect(result.current.form.providerId).not.toBe('remote-provider');
+  });
+
   it.each(['codex', 'pi'] as const)('saves the %s template Harness with its model after binding a task', (agentKind) => {
     const { result } = renderHook(() => useScheduleForm(null));
     act(() => result.current.selectBoundSession({ id: 'bound-codex', agentKind: 'codex' } as Session));

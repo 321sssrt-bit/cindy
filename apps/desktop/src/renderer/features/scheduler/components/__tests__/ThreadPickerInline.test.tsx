@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/sessionService', () => ({ list: mocks.list }));
+// These cases mount the task picker only; model location state is unrelated.
+vi.mock('@/hooks/useModelRouteDevices', () => ({ useModelRouteDevices: () => ({ devices: undefined }) }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));

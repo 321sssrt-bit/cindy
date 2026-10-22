@@ -279,8 +279,12 @@ export function normalizeLegacyDeviceLinkModelSelection(
     || !Object.prototype.hasOwnProperty.call(patch, 'notify')
     || !(patch.targetSessionId ?? existing.targetSessionId)) return patch;
   const model = patch.model?.trim() || undefined;
-  if (patch.agentKind === existing.agentKind && model === (existing.model?.trim() || undefined)) return patch;
+  // A full form with no model follows its task. Its JSON-safe empty location
+  // clears the old selection; location-only partial patches still select local.
+  const clearsLocation = !model && patch.modelAgentDeviceId === '';
+  if (!clearsLocation && patch.agentKind === existing.agentKind && model === (existing.model?.trim() || undefined)) return patch;
   return { ...patch, modelAgentKind: model ? patch.agentKind : undefined,
+    ...(clearsLocation ? { modelAgentDeviceId: undefined } : {}),
     // The old bound form omits empty model/provider/effort and has no Fast control.
     // Clear the previous route when the visible selection changes instead of retaining
     // a provider or Fast preference belonging to the old Harness/model.

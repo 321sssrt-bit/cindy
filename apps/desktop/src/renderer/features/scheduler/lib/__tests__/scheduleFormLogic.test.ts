@@ -712,6 +712,7 @@ describe('resolveTemplateAgentFields', () => {
 
     expect(fields).toEqual({
       agentKind: 'claude-code',
+      modelAgentDeviceId: '',
       model: 'claude-sonnet-4-6',
       providerId: 'anthropic',
       effort: 'medium',
@@ -754,6 +755,7 @@ describe('resolveTemplateAgentFields', () => {
 
     expect(fields).toEqual({
       agentKind: 'claude-code',
+      modelAgentDeviceId: '',
       model: 'claude-opus-4-8',
       providerId: '',
       effort: 'xhigh',

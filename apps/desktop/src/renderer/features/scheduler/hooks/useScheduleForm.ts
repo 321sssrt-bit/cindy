@@ -374,8 +374,7 @@ export function useScheduleForm(initial: Schedule | null = null): UseScheduleFor
         getAgentPrefs: getScheduleAgentPrefs,
       });
       // A template that supplies a model is an explicit selection, even while following a bound task.
-      return { ...f, ...selection, modelAgentKind: selection.model.trim() ? selection.agentKind : undefined,
-        modelAgentDeviceId: template.model || template.agentKind || template.providerId ? '' : f.modelAgentDeviceId };
+      return { ...f, ...selection, modelAgentKind: selection.model.trim() ? selection.agentKind : undefined };
     });
   }, []);
 

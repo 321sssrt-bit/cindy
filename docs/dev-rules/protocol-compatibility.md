@@ -3077,6 +3077,8 @@ namespace + id 下同一插件的有界 JSON 请求；`deviceSync: true` 是独�
 `Schedule` / 创建与更新输入增量增加可选 `modelAgentDeviceId`：缺省保持旧版绑定任务的位置继承，
 空字符串表示自动化所在电脑，非空使用既有远程／分享 Agent 标识。SQLite 新增可空文本列，
 SQL NULL 对应缺省；项目 `version: 1` 配置同样允许该字段，旧文件无需改写。
+绑定任务或持续模式的 Agent 自动化显式选本机时也须有 `modelAgentKind` 与 `model`；不完整选择在保存前拒绝，
+不把“选本机”误作继承绑定任务的位置。更新可沿用已存的完整选择，恢复跟随时清除显式选择。
 `maker:get-capabilities` 返回 `supportsScheduleAgentDeviceSelection: true`。
 新调用方只有明确看到此能力才向其它电脑提交位置选择；旧端未知字段会被忽略，禁止静默降级。
 旧调用方修改新自动化的非模型字段仍保留位置；修改模型路线却未携带已固定的位置时拒绝保存，

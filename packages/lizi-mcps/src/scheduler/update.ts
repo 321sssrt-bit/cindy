@@ -42,7 +42,7 @@ export function registerScheduleUpdateTool(
       agentKind: z.enum(AGENT_KIND).optional(),
       modelAgentKind: z.enum(AGENT_KIND).nullable().optional().describe('显式模型选择的引擎；null 清除覆盖'),
       fastMode: z.union([z.boolean(), z.literal('ultrafast')]).optional().describe('模型速度：false 标准、true 快速、ultrafast 超快；省略不修改'),
-      modelAgentDeviceId: z.string().nullable().optional().describe('模型运行位置：远程或分享供应商的 agentDeviceId；空字符串=自动化所在电脑，null=恢复沿用绑定任务，省略=不修改。远程选择须同时指定 modelAgentKind、model、providerId'),
+      modelAgentDeviceId: z.string().nullable().optional().describe('模型运行位置：远程或分享供应商的 agentDeviceId；空字符串=自动化所在电脑，null=恢复沿用绑定任务，省略=不修改。远程选择须同时指定 modelAgentKind、model、providerId；绑定任务或持续模式切回本机也须有 modelAgentKind 和 model，可沿用已保存的完整选择'),
       kind: z.literal('cron').optional(),
       model: z
         .string()

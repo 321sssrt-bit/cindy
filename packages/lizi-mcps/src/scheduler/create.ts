@@ -92,7 +92,7 @@ export function registerScheduleCreateTool(
       agentKind: z.enum(AGENT_KIND).describe('claude-code / codex / pi'),
       modelAgentKind: z.enum(AGENT_KIND).optional().describe('显式模型选择的引擎；绑定任务仅在下次执行时临时切换，结束后恢复'),
       fastMode: z.union([z.boolean(), z.literal('ultrafast')]).optional().describe('模型速度：false 标准、true 快速、ultrafast 超快；按所选模型支持的档位执行'),
-      modelAgentDeviceId: z.string().optional().describe('模型运行位置：远程或分享供应商的 agentDeviceId；空字符串=自动化所在电脑，省略=沿用绑定任务。远程选择须同时传 modelAgentKind、model、providerId；工作目录和工具仍属于自动化所在电脑'),
+      modelAgentDeviceId: z.string().optional().describe('模型运行位置：远程或分享供应商的 agentDeviceId；空字符串=自动化所在电脑，省略=沿用绑定任务。远程选择须同时传 modelAgentKind、model、providerId；绑定任务或持续模式显式选择本机也须传 modelAgentKind 和 model；工作目录和工具仍属于自动化所在电脑'),
       kind: z
         .literal('cron')
         .default('cron')

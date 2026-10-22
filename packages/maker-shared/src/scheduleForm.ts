@@ -213,7 +213,11 @@ export function applyTemplateToMobileScheduleDraft(
   paramValues: Record<string, string> = {},
 ): MobileScheduleDraft {
   const agentKind = template.agentKind ?? draft.agentKind;
-  const model = template.model ?? (draft.agentKind === agentKind ? draft.model : '');
+  const selectsLocalRoute = agentKind !== draft.agentKind || !!template.model?.trim() || template.providerId !== undefined;
+  // Keep location with an inherited route; local template overrides must not
+  // borrow the missing model/provider from a remote catalog.
+  const keepRoute = agentKind === draft.agentKind && !(draft.modelAgentDeviceId && selectsLocalRoute);
+  const model = template.model ?? (keepRoute ? draft.model : '');
   return {
     ...draft,
     name: template.name || draft.name,
@@ -227,12 +231,12 @@ export function applyTemplateToMobileScheduleDraft(
     agentKind,
     // A template producing a model is an explicit choice, including a legacy bound draft.
     ...(model.trim() || draft.modelAgentKind ? { modelAgentKind: agentKind } : {}),
-    modelAgentDeviceId: template.model || template.agentKind || template.providerId
+    modelAgentDeviceId: selectsLocalRoute
       ? (draft.modelAgentDeviceId === undefined ? undefined : '') : draft.modelAgentDeviceId,
     model,
     // 模板若固定了 provider，必须随模板一起落到新建任务；否则 Pi 的空模型会在
     // host 侧按错误的默认来源解析。模板未指定时才保留同 agent 的用户选择。
-    providerId: template.providerId ?? (draft.agentKind === agentKind ? draft.providerId : ''),
+    providerId: template.providerId ?? (keepRoute ? draft.providerId : ''),
     effort: template.effort ?? '',
     fastMode: (template.fastMode === 'ultrafast' ? 'ultrafast' : template.fastMode === true),
     useWorktree: template.useWorktree ?? draft.useWorktree,

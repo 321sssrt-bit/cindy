@@ -177,8 +177,12 @@ describe('scheduled model selection IPC compatibility', () => {
 
   it.each([
     { model: '', rebind: false }, { model: '   ', rebind: false }, { model: '', rebind: true },
-  ])('saves and reopens a Mobile bound form after clearing its model: %j', async ({ model, rebind }) => {
-    let saved = { ...existing, ...fullForm, name: 'Bound', prompt: 'Run',
+    // Integration, PR #6830: clearing a saved location through JSON must restore
+    // follow mode, not produce an incomplete explicit local selection.
+    { model: '', rebind: false, modelAgentDeviceId: 'shared:owner' },
+    { model: '', rebind: false, modelAgentDeviceId: '' },
+  ])('saves and reopens a Mobile bound form after clearing its model: %j', async ({ model, rebind, modelAgentDeviceId }) => {
+    let saved = { ...existing, ...fullForm, name: 'Bound', prompt: 'Run', modelAgentDeviceId,
       recurring: true, timezone: 'UTC', status: 'active', workspaceKind: 'dialogue' } as Schedule;
     const storage = {
       get: vi.fn(async () => ({ ...saved })),
@@ -199,7 +203,7 @@ describe('scheduled model selection IPC compatibility', () => {
     expect(wire).not.toHaveProperty('modelAgentKind');
     const result = await handlers.get('maker:schedule:update')!(null, existing.id, wire);
     expect(result).toMatchObject({ agentKind: 'codex', targetSessionId, persistentSession: rebind,
-      modelAgentKind: undefined, model: undefined, providerId: undefined, effort: 'high', fastMode: false });
+      modelAgentKind: undefined, modelAgentDeviceId: undefined, model: undefined, providerId: undefined, effort: 'high', fastMode: false });
     expect(storage.update).toHaveBeenCalledTimes(1);
     const reopened = createMobileScheduleDraft({ ...saved, source: 'user' });
     expect(reopened).toMatchObject({ agentKind: 'codex', model: '', modelAgentKind: undefined });

@@ -59,6 +59,13 @@ function validateScheduleExecutionShape(
   schedule: Pick<Schedule, 'executionMode' | 'scriptConfig' | 'workspaceKind' | 'workingDir' | 'useWorktree' | 'targetSessionId' | 'persistentSession' | 'prompt' | 'silentWhenIdle' | 'modelAgentKind' | 'modelAgentDeviceId' | 'model' | 'providerId'>,
   opts: { checkAgentPrompt: boolean } = { checkAgentPrompt: true },
 ): void {
+  // A bound agent run only overrides its task's location with an explicit model
+  // selection. Reject a local-only patch instead of silently inheriting remote.
+  if (schedule.modelAgentDeviceId === '' && (schedule.targetSessionId || schedule.persistentSession) &&
+    (schedule.executionMode ?? 'agent') === 'agent' &&
+    (!schedule.modelAgentKind || !schedule.model?.trim())) {
+    throw new Error('Explicit scheduled Agent location for a bound task requires a Harness and model');
+  }
   if (schedule.modelAgentDeviceId !== undefined && (
     typeof schedule.modelAgentDeviceId !== 'string' ||
     (schedule.modelAgentDeviceId !== '' && (!schedule.modelAgentDeviceId.trim() ||

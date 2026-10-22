@@ -237,6 +237,33 @@ describe('Scheduler', () => {
     await expect(h.scheduler.create({ ...baseInput, modelAgentDeviceId: 'shared:owner' })).rejects.toThrow('remote model selection');
   });
 
+  // Unit, PR #6830 review: a legacy bound automation has no explicit Harness.
+  // A location-only local patch used to save successfully but still run remotely.
+  it('rejects an incomplete local selection on a bound automation without changing its saved route', async () => {
+    const legacy = { ...baseInput, agentKind: 'codex' as const, targetSessionId: 'remote-task', model: 'same-model', providerId: 'openai' };
+    const saved = await h.scheduler.create(legacy);
+    await expect(h.scheduler.update(saved.id, { modelAgentDeviceId: '' })).rejects.toThrow('bound task');
+    expect(await h.scheduler.get(saved.id)).toEqual(saved);
+    await expect(h.scheduler.create({ ...legacy, modelAgentDeviceId: '' })).rejects.toThrow('bound task');
+    expect(await h.scheduler.update(saved.id, { modelAgentDeviceId: '', modelAgentKind: 'codex' }))
+      .toMatchObject({ modelAgentDeviceId: '', modelAgentKind: 'codex', model: 'same-model' });
+    const followed = await h.scheduler.update(saved.id, {
+      modelAgentDeviceId: undefined, modelAgentKind: undefined, model: undefined, providerId: undefined,
+    });
+    expect(followed.modelAgentDeviceId).toBeUndefined();
+    expect(followed.modelAgentKind).toBeUndefined();
+  });
+
+  // Unit: persistent schedules become bound after their first run. Accepting an
+  // incomplete local selection must not make that required internal update fail.
+  it('requires an executable local selection before a persistent automation first binds', async () => {
+    const persistent = { ...baseInput, persistentSession: true, modelAgentDeviceId: '', model: 'local-model' };
+    await expect(h.scheduler.create(persistent)).rejects.toThrow('bound task');
+    const saved = await h.scheduler.create({ ...persistent, modelAgentKind: 'codex' });
+    expect(await h.scheduler.update(saved.id, { targetSessionId: 'first-run-task' }))
+      .toMatchObject({ targetSessionId: 'first-run-task', modelAgentDeviceId: '', modelAgentKind: 'codex' });
+  });
+
   // Unit (model-selector-unified.md §3): update/runNow must preserve an active
   // run and history while later runs use the saved route. The former one-way
   // case missed same-model/provider remote -> local -> remote -> local changes,

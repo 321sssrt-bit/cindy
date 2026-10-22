@@ -45,6 +45,30 @@ function schedule(patch: Partial<RemoteSchedule> = {}): RemoteSchedule {
 }
 
 describe('mobile schedule form model', () => {
+  // PR #6830, unit: apply/serialize is the shared production entry point. Existing
+  // template cases had no remote location and missed an unchanged route becoming local.
+  it('preserves the shared route when a template keeps the same Harness', () => {
+    const route = { agentKind: 'claude-code' as const, modelAgentKind: 'claude-code' as const,
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner' };
+    const draft = createMobileScheduleDraft(schedule(route));
+    const selected = applyTemplateToMobileScheduleDraft(draft, { id: 'same', name: 'Same Harness',
+      description: '', category: 'custom', source: 'user', agentKind: route.agentKind });
+    expect(JSON.parse(JSON.stringify(buildMobileScheduleInput(selected)))).toMatchObject(route);
+  });
+
+  it.each([
+    { model: 'local-model' },
+    { providerId: 'local-provider' },
+  ])('does not inherit shared fields into a partial local template %j', (override) => {
+    const draft = createMobileScheduleDraft(schedule({ modelAgentKind: 'claude-code',
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner' }));
+    const selected = applyTemplateToMobileScheduleDraft(draft, { id: 'local', name: 'Local route',
+      description: '', category: 'custom', source: 'user', ...override });
+    expect(selected).toMatchObject({ ...override, modelAgentDeviceId: '' });
+    expect(selected.model).not.toBe('remote-model');
+    expect(selected.providerId).not.toBe('remote-provider');
+  });
+
   it('builds a desktop-compatible create input for recurring project schedules', () => {
     const draft = createMobileScheduleDraft(null, { fallbackWorkingDir: '/repo/xdt-maker' });
     const input = buildMobileScheduleInput({

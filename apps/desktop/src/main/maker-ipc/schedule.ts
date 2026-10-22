@@ -312,6 +312,7 @@ function buildCreateScheduleInput(
     intervalMs: overrides.intervalMs,
     agentKind: overrides.agentKind ?? template.agentKind ?? 'claude-code',
     modelAgentKind: overrides.modelAgentKind,
+    modelAgentDeviceId: overrides.modelAgentDeviceId,
     model: overrides.model ?? template.model,
     providerId: overrides.providerId ?? template.providerId,
     effort: overrides.effort ?? template.effort,
@@ -475,6 +476,16 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
   ipcMain.handle(MAKER_INVOKE.SCHEDULE_GENERATE_PRE_RUN_HOOK, async (event, payload: unknown) => {
     const body = requireObject(payload, 'payload');
     const description = requireString(body.description, 'description');
+    // The script helper uses direct utility HTTP calls. Never interpret a remote
+    // provider id as a local credential (including a coincidentally identical id).
+    const unsupportedRemoteGeneration = (providerId: unknown, model: unknown, agentKind: unknown) => ({
+      ok: false as const, reason: 'no_candidate' as const,
+      attempts: [{ providerId: typeof providerId === 'string' ? providerId : '',
+        model: typeof model === 'string' ? model : '',
+        transport: agentKind === 'codex' ? 'codex-responses' as const : 'litellm-chat-completions' as const,
+        status: 'skipped' as const, reason: 'unsupported_transport' as const }],
+    });
+    if (body.modelAgentDeviceId) return unsupportedRemoteGeneration(body.providerId, body.model, body.agentKind);
     const maker = getMaker?.();
     if (!maker) throwIpcError('INTERNAL', 'maker not ready for hook script generation');
     const workingDir = await resolveHookWorkingDir(body);
@@ -494,6 +505,7 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
       resolveBoundSessionRoute: body.resolveBoundSessionRoute === true,
     })) {
       const session = await maker.getSessionMeta(targetSessionId).catch(() => null);
+      if (session?.agentDeviceId) return unsupportedRemoteGeneration(providerId, model ?? session.model, session.agentKind);
       // Bound-session fallback must use the same live connection snapshot as
       // the provider picker. Never turn an unconnected built-in provider into
       // a routable candidate just because it exists in the catalog.

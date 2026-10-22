@@ -262,6 +262,7 @@ export function makeFormFromSchedule(s: Schedule | null): ScheduleFormState {
     manual: s.manual,
     agentKind: s.modelAgentKind ?? s.agentKind,
     modelAgentKind: s.modelAgentKind,
+    modelAgentDeviceId: s.modelAgentDeviceId,
     boundAgent: s.targetSessionId ? { sessionId: s.targetSessionId, agentKind: s.agentKind } : undefined,
     model: s.model ?? '',
     providerId: s.providerId ?? '',
@@ -290,7 +291,7 @@ export type Destination = 'local' | 'worktree' | 'thread';
 export interface UseScheduleFormResult {
   form: ScheduleFormState;
   selectModelConfiguration: (
-    selection: Pick<ScheduleFormState, 'agentKind' | 'model' | 'providerId' | 'effort' | 'fastMode'> | null,
+    selection: Pick<ScheduleFormState, 'agentKind' | 'model' | 'providerId' | 'effort' | 'fastMode' | 'modelAgentDeviceId'> | null,
     followedAgentKind?: ScheduleFormState['agentKind'],
   ) => void;
   setField: <K extends keyof ScheduleFormState>(k: K, v: ScheduleFormState[K]) => void;
@@ -351,7 +352,8 @@ export function useScheduleForm(initial: Schedule | null = null): UseScheduleFor
           ? form.boundAgent.agentKind : form.agentKind);
       const boundAgent = followedAgentKind && form.targetSessionId
         ? { sessionId: form.targetSessionId, agentKind } : form.boundAgent;
-      return { ...form, agentKind, boundAgent, model: '', providerId: '', effort: '', fastMode: false, modelAgentKind: undefined };
+      return { ...form, agentKind, boundAgent, model: '', providerId: '', effort: '', fastMode: false,
+        modelAgentKind: undefined, modelAgentDeviceId: undefined };
     });
   }, []);
 
@@ -372,7 +374,8 @@ export function useScheduleForm(initial: Schedule | null = null): UseScheduleFor
         getAgentPrefs: getScheduleAgentPrefs,
       });
       // A template that supplies a model is an explicit selection, even while following a bound task.
-      return { ...f, ...selection, modelAgentKind: selection.model.trim() ? selection.agentKind : undefined };
+      return { ...f, ...selection, modelAgentKind: selection.model.trim() ? selection.agentKind : undefined,
+        modelAgentDeviceId: template.model || template.agentKind || template.providerId ? '' : f.modelAgentDeviceId };
     });
   }, []);
 
@@ -425,6 +428,7 @@ export function useScheduleForm(initial: Schedule | null = null): UseScheduleFor
         boundAgent: { sessionId: session.id, agentKind: sessionAgentKindToScheduleAgentKind(session.agentKind) },
         model: '',
         modelAgentKind: undefined,
+        modelAgentDeviceId: undefined,
         // 绑定会话 = 跟随其模型/来源,providerId 一并清空(与 model/effort 同语义)。
         providerId: '',
         effort: '',

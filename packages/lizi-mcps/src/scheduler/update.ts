@@ -40,6 +40,9 @@ export function registerScheduleUpdateTool(
       timezone: z.string().min(1).optional(),
       recurring: z.boolean().optional(),
       agentKind: z.enum(AGENT_KIND).optional(),
+      modelAgentKind: z.enum(AGENT_KIND).nullable().optional().describe('显式模型选择的引擎；null 清除覆盖'),
+      fastMode: z.union([z.boolean(), z.literal('ultrafast')]).optional().describe('模型速度：false 标准、true 快速、ultrafast 超快；省略不修改'),
+      modelAgentDeviceId: z.string().nullable().optional().describe('模型运行位置：远程或分享供应商的 agentDeviceId；空字符串=自动化所在电脑，null=恢复沿用绑定任务，省略=不修改。远程选择须同时指定 modelAgentKind、model、providerId'),
       kind: z.literal('cron').optional(),
       model: z
         .string()
@@ -184,7 +187,7 @@ export function registerScheduleUpdateTool(
         // undefined(storage 按 hasOwnProperty 判定 → 清列 NULL)。此前 schema 只收
         // string,agent 想把任务从一个引擎的模型路由上摘下来(如伙伴接管期用 Codex
         // 模型跑过、再改回 Claude Code)只能报 INVALID_ARGS,陈旧路由永远清不掉。
-        for (const key of ['model', 'providerId', 'effort', 'workingDir'] as const) {
+        for (const key of ['model', 'providerId', 'effort', 'workingDir', 'modelAgentKind', 'modelAgentDeviceId'] as const) {
           if ((patch as Record<string, unknown>)[key] === null) {
             input = { ...input, [key]: undefined };
           }

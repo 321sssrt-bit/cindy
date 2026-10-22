@@ -31,6 +31,8 @@ export interface RemoteScheduleWriteInput {
   intervalMs?: number | null;
   agentKind: RemoteScheduleAgentKind;
   modelAgentKind?: RemoteScheduleAgentKind;
+  /** Absent = inherit bound task; empty string = automation host. */
+  modelAgentDeviceId?: string;
   model?: string;
   providerId?: string;
   effort?: string;
@@ -103,6 +105,8 @@ export interface RemoteSchedule {
   intervalMs?: number;
   agentKind?: RemoteScheduleAgentKind;
   modelAgentKind?: RemoteScheduleAgentKind;
+  /** Absent = inherit bound task; empty string = automation host. */
+  modelAgentDeviceId?: string;
   model?: string;
   providerId?: string;
   effort?: string;

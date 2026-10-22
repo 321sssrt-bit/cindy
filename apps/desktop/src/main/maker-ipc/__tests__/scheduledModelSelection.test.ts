@@ -13,10 +13,12 @@ describe('one-run automation model preferences', () => {
   function scopeFixture(
     effort: ScheduledModelSelection['effort'] | '' = 'high',
     fastMode: ScheduledModelSelection['fastMode'] = true,
+    agentDeviceId?: string | null,
   ) {
     const original: ScheduledModelSelection = {
       agentKind: 'codex', model: 'owner-model', providerId: 'owner-provider',
       effort: effort || null, fastMode,
+      ...(agentDeviceId !== undefined ? { agentDeviceId } : {}),
     };
     let profile = { ...original, effort };
     let baseline: string | null = null;
@@ -28,7 +30,8 @@ describe('one-run automation model preferences', () => {
       isBusy: vi.fn(() => false),
       apply: vi.fn(async (_id: string, value: ScheduledModelSelection) => {
         const { agentKind, model, providerId, effort, fastMode } = value;
-        profile = { agentKind, model, providerId, effort, fastMode };
+        profile = { agentKind, model, providerId, effort, fastMode,
+          ...(value.agentDeviceId !== undefined ? { agentDeviceId: value.agentDeviceId } : {}) };
       }),
     };
     return { original, deps, scope: createScheduledModelScope(deps),
@@ -43,6 +46,14 @@ describe('one-run automation model preferences', () => {
     h.automate();
     const scope = mode === 'restart' ? createScheduledModelScope(h.deps) : h.scope;
     await scope.restore('task');
+    expect(h.state()).toEqual({ profile: h.original, baseline: null });
+  });
+  // Unit: location is part of the durable restore record, including explicit local null.
+  it.each([null, 'shared:owner'])('restores the original Agent location %j after restart', async (device) => {
+    const h = scopeFixture('high', false, device);
+    const scopeId = await h.scope.begin('task');
+    h.automate();
+    await createScheduledModelScope(h.deps).restore('task', scopeId);
     expect(h.state()).toEqual({ profile: h.original, baseline: null });
   });
   // PR #6559 + #6579 integration: the persisted scope must restore an
@@ -123,6 +134,30 @@ function fixture(agentKind: ScheduledModelSelection['agentKind'] = 'codex') {
 }
 
 describe('saved automation model selection at dispatch', () => {
+  // Unit: same-Harness source changes previously skipped history handoff. Exercise
+  // both directions plus legacy inheritance through the real selection entry point.
+  it.each([
+    { current: null, chosen: 'shared:owner', expected: 'shared:owner', switches: true },
+    { current: 'shared:owner', chosen: null, expected: null, switches: true },
+    { current: 'shared:owner', chosen: undefined, expected: 'shared:owner', switches: false },
+  ])('applies the selected Agent location: %j', async ({ current, chosen, expected, switches }) => {
+    const deps = { ...fixture('pi'), getTarget: async () => ({
+      agentKind: 'pi' as const, status: 'active', agentDeviceId: current,
+    }) };
+    const resolved = await applyScheduledModelSelection({ ...selection, agentDeviceId: chosen }, deps);
+    expect(resolved.agentDeviceId).toBe(expected);
+    expect(deps.switchHarness).toHaveBeenCalledTimes(switches ? 1 : 0);
+    expect(deps.applyModel).toHaveBeenCalledWith(expect.objectContaining({ agentDeviceId: expected }));
+  });
+
+  it('keeps the current task intact when the shared route is unavailable', async () => {
+    const deps = fixture('pi');
+    deps.resolveSelection.mockRejectedValueOnce(new Error('shared provider offline'));
+    await expect(applyScheduledModelSelection({ ...selection, agentDeviceId: 'shared:owner' }, deps))
+      .rejects.toThrow('offline');
+    expect(deps.switchHarness).not.toHaveBeenCalled();
+    expect(deps.applyModel).not.toHaveBeenCalled();
+  });
   it('hands history to the target Harness before applying the complete model configuration', async () => {
     const deps = fixture();
     await applyScheduledModelSelection(selection, deps);
@@ -240,6 +275,8 @@ describe('bound target Harness capability', () => {
     'rejects cross-Harness overrides on %j while preserving same-Harness and follow modes', (restriction) => {
       const target = { agentKind: 'codex' as const, status: 'active', ...restriction };
       expect(() => assertScheduledHarnessSupported(target, 'pi')).toThrow('current Harness');
+      expect(() => assertScheduledHarnessSupported(target, 'codex', 'shared:owner')).toThrow('current Harness');
+      expect(() => assertScheduledHarnessSupported(target, 'codex', null)).not.toThrow();
       expect(() => assertScheduledHarnessSupported(target, 'codex')).not.toThrow();
       expect(() => assertScheduledHarnessSupported(target, undefined)).not.toThrow();
     },

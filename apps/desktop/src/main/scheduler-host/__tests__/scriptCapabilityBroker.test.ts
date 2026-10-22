@@ -545,6 +545,20 @@ describe('SchedulerScriptCapabilityBroker', () => {
     expect(result).toMatchObject({ target_session_id: 'session-1', wake_kind: 'created' });
   });
 
+  // Integration regression: a persisted remote route must never become local
+  // create defaults merely because sessions.dispatch omits a target task.
+  it('rejects remote script-dispatch defaults before opening a local session', async () => {
+    await expect(new SchedulerScriptCapabilityBroker().call(
+      { method: 'sessions.dispatch', params: { message: 'run task' } },
+      new Set(['sessions.dispatch']),
+      { schedule: schedule({ modelAgentDeviceId: 'shared:owner', modelAgentKind: 'codex' }) },
+    )).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('script execution does not support remote model sources'),
+    });
+    expect(sendToSessionMock).not.toHaveBeenCalled();
+  });
+
   it('resolves blank Pi script-dispatch defaults as one model/provider route', async () => {
     sendToSessionMock.mockResolvedValue({
       ok: true,

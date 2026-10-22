@@ -82,6 +82,8 @@ vi.mock('@/components/new-chat/ModelSelector', () => ({
 }));
 
 vi.mock('@/hooks/useAvailableAgents', () => ({ useModelPickerAgents: () => ['claude-code', 'codex', 'pi'] }));
+// These cases exercise the popover; location discovery is covered by useWorkerAgentDevices.
+vi.mock('@/hooks/useModelRouteDevices', () => ({ useModelRouteDevices: () => ({ devices: undefined }) }));
 
 vi.mock('@/hooks/useAgentCapabilities', () => ({
   getCachedCapabilities: () => null,

@@ -127,6 +127,19 @@ describe('normalizeLegacyDeviceLinkIntervalClear(旧版 mobile 的清空兼容)'
 
 
 describe('scheduled model selection IPC compatibility', () => {
+  // Integration: a shared provider id must never enter the local utility HTTP
+  // generator, even if a local provider happens to have that same id.
+  it('reports unsupported remote script generation before looking up local credentials', async () => {
+    const getMaker = vi.fn(() => null);
+    registerScheduleHandlers(getMaker);
+    const result = await handlers.get('maker:schedule:generate-pre-run-hook')!(null, {
+      description: 'check changes', modelAgentDeviceId: 'shared:owner', providerId: 'same-id',
+      agentKind: 'codex', model: 'remote-model',
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'no_candidate',
+      attempts: [{ providerId: 'same-id', model: 'remote-model', reason: 'unsupported_transport' }] });
+    expect(getMaker).not.toHaveBeenCalled();
+  });
   const existing = { id: 'bound-schedule', targetSessionId: 'bound', agentKind: 'codex',
     modelAgentKind: 'pi', model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true } as Schedule;
   const fullForm = { cronExpr: '0 9 * * *', manual: false, notify: { desktop: true, feishu: false },

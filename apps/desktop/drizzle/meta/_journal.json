@@ -911,6 +911,13 @@
       "when": 1792496800812,
       "tag": "0129_chemical_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "6",
+      "when": 1792659817002,
+      "tag": "0130_ambitious_hellfire_club",
+      "breakpoints": true
     }
   ]
 }

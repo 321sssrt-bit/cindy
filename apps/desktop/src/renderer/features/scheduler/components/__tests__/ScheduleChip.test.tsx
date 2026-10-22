@@ -6,6 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
+// These cases mount the timing chip only; device/auth state belongs to the model picker.
+vi.mock('@/hooks/useModelRouteDevices', () => ({ useModelRouteDevices: () => ({ devices: undefined }) }));
 
 import { ScheduleChip } from '../ScheduleChips';
 

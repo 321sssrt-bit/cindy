@@ -332,6 +332,25 @@ describe('MakerScheduleRunner model selection', () => {
     mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active' });
   });
 
+  // Integration: a new automation must pass the remote route to createSession,
+  // retain its workspace and avoid consulting a conflicting local provider copy.
+  it.each(['claude-code', 'codex', 'pi'] as const)('creates a remote %s automation on the chosen source', async (agentKind) => {
+    const h = createSessionHarness();
+    Object.assign(h.session, { agentKind, model: 'remote-model', setFastMode: vi.fn() });
+    const checkModelRoute = vi.fn(async () => ({ kind: 'reject' as const, reason: 'explicit-source-disabled' as const }));
+    const resolveModelSelection = vi.fn(async (choice: Parameters<typeof resolveScheduledModelSelection>[0]) => ({ ...choice, effort: 'high' as const }));
+    const harness = createRunnerHarness(h, null, { resolveModelSelection, checkModelRoute });
+    const schedule = baseSchedule({ agentKind, modelAgentKind: agentKind, modelAgentDeviceId: 'shared:owner',
+      model: 'remote-model', providerId: 'remote-source', effort: 'high' });
+    const saved = structuredClone(schedule);
+    const opts = await fireToCompletion(harness, h, schedule);
+    expect(opts).toMatchObject({ agentDeviceId: 'shared:owner', agentKind, model: 'remote-model',
+      providerId: 'remote-source', workingDir: '/work', effort: 'high' });
+    expect(resolveModelSelection).toHaveBeenCalledWith(expect.objectContaining({ agentDeviceId: 'shared:owner' }));
+    expect(checkModelRoute).not.toHaveBeenCalled();
+    expect(schedule).toEqual(saved);
+  });
+
   // Integration: follow the production runner from model override through completion/failure.
   // The previous route tests asserted the automation model only, never the next user's choice.
   it.each([

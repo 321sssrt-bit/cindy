@@ -14,6 +14,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { useAgentCapabilities } from '@/hooks/useAgentCapabilities';
 import { useProviders } from '@/hooks/useProviders';
+import { useDeviceProviders } from '@/hooks/useDeviceProviders';
 import {
   sessionModelSupportsFastMode,
 } from '@cindy/model-providers';
@@ -134,8 +135,10 @@ export function ScheduleFormDialog({
   const { t } = useTranslation();
   const formApi = useScheduleForm(initial);
   const { form, setField, selectModelConfiguration, setDestination, setRunMode, selectBoundSession, applyTemplateAgentFields, reset, toInput, validate } = formApi;
-  const caps = useAgentCapabilities(form.agentKind);
-  const { providers, loading: providersLoading } = useProviders();
+  const caps = useAgentCapabilities(form.agentKind, form.modelAgentDeviceId || undefined);
+  const localProviders = useProviders();
+  const remoteProviders = useDeviceProviders(form.modelAgentDeviceId || undefined);
+  const { providers, loading: providersLoading } = form.modelAgentDeviceId ? remoteProviders : localProviders;
   // "运行会话"三态(fresh / persistent / bound)与心跳形态派生值。
   // hasRealBinding = targetSessionId 为真实会话 id(B 已绑 / C 已选 / MCP 手绑),
   // 此时目录 / worktree / fastMode 由绑定会话决定,表单隐藏对应字段。
@@ -271,6 +274,7 @@ export function ScheduleFormDialog({
         description,
         scheduleName: form.name.trim() || undefined,
         providerId: providerId ?? undefined,
+        modelAgentDeviceId: form.modelAgentDeviceId,
         // bound 任务的缺省模型/来源维度由 main 按绑定会话补齐；provider/model 的显式
         // 覆盖仍原样透传。persistent 任务即使已回写 targetSessionId，也按任务级选择生成。
         agentKind: resolveBoundSessionRoute ? undefined : form.agentKind,
@@ -304,6 +308,7 @@ export function ScheduleFormDialog({
     providers,
     form.name,
     form.providerId,
+    form.modelAgentDeviceId,
     form.effort,
     form.agentKind,
     form.model,
@@ -1366,14 +1371,16 @@ export function ScheduleFormDialog({
                     )}
                     <div className="min-w-0 flex-1" />
                     <ModelEffortChip
-                      onSelect={({ engine, modelId, providerId, effort, fast }) => selectModelConfiguration({
+                      onSelect={({ engine, modelId, providerId, effort, fast, agentDevice }) => selectModelConfiguration({
                         agentKind: engine === 'cc' ? 'claude-code' : engine,
                         model: modelId, providerId, effort: (effort ?? '') as typeof form.effort,
                         fastMode: fast,
+                        modelAgentDeviceId: agentDevice?.deviceId ?? '',
                       })}
                       onFollowSession={() => selectModelConfiguration(null,
                         boundSessionReference?.agentKind === 'cc' ? 'claude-code' : boundSessionReference?.agentKind)}
                       agentKind={form.agentKind}
+                      agentDeviceId={form.modelAgentDeviceId}
                       modelValue={form.model}
                       onChangeModel={(v) => setField('model', v)}
                       effortValue={form.effort}

@@ -6,6 +6,8 @@ import { parseScheduledModelBaseline, type ScheduledModelBaseline } from '../../
 /** A saved automation choice, applied only while its target's send lock is held. */
 export interface ScheduledModelSelection {
   agentKind: AgentKind;
+  /** Undefined inherits a bound task; null explicitly selects the task host. */
+  agentDeviceId?: string | null;
   model: string;
   providerId: string | null;
   effort: Effort | null;
@@ -66,6 +68,7 @@ export class ScheduledModelSelectionBusyError extends Error {}
 
 interface ScheduledModelTarget {
   agentKind: AgentKind;
+  agentDeviceId?: string | null;
   status: string;
   remoteHostId?: string | null;
   orcaRole?: string | null;
@@ -75,8 +78,12 @@ interface ScheduledModelTarget {
 export function assertScheduledHarnessSupported(
   target: ScheduledModelTarget | null,
   agentKind: AgentKind | undefined,
+  agentDeviceId?: string | null,
 ): void {
-  if (target?.status !== 'active' || !agentKind || target.agentKind === agentKind) return;
+  if (target?.status !== 'active') return;
+  const changesHarness = agentKind && target.agentKind !== agentKind;
+  const changesDevice = agentDeviceId !== undefined && agentDeviceId !== (target.agentDeviceId ?? null);
+  if (!changesHarness && !changesDevice) return;
   if (target.remoteHostId || target.orcaRole) {
     throw new Error('SSH and Orca automation targets must keep their current Harness');
   }
@@ -119,9 +126,12 @@ export async function applyScheduledModelSelection(
     return deps.resolveSelection(selection);
   }
   if (deps.isBusy()) throw new ScheduledModelSelectionBusyError('Scheduled model selection waits for the current turn');
-  assertScheduledHarnessSupported(target, selection.agentKind);
-  const resolved = await deps.resolveSelection(selection);
-  if (target.agentKind !== resolved.agentKind) {
+  assertScheduledHarnessSupported(target, selection.agentKind, selection.agentDeviceId);
+  const resolved = await deps.resolveSelection({ ...selection,
+    ...(selection.agentDeviceId === undefined && target.agentDeviceId !== undefined
+      ? { agentDeviceId: target.agentDeviceId } : {}),
+  });
+  if (target.agentKind !== resolved.agentKind || (target.agentDeviceId ?? null) !== (resolved.agentDeviceId ?? null)) {
     const result = await deps.switchHarness(resolved);
     if (!result.engineReady || result.retryPending) throw new Error('Scheduled Harness switch did not become ready');
   }

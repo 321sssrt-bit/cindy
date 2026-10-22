@@ -140,6 +140,7 @@ export interface ScheduleFormState {
   manual: boolean;
   agentKind: 'claude-code' | 'codex' | 'pi';
   modelAgentKind?: 'claude-code' | 'codex' | 'pi';
+  modelAgentDeviceId?: string;
   /** The bound task's baseline, independent of the editable model choice. Form-only. */
   boundAgent?: { sessionId: string; agentKind: ScheduleFormState['agentKind'] };
   model: string;
@@ -298,6 +299,7 @@ export interface RememberedBinding {
   fastMode: boolean | 'ultrafast';
   agentKind: ScheduleFormState['agentKind'];
   modelAgentKind?: ScheduleFormState['modelAgentKind'];
+  modelAgentDeviceId?: string;
   boundAgent?: ScheduleFormState['boundAgent'];
 }
 
@@ -312,6 +314,7 @@ export function captureBinding(form: ScheduleFormState): RememberedBinding | nul
     fastMode: form.fastMode,
     agentKind: form.agentKind,
     modelAgentKind: form.modelAgentKind,
+    modelAgentDeviceId: form.modelAgentDeviceId,
     boundAgent: form.boundAgent,
   };
 }
@@ -347,6 +350,7 @@ export function applyRunMode(
           fastMode: remembered.fastMode,
           agentKind: remembered.agentKind,
           modelAgentKind: remembered.modelAgentKind,
+          modelAgentDeviceId: remembered.modelAgentDeviceId,
           boundAgent: remembered.boundAgent,
         }
       : f;
@@ -566,6 +570,7 @@ export function buildScheduleInput(form: ScheduleFormState): CreateScheduleInput
     intervalMs: form.intervalMs,
     agentKind: scheduleAgentKindForForm(form),
     modelAgentKind: !isScript && form.model.trim() ? form.modelAgentKind : undefined,
+    modelAgentDeviceId: !isScript && form.model.trim() ? form.modelAgentDeviceId : undefined,
     workspaceKind: form.workspaceKind,
     useWorktree: !isScript && form.workspaceKind === 'project' && form.useWorktree,
     persistentSession: !isScript && form.persistentSession,
@@ -583,6 +588,16 @@ export function buildScheduleInput(form: ScheduleFormState): CreateScheduleInput
     base.workspaceKind = 'project';
     base.workingDir = form.workingDir.trim();
     base.useWorktree = false;
+    // Preserve the complete route so host validation rejects the unsupported
+    // combination without silently turning a remote provider into a local one.
+    if (form.modelAgentDeviceId !== undefined) {
+      base.modelAgentDeviceId = form.modelAgentDeviceId;
+      base.modelAgentKind = form.modelAgentKind;
+      base.model = form.model.trim();
+      base.providerId = form.providerId.trim();
+      base.effort = form.effort && isEffortValue(form.effort) ? form.effort : undefined;
+      base.fastMode = form.fastMode;
+    }
     // Preserve installed script gates when editing; hidden controls must not erase them.
     return base;
   }
@@ -603,6 +618,9 @@ export function buildScheduleInput(form: ScheduleFormState): CreateScheduleInput
   // 让 update patch 按「key 在 + undefined」把旧 provider_id 清成 NULL。
   base.providerId = form.providerId.trim() || undefined;
   if (form.effort && isEffortValue(form.effort)) base.effort = form.effort;
+  // An explicit model choice replaces all its axes, including no effort. Keep
+  // the own key so updating an unbound automation clears the previous route's tier.
+  else if (form.modelAgentKind && form.model.trim()) base.effort = undefined;
   // fastMode 对 Codex / Pi 都生效(runner.ts:665 明确 claude-code 忽略此字段);只序列化
   // codex 会让用户在 Pi 任务里开的 Fast 被静默丢弃(codex review)。表单侧 Fast 开关已按
   // capability × 模型 supportsFastMode 门控,Pi 只有真支持时才可能为 true。
@@ -626,6 +644,7 @@ export function scheduleToUserCreateInput(
     intervalMs: schedule.intervalMs,
     agentKind: schedule.modelAgentKind ?? schedule.agentKind,
     modelAgentKind: schedule.modelAgentKind,
+    modelAgentDeviceId: schedule.modelAgentDeviceId,
     model: schedule.model,
     providerId: schedule.providerId,
     fastMode: schedule.fastMode,

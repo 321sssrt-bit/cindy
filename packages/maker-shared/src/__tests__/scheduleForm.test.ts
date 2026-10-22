@@ -369,6 +369,29 @@ describe('mobile schedule form model', () => {
     expect(input.targetSessionId).toBe('sess-oops');
   });
 
+  // Unit regression: mobile edits must retain the complete unsupported route
+  // for host validation, instead of dropping only its remote location.
+  it.each([
+    { modelAgentDeviceId: 'shared:owner', effort: 'xhigh', fastMode: 'ultrafast' as const },
+    { modelAgentDeviceId: '', effort: 'low', fastMode: true },
+    { modelAgentDeviceId: '', effort: '', fastMode: false },
+  ])('preserves complete script routes across mobile edits (%j)', (choice) => {
+    const remote = {
+      modelAgentKind: 'codex' as const,
+      modelAgentDeviceId: 'shared:owner',
+      model: 'same-model',
+      providerId: 'openai',
+      effort: 'xhigh' as const,
+      fastMode: 'ultrafast' as const,
+    };
+    const draft = createMobileScheduleDraft(schedule({ executionMode: 'script', ...remote }));
+    const selected = { ...remote, ...choice,
+      ...(!choice.modelAgentDeviceId ? { model: 'local-model', providerId: 'local-provider' } : {}) };
+    // Empty effort and false Fast must survive JSON transport to clear old values.
+    const wire = JSON.parse(JSON.stringify(buildMobileScheduleInput({ ...draft, ...selected, name: 'Renamed' })));
+    expect({ ...remote, ...wire }).toMatchObject(selected);
+  });
+
   it('still requires a prompt for a regular agent-mode schedule', () => {
     const draft = createMobileScheduleDraft(schedule({ prompt: '' }));
     expect(validateMobileScheduleDraft(draft)).toMatchObject({ field: 'prompt' });
@@ -594,6 +617,18 @@ describe('mobile explicit Harness round-trip', () => {
 
 
 describe('mixed-version scheduled model selections', () => {
+  // Unit: JSON round trips retain the location; an old host must not accept
+  // a shared selection and silently create it with its own local credentials.
+  it.each(['', 'shared:owner'])('preserves location %j and requires peer support', (modelAgentDeviceId) => {
+    const draft = createMobileScheduleDraft(schedule({ modelAgentKind: 'pi', agentKind: 'pi',
+      model: 'remote-model', providerId: 'remote-provider', modelAgentDeviceId }));
+    const input = buildMobileScheduleInput(draft);
+    expect(JSON.parse(JSON.stringify(input)).modelAgentDeviceId).toBe(modelAgentDeviceId);
+    const compat = { supportsIntervalNullClear: true, supportsModelSelection: true };
+    expect(() => applyScheduleWireCompat(input, compat)).toThrow(ScheduleModelSelectionUnsupportedError);
+    expect(applyScheduleWireCompat(input, { ...compat, supportsAgentDeviceSelection: true })).toBe(input);
+    expect(buildMobileScheduleInput({ ...draft, model: '' }).modelAgentDeviceId).toBe('');
+  });
   it.each([null, 600_000])('rejects an explicit bound selection on old/unknown hosts with interval %s', (intervalMs) => {
     const input = { ...buildMobileScheduleInput(createMobileScheduleDraft(schedule())),
       targetSessionId: 'bound', modelAgentKind: 'pi' as const, agentKind: 'pi' as const,

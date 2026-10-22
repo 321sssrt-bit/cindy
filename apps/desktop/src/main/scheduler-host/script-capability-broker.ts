@@ -218,6 +218,9 @@ export class SchedulerScriptCapabilityBroker implements ScriptCapabilityBroker {
 
   /** 新建任务的配置:模型留空时按新建任务口径实时解析,不写死型号。 */
   private async createDefaultsFor(schedule: Schedule) {
+    if (schedule.modelAgentDeviceId) {
+      fail('PRECONDITION_FAILED', 'script execution does not support remote model sources; select a local model before switching modes');
+    }
     const explicitProviderId = schedule.providerId?.trim() || null;
     const dynamicDefaultRoute = !schedule.model?.trim()
       ? await this.deps.resolveDefaultModelRoute?.(schedule.agentKind, explicitProviderId) ?? null

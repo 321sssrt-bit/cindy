@@ -1,3 +1,4 @@
+import { signalBotAutonomyBotsChanged } from '../bot-autonomy/botsChangedSignal.js';
 import { formatForwardedRequest, captureAgentRequest, type CapturedAgentRequest } from './forwardedRequest.js';
 import { readForwardedRequestSource, type AgentRequestReceipt, type ForwardedRequestSource } from '../../shared/forwardedRequest.js';
 import { openSession } from '../localDb/sessionOpening.js';
@@ -51,7 +52,7 @@ import type {
   BotDelegationInterjectResult,
 } from '../../shared/botCollaboration.js';
 import { BOT_DELEGATION_CLIENT_ID, BOT_INTERJECTION_MAX_CHARS as MAX_INTERJECTION_CHARS, botInterjectionPreview } from '../../shared/botCollaboration.js';
-import { buildBotGroupTaskCard, type BotGroupTaskCardLabels, type BotGroupTaskCardState } from '../../shared/botGroupChat.js';
+import { buildBotGroupTaskCard, parseBotGroupThreadRouteKey, type BotGroupTaskCardLabels, type BotGroupTaskCardState } from '../../shared/botGroupChat.js';
 import { t } from '../i18n.js';
 import type { BotGroupTaskPostInput, BotGroupTaskPostResult } from './botGroupChatService.js';
 import { ensureBotWorkspaceDir } from './botProfileFolder.js';
@@ -696,6 +697,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
   };
 
   const emitChanged = (payload: BotDelegationChangedPayload): void => {
+    signalBotAutonomyBotsChanged();
     deps.onChanged?.(payload);
   };
 
@@ -819,15 +821,23 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return requesterLiveSessionId(botId, null);
   };
 
+  /** Where a group task reports: its group and, when started in a Thread's lane, that Thread. */
+  type GroupTaskHome = { groupId: string; routeKey: string; threadRootId?: string };
+
   /**
    * 冻结这次协作双方的展示身份。名字后来改了不回填历史消息——消息流讲的是
    * 「当时谁把活交给了谁」，不是「他们现在叫什么」。
    */
-  /** The group a task was started from, by its persisted origin route (bot-group-chat.md §10). */
-  const groupHomeOf = (permissionSnapshotJson: string | null | undefined): { groupId: string; routeKey: string } | null => {
+  /**
+   * The group a task was started from, by its persisted origin route (bot-group-chat.md §10).
+   * A task started in a Thread's lane reports back into that Thread.
+   */
+  const groupHomeOf = (permissionSnapshotJson: string | null | undefined): GroupTaskHome | null => {
     const route = parseRecord(permissionSnapshotJson).groupOriginRoute;
     const match = typeof route === 'string' ? /^group:([^:]+)/.exec(route) : null;
-    return match ? { groupId: match[1]!, routeKey: route as string } : null;
+    if (!match) return null;
+    const threadRootId = parseBotGroupThreadRouteKey(route as string)?.threadRootId;
+    return { groupId: match[1]!, routeKey: route as string, ...(threadRootId ? { threadRootId } : {}) };
   };
 
   type GroupTaskRow = Pick<DelegationRow,
@@ -856,7 +866,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
 
   /** One task event as the teammate's own group message, carrying the task card. */
   const postGroupTaskEvent = async (
-    home: { groupId: string },
+    home: GroupTaskHome,
     row: GroupTaskRow,
     event: { clientId: string; text: string; state: BotGroupTaskCardState; summary?: string; files?: Array<{ absolutePath: string }> },
   ): Promise<BotGroupTaskPostResult> => {
@@ -879,6 +889,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     return deps.postGroupTaskMessage({
       groupId: home.groupId, botId: row.requestingBotId, clientId: event.clientId, text: event.text, card,
       ...(event.files?.length ? { files: event.files } : {}),
+      ...(home.threadRootId ? { threadRootId: home.threadRootId } : {}),
     });
   };
 
@@ -894,7 +905,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
    * the card again. A continued task posts a fresh card for each run; the first run keeps the
    * client id it always had.
    */
-  const postGroupTaskStart = (home: { groupId: string }, row: GroupTaskRow, attempt = 0): Promise<void> => {
+  const postGroupTaskStart = (home: GroupTaskHome, row: GroupTaskRow, attempt = 0): Promise<void> => {
     const key = groupStartPostKey(row);
     const run = (async () => {
       try {
@@ -1056,17 +1067,14 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     const completionSnapshot = (await getDbClient().drizzle
       .select({ snapshot: botDelegations.permissionSnapshotJson }).from(botDelegations)
       .where(eq(botDelegations.id, params.id)).get())?.snapshot ?? '{}';
-    const requestSource = readForwardedRequestSource(readSessionTaskInput({
-      runSequence: params.runSequence, permissionSnapshotJson: completionSnapshot,
-    })?.requestSource) ?? { userText: null };
-    const completionMessage = formatForwardedRequest(requestSource, buildDelegationCompletionMessage({
+    const completionMessage = buildDelegationCompletionMessage({
       id: params.id,
       objective: params.objective,
       status: params.status,
       resultSummary: params.resultSummary,
       artifacts,
       lastError: params.lastError,
-    }));
+    });
     try {
       if (!(await completionStillPending())) {
         clearCompletionRetryTimer(params.id);
@@ -1204,7 +1212,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       const dispatched = await deps.dispatch({
         targetSessionId,
         message: completionMessage,
-        autoReviewUserText: { kind: 'agent-request', request: requestSource },
+        autoReviewUserText: { kind: 'agent-request' },
         persistedContent: `${UI_ACTION_TRIGGER_PREFIX}${completionMessage}`,
         clientId: BOT_DELEGATION_CLIENT_ID.completionRun(params.id, params.runSequence),
       });
@@ -1373,7 +1381,8 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         && parent.botId === requestingBotId
         // A group lane is a live requester only for the task it started (bot-group-chat.md §10);
         // the lane is never woken by this service, its group gets the messages instead.
-        && (parent.role === 'canonical' || parent.role === 'delegation' || parent.role === 'group')
+        // A private-chat topic gets the results of the tasks started in it (cindy-bots-runtime.md).
+        && (parent.role === 'canonical' || parent.role === 'thread' || parent.role === 'delegation' || parent.role === 'group')
       );
     };
     if (parentSessionId && (await liveRequesterTask(parentSessionId))) return parentSessionId;
@@ -1588,7 +1597,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       || link.sessionSource !== 'bot'
       || link.profileStatus !== 'active'
       || link.linkArchivedAt !== null
-      || !['canonical', 'delegation', 'group'].includes(link.role)
+      || !['canonical', 'thread', 'delegation', 'group'].includes(link.role)
     ) return null;
     // Delegating full independent work is an owner action, not a guest tool grant.
     const group = link.role === 'group' && !ownerUi
@@ -1616,7 +1625,12 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       ? sql`CASE WHEN json_valid(${botDelegations.permissionSnapshotJson}) THEN
           json_extract(${botDelegations.permissionSnapshotJson}, '$.groupOriginRoute') = ${caller.routeKey}
           ELSE 0 END`
-      : undefined,
+      // A private-chat topic sees the tasks started in it; the main Chat still sees them all.
+      : caller.role === 'thread'
+        ? sql`CASE WHEN json_valid(${botDelegations.permissionSnapshotJson}) THEN
+            json_extract(${botDelegations.permissionSnapshotJson}, '$.threadOriginRoute') = ${caller.routeKey}
+            ELSE 0 END`
+        : undefined,
   );
 
   const interactionSummary = (request: InteractionRequest): string => {
@@ -1662,14 +1676,13 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
     if (!stillPending()
       || (row.childSessionId && heldSessionIds.has(row.childSessionId))) return;
     // 同任务回执:模型正文不带隐藏前缀,落库 / 排队可见内容保留它。
-    const requestSource = readForwardedRequestSource(readSessionTaskInput(row)?.requestSource) ?? { userText: null };
-    const message = formatForwardedRequest(requestSource, [
+    const message = [
       `[任务需要你处理] task_id: ${row.id}`,
       `类型: ${pending.request.kind}`,
       pending.summary,
       pending.request.kind === 'permission' ? `请求工具: ${pending.request.toolName}` : '',
       '你是用户的代理。能按用户已表达的意图安全决定，就用 `message_session_task` 直接回答；拿不准才用一句人话问用户。不要让用户去子任务窗口处理，也不要复述内部编号。',
-    ].filter(Boolean).join('\n\n'));
+    ].filter(Boolean).join('\n\n');
     // A group task asks in its group: the owner opens the task from the card to answer.
     // Tool names and arguments stay on this computer; only a question's words are shared.
     const home = groupHomeOf(row.permissionSnapshotJson);
@@ -1711,7 +1724,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
         ? await deps.dispatch({
             targetSessionId: requesterSessionId,
             message,
-            autoReviewUserText: { kind: 'agent-request', request: requestSource },
+            autoReviewUserText: { kind: 'agent-request' },
             persistedContent: `${UI_ACTION_TRIGGER_PREFIX}${message}`,
             clientId: `bot-delegation-interaction:${row.id}:${pending.requestId}`,
           })
@@ -2476,6 +2489,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
           permissionSnapshotJson = JSON.stringify({ ...plan,
             ...(approvedTaskDelegation(input.callerSessionId) ? { taskActionAuthority: approvedTaskDelegation(input.callerSessionId) } : {}),
             ...(input.caller.role === 'group' ? { groupOriginRoute: input.caller.routeKey, groupOriginSessionId: input.callerSessionId } : {}),
+            ...(input.caller.role === 'thread' ? { threadOriginRoute: input.caller.routeKey } : {}),
             ...(input.taskModelOverride ? { taskModelOverride: input.taskModelOverride } : {}),
             taskInput: { runSequence: 1, originalObjective: input.objective, followUp: null, requestSource: request.autoReviewUserText.request } satisfies SessionTaskInputSnapshot,
           });
@@ -2791,7 +2805,7 @@ export function createBotDelegationService(deps: BotDelegationServiceDeps) {
       || caller.sessionSource !== 'bot'
       || (caller.sessionStatus !== 'active' && caller.sessionStatus !== 'archived')
       || caller.profileStatus === 'deleting'
-      || !['canonical', 'history', 'delegation', 'group'].includes(caller.role)) {
+      || !['canonical', 'history', 'thread', 'delegation', 'group'].includes(caller.role)) {
       return { ok: false, errorCode: 'NOT_A_BOT_SESSION', message: '当前任务不属于任何伙伴' };
     }
     const db = getDbClient().drizzle;

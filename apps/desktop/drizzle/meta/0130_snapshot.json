@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "abb5b24b-394b-4bfb-807a-1aa237c7fc6d",
+  "id": "a9590771-933e-4d44-a046-c52e69437fb4",
   "prevId": "4080b7b1-04ec-45f5-833c-cc80efbbf146",
   "tables": {
     "account_usage_snapshots": {
@@ -4731,6 +4731,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "agent_device_id": {
+          "name": "agent_device_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "effort": {
           "name": "effort",
           "type": "text",
@@ -5414,14 +5421,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "notifications_muted": {
-          "name": "notifications_muted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         },
         "summary": {
           "name": "summary",

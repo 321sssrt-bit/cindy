@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react';
-import { ModelSelector, ModelSelectorContent } from './ModelSelector';
+import { ModelSelector, ModelSelectorContent, type ModelMemoryAccessors } from './ModelSelector';
 import { useModelRouteDevices } from '@/hooks/useModelRouteDevices';
+import { agentDeviceModelMemoryAccessors } from '@/state/agentDeviceModelMemory';
 
 interface ModelRouteContext {
   /** The task host; omitted for this computer. */
@@ -10,29 +11,40 @@ interface ModelRouteContext {
   sshRemote?: boolean;
 }
 
-function useModelRouteOptions({ deviceId, agentDeviceId, sshRemote }: ModelRouteContext) {
+function useModelRouteOptions(
+  { deviceId, agentDeviceId, sshRemote }: ModelRouteContext,
+  modelMemory?: ModelMemoryAccessors,
+) {
   const locations = useModelRouteDevices({
     controlledDeviceId: deviceId ?? null,
     leadAgentDeviceId: agentDeviceId,
     sshRemote,
   });
-  return locations.devices ? {
+  const remoteAgent = locations.devices ? {
     devices: locations.devices,
     selectedDeviceId: agentDeviceId ?? null,
     homeDeviceId: deviceId,
+    deviceModelMemory: agentDeviceModelMemoryAccessors,
   } : undefined;
+  return {
+    remoteAgent,
+    // Keep remote preferences separate from the task host's model memory.
+    modelMemory: modelMemory ?? (remoteAgent?.selectedDeviceId
+      ? agentDeviceModelMemoryAccessors(remoteAgent.selectedDeviceId)
+      : undefined),
+  };
 }
 
 /** Full control using the common task/worker location catalog. */
 export function ModelRouteSelector({ agentDeviceId, sshRemote, deviceId, ...props }:
   Omit<ComponentProps<typeof ModelSelector>, 'remoteAgent'> & ModelRouteContext) {
-  const remoteAgent = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote });
-  return <ModelSelector {...props} deviceId={deviceId} remoteAgent={remoteAgent} />;
+  const options = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote }, props.modelMemory);
+  return <ModelSelector {...props} deviceId={deviceId} {...options} />;
 }
 
 /** The same selector inside an existing popover; callbacks retain the full selection. */
 export function ModelRouteSelectorContent({ agentDeviceId, sshRemote, deviceId, ...props }:
   Omit<ComponentProps<typeof ModelSelectorContent>, 'remoteAgent'> & ModelRouteContext) {
-  const remoteAgent = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote });
-  return <ModelSelectorContent {...props} deviceId={deviceId} remoteAgent={remoteAgent} />;
+  const options = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote }, props.modelMemory);
+  return <ModelSelectorContent {...props} deviceId={deviceId} {...options} />;
 }

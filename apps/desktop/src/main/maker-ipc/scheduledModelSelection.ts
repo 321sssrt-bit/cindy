@@ -1,5 +1,5 @@
 import type { AgentKind, Effort } from '@cindy/maker-core';
-import { effectiveSourceIdForModel, findCatalogModel, type ProviderView } from '@cindy/model-providers';
+import { effectiveSourceIdForModel, findCatalogModel, isModelSelectableForNewRoute, type ProviderView } from '@cindy/model-providers';
 import { resolveCompatibleSessionRuntimeEffort } from './sessionRuntimeControl';
 import { parseScheduledModelBaseline, type ScheduledModelBaseline } from '../../shared/scheduledModelBaseline';
 import { throwIpcError } from '../utils/ipcValidate';
@@ -108,7 +108,12 @@ export function resolveScheduledModelSelection(
     effectiveSourceIdForModel(providers, null, selection.model, selection.agentKind);
   const provider = providers.find((candidate) => candidate.id === providerId);
   const model = findCatalogModel(provider, selection.model, selection.agentKind, { exact: true });
-  if (!provider?.connected || !model) {
+  // Preserve the previous remote reader's admission checks. Local routes keep
+  // their existing live guard and owner-baseline restoration policy.
+  if (!provider?.connected || provider.suspended || !model || (selection.agentDeviceId && (
+    !provider.agents.includes(selection.agentKind) ||
+    !isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' })
+  ))) {
     throwIpcError('MODEL_SELECTION_UNAVAILABLE', `Scheduled model "${selection.model}" is unavailable from provider "${providerId ?? 'default'}"`);
   }
   return {

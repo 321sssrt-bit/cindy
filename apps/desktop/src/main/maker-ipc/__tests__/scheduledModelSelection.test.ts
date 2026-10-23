@@ -169,6 +169,48 @@ describe('saved automation model selection at dispatch', () => {
     expect(deps.switchHarness).not.toHaveBeenCalled();
     expect(deps.applyModel).not.toHaveBeenCalled();
   });
+  // PR #6830 Greptile P1, unit: the authorized remote catalog can retain a
+  // connected but suspended provider. Earlier cases only simulated read failures.
+  // The real apply/resolve entries must reject before switching or applying a
+  // model, without falling back to another provider offering the same model.
+  it.each([null, 'office-pc'])('rejects a suspended remote source before applying to a task at %j', async (current) => {
+    const selected = { ...provider('custom'), remoteInvocationEnabled: true, suspended: true };
+    const providers = [selected, { ...provider('other'), remoteInvocationEnabled: true }];
+    const choice = { ...selection, agentDeviceId: 'office-pc', effort: 'high' as const };
+    const deps = { ...fixture('pi'),
+      getTarget: async () => ({ agentKind: 'pi' as const, status: 'active', agentDeviceId: current }),
+      resolveSelection: async (value: ScheduledModelSelection) => resolveScheduledModelSelection(value, providers),
+    };
+    await expect(applyScheduledModelSelection(choice, deps)).rejects.toThrow('MODEL_SELECTION_UNAVAILABLE');
+    expect(deps.switchHarness).not.toHaveBeenCalled();
+    expect(deps.applyModel).not.toHaveBeenCalled();
+
+    selected.suspended = false;
+    await expect(applyScheduledModelSelection(choice, deps)).resolves.toMatchObject(choice);
+    expect(deps.applyModel).toHaveBeenCalledWith(expect.objectContaining(choice));
+  });
+  // PR #6830 admission regression, unit: the old remote reader rejected model
+  // restrictions and unsupported engines even when the model remained in the
+  // catalog. Existing cases only covered provider-level failures. Inherit the
+  // target's remote location to exercise the real apply/resolve boundary.
+  it.each([
+    { model: { disabled: true } },
+    { model: { status: 'retired' as const } },
+    { model: { mode: 'image_generation' } },
+    { model: { availability: 'requires_payment' as const } },
+    { model: {}, agents: [] },
+  ])('rejects an inadmissible remote model without changing the target: %j', async ({ model, agents }) => {
+    const selected = provider('custom', model);
+    if (agents) selected.agents = agents;
+    const deps = { ...fixture('pi'),
+      getTarget: async () => ({ agentKind: 'pi' as const, status: 'active', agentDeviceId: 'office-pc' }),
+      resolveSelection: async (value: ScheduledModelSelection) =>
+        resolveScheduledModelSelection(value, [selected, provider('other')]),
+    };
+    await expect(applyScheduledModelSelection(selection, deps)).rejects.toThrow('MODEL_SELECTION_UNAVAILABLE');
+    expect(deps.switchHarness).not.toHaveBeenCalled();
+    expect(deps.applyModel).not.toHaveBeenCalled();
+  });
   it('hands history to the target Harness before applying the complete model configuration', async () => {
     const deps = fixture();
     await applyScheduledModelSelection(selection, deps);
@@ -255,6 +297,13 @@ function provider(id: string, model: Partial<CatalogModel> = {}): ProviderView {
 }
 
 describe('saved effort uses the selected provider and Harness catalog copy', () => {
+  // Local admission remains owned by the live route guard; capability resolution
+  // must not impose the stricter remote new-route policy on an owner's baseline.
+  it('preserves local capability resolution for an existing disabled model', () => {
+    expect(resolveScheduledModelSelection({ ...selection, agentDeviceId: null, effort: 'high' }, [
+      provider('custom', { disabled: true }),
+    ])).toEqual({ ...selection, agentDeviceId: null, effort: 'high' });
+  });
   it.each([null, 'ultra'] as const)('fills or reconciles %s to the route default', (effort) => {
     const selected = provider('custom', { efforts: ['low', 'high'], defaultEffort: 'high' });
     const other = provider('other', { efforts: ['low'], defaultEffort: 'low' });

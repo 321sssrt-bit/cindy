@@ -52,7 +52,7 @@ import {
 describe('scheduled remote model catalog', () => {
   it('resolves only the selected computer catalog and preserves its axes', async () => {
     vi.clearAllMocks();
-    h.readDeviceProviderViews.mockResolvedValue([{ id: 'shared-provider', connected: true,
+    h.readDeviceProviderViews.mockResolvedValue([{ id: 'shared-provider', connected: true, agents: ['pi'],
       models: { pi: [{ id: 'remote-model', efforts: ['high'], defaultEffort: 'high', supportsFastMode: false }] } }]);
     const choice = { agentKind: 'pi' as const, agentDeviceId: 'shared:owner', model: 'remote-model',
       providerId: 'shared-provider', effort: 'ultra' as const, fastMode: true };

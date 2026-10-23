@@ -62,10 +62,62 @@ describe('one-run automation model preferences', () => {
     const h = scopeFixture('high', false, device);
     const { agentDeviceId: _location, ...legacy } = h.original;
     await h.deps.write('task', { ...legacy, scopeId: 'legacy-scope' });
-    expect(await h.scope.begin('task')).toBe('legacy-scope');
+    // Companion baseline writes now require the revision captured with the route.
+    const scope = createScheduledModelScope({ ...h.deps,
+      read: async () => ({ ...await h.deps.read(), profileRevision: 'A' }),
+      write: async (id, baseline, revision) => {
+        if (baseline && revision !== 'A') return false;
+        await h.deps.write(id, baseline);
+        return true;
+      },
+    });
+    expect(await scope.begin('task')).toBe('legacy-scope');
     h.automate();
     await createScheduledModelScope(h.deps).restore('task', 'legacy-scope');
     expect(h.state()).toEqual({ profile: h.original, baseline: null });
+  });
+  // Merge regression, unit: a profile save can invalidate a legacy location
+  // upgrade after its read. A rejected durable write must stop the automation
+  // before it moves the task; earlier coverage only exercised successful writes.
+  it('retries a legacy location upgrade when the profile changes before writing', async () => {
+    const h = scopeFixture('high', false, 'shared:owner');
+    const { agentDeviceId: _location, ...legacy } = h.original;
+    await h.deps.write('task', { ...legacy, scopeId: 'legacy-scope' });
+    const saved = h.state().baseline;
+    const scope = createScheduledModelScope({ ...h.deps,
+      read: async () => ({ ...await h.deps.read(), profileRevision: 'A' }),
+      write: async () => false,
+    });
+    await expect(scope.begin('task')).rejects.toThrow(ScheduledModelSelectionBusyError);
+    expect(h.state()).toEqual({ profile: h.original, baseline: saved });
+  });
+  // #6895 unit regression: preparing a newly saved route may defer/fail. The
+  // stale session row must not become durable recovery state in that case.
+  it('does not capture an old baseline when preparing the saved choice fails', async () => {
+    const h = scopeFixture();
+    const prepareBaseline = vi.fn(async () => { throw new ScheduledModelSelectionBusyError('waiting'); });
+    const scope = createScheduledModelScope({ ...h.deps, prepareBaseline });
+    await expect(scope.begin('task')).rejects.toThrow(ScheduledModelSelectionBusyError);
+    expect(h.state().baseline).toBeNull();
+    await h.scope.begin('task');
+    // Existing scopes preserve the owner's original choice without switching
+    // away from the automation just to capture it again.
+    expect(await scope.begin('task')).toBe('scope-1');
+    expect(prepareBaseline).toHaveBeenCalledTimes(1);
+  });
+  // #6895 unit regression: a lane outside the save's lock snapshot can see
+  // Profile B after preparation applied A. Do not stamp A with B's revision.
+  it('retries capture when the profile changes during route preparation', async () => {
+    const h = scopeFixture();
+    let profileRevision = 'A';
+    const write = vi.fn(h.deps.write);
+    const scope = createScheduledModelScope({ ...h.deps, write,
+      read: async () => ({ ...await h.deps.read(), profileRevision }),
+      prepareBaseline: async () => { profileRevision = 'B'; },
+    });
+    await expect(scope.begin('task')).rejects.toThrow(ScheduledModelSelectionBusyError);
+    expect(write).not.toHaveBeenCalled();
+    expect(h.state().baseline).toBeNull();
   });
   // PR #6559 + #6579 integration: the persisted scope must restore an
   // Ultrafast owner after automation/restart. Existing cases used booleans;

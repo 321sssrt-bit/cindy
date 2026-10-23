@@ -6,8 +6,12 @@ vi.mock('../../cindy-media/taskImageDelivery.js', () => ({ materializeTaskImageT
 vi.mock('../../cindy-media/ledger.js', () => ({ sessionCanRead: f.canRead }));
 vi.mock('../../cindy-media/blobStore.js', async original => ({ ...await original<typeof import('../../cindy-media/blobStore.js')>(), resolveSafe: f.resolve }));
 vi.mock('../../localDb/client/current.js', () => ({ getDbClient: () => ({ drizzle: f.db }) }));
+import { materializeTaskImageMarkdown } from '../../cindy-media/taskImageMarkdown.js';
 import { prepareChatReplyImages } from '../chatServerReplyImages.js';
 const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+const other = `cindy-media://blobs/${'b'.repeat(64)}.png`;
+const rich = (...ops: Record<string, unknown>[]) => '```cindy-ui\n' + ops.map((op, i) =>
+  JSON.stringify({ version: 1, seq: i + 1, op: 'create', id: `n${i}`, ...op })).join('\n') + '\n```';
 // Unit: public preparation entry; fake ledger/files isolate authorization and
 // Markdown collection from settlement. Actual task importer has its own tests.
 describe('generated reply image attachments', () => {
@@ -19,9 +23,9 @@ describe('generated reply image attachments', () => {
   });
   it('imports local task images and deduplicates only rendered references', async () => {
     f.materialize.mockResolvedValue({ text: `![First](${url}) ![Again](${url})`, replacements: new Map([['xdt-image:///task/generated.png', url]]), failures: [] });
-    const source = '![First](xdt-image:///task/generated.png)';
+    const source = '![First](xdt-image:///task/generated.png) ![Again](xdt-image:///task/generated.png)';
     const result = await prepareChatReplyImages(source, 'lane', vi.fn());
-    expect(f.materialize).toHaveBeenCalledExactlyOnceWith('lane', source);
+    expect(f.materialize).toHaveBeenCalledExactlyOnceWith('lane', '![](<xdt-image:///task/generated.png>)\n![](<xdt-image:///task/generated.png>)');
     expect(result.text).toBe('First Again');
     expect(result.attachments).toEqual([expect.objectContaining({ url, path: null, category: 'image', size: 3 })]);
     expect(f.canRead).toHaveBeenCalledExactlyOnceWith('a'.repeat(64), 'lane', f.db);
@@ -59,6 +63,79 @@ describe('generated reply image attachments', () => {
     expect(f.realpath).not.toHaveBeenCalled();
   });
 
+  // #6892: the production prepare entry must treat final component images as deliveries,
+  // while ignoring code examples and removed/obsolete nodes. Ledger and FS stay boundary fakes.
+  it('delivers the same managed image from Markdown, components, or both without duplication', async () => {
+    const component = rich({ kind: 'image', props: { src: url, alt: 'Diagram' } });
+    for (const source of [`![Diagram](${url})`, component, `${component}\n![Diagram](${url})`]) {
+      const result = await prepareChatReplyImages(source, 'lane', vi.fn());
+      expect(result.attachments).toEqual([expect.objectContaining({ url, category: 'image' })]);
+    }
+  });
+  it('walks the final tree in display order after patch, move and subtree removal', async () => {
+    const source = rich(
+      { kind: 'stack' },
+      { parent: 'n0', kind: 'image', props: { src: url } },
+      { id: 'removed', parent: 'n0', kind: 'image', props: { src: 'cindy-media://invalid' } },
+      { op: 'remove', id: 'removed' },
+      { op: 'patch', id: 'n1', props: { src: other } },
+      { kind: 'image', props: { src: url } },
+      { op: 'move', id: 'n5', parent: 'root', index: 0 },
+    );
+    const result = await prepareChatReplyImages(source, 'lane', vi.fn());
+    expect(result.attachments.map(image => image.url)).toEqual([url, other]);
+    expect(result.text).toBe(source);
+    expect(f.canRead.mock.calls.map(call => call[0])).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+  });
+  it('ignores code/text/src examples while collecting real image nodes', async () => {
+    const source = rich(
+      { kind: 'code', props: { text: `![example](${other})`, src: other } },
+      { kind: 'text', props: { text: `![example](${other})`, src: other } },
+      { kind: 'video', props: { src: other } },
+      { kind: 'image', props: { src: url } },
+    );
+    expect((await prepareChatReplyImages(source, 'lane', vi.fn())).attachments.map(image => image.url)).toEqual([url]);
+  });
+  it('imports a component local path through the existing importer and deduplicates it with Markdown', async () => {
+    const sourcePath = path.resolve('fixture', 'generated [image] & copy.png');
+    const importImage = vi.fn().mockResolvedValue(url);
+    f.materialize.mockImplementation(async (_session, text) => materializeTaskImageMarkdown(text, { importImage }));
+    const component = rich({ kind: 'image', props: { src: sourcePath, alt: 'Diagram' } });
+    const result = await prepareChatReplyImages(component + `\n![Again](${url})`, 'lane', vi.fn());
+    expect(importImage).toHaveBeenCalledExactlyOnceWith(sourcePath);
+    expect(result.attachments.map(image => image.url)).toEqual([url]);
+    expect(result.text).toBe(component + '\nAgain');
+  });
+  it('keeps literal path characters from injecting extra image references during import', async () => {
+    const sourcePath = path.resolve('fixture', 'literal &<>.png') + `\n![](${other})`;
+    const importImage = vi.fn().mockResolvedValue(url);
+    f.materialize.mockImplementation(async (_session, text) => materializeTaskImageMarkdown(text, { importImage }));
+    const result = await prepareChatReplyImages(rich({ kind: 'image', props: { src: sourcePath } }), 'lane', vi.fn());
+    expect(importImage).toHaveBeenCalledExactlyOnceWith(sourcePath);
+    expect(result.attachments.map(image => image.url)).toEqual([url]);
+  });
+  it('never collects components inside code examples or a malformed document', async () => {
+    const component = rich({ kind: 'image', props: { src: url } });
+    for (const source of [`\`\`\`\`md\n${component}\n\`\`\`\``, component.replace('"seq":1', '"seq":2')]) {
+      expect(await prepareChatReplyImages(source, 'lane', vi.fn())).toEqual({ text: source, attachments: [] });
+    }
+    expect(f.stat).not.toHaveBeenCalled();
+  });
+  it.each(['foreign', 'missing', 'directory', 'empty', 'large', 'mime', 'invalid'])(
+    'keeps component images behind existing validation: %s', async kind => {
+      if (kind === 'foreign') f.canRead.mockResolvedValue(false);
+      if (kind === 'missing') f.stat.mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }));
+      if (['directory', 'empty', 'large'].includes(kind)) f.stat.mockResolvedValue({
+        isFile: () => kind !== 'directory', size: kind === 'empty' ? 0 : kind === 'large' ? 100 * 1024 * 1024 + 1 : 3,
+      });
+      if (kind === 'mime') f.resolve.mockReturnValue({ absPath: path.resolve('fixture', 'video.mp4'), mimeType: 'video/mp4' });
+      await expect(prepareChatReplyImages(rich({ kind: 'image', props: { src: kind === 'invalid' ? url + '?invalid' : url } }), 'lane', vi.fn())).rejects.toThrow();
+    },
+  );
+  it('shares the attachment limit across Markdown and component images', async () => {
+    const markdown = Array.from({ length: 20 }, (_, i) => `![](cindy-media://blobs/${i.toString(16).padStart(64, '0')}.png)`).join('\n');
+    await expect(prepareChatReplyImages(markdown + '\n' + rich({ kind: 'image', props: { src: url } }), 'lane', vi.fn())).rejects.toThrow('ATTACHMENT_UNAVAILABLE');
+  });
   it('stops after an execution changes during authorization', async () => {
     let current = true; f.canRead.mockImplementation(async () => { current = false; return true; });
     await expect(prepareChatReplyImages(`![image](${url})`, 'lane', () => { if (!current) throw new Error('STALE_EXECUTOR'); })).rejects.toThrow('STALE_EXECUTOR');

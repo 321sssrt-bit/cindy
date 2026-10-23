@@ -231,12 +231,22 @@ describe('group body component display', () => {
   it.each([rich({ kind: 'text', props: { text: '' } }), rich({ kind: 'range' }), '```cindy-ui\ninvalid\n```'])('retains unreadable source %s', content => {
     expect(botGroupBodyParts(content, 'bot')).toEqual([{ kind: 'markdown', content }]);
   });
+  it.each(['image', 'video', 'audio', 'svg'])('keeps %s descriptions but never the media source or an attachment promise', kind => {
+    for (const src of ['cindy-media://blobs/example.png', 'file:///private/image.png', 'xdt-file:///image.png', '/private/image.png', 'https://example.test/image.png']) {
+      expect(botGroupBodyParts(rich({ kind, props: { label: 'Title', alt: 'Description', caption: 'Caption', src } }), 'bot'))
+        .toEqual([{ kind: 'text', content: 'Title\nDescription\nCaption' }]);
+    }
+  });
+  it('keeps an undescribed image visible as a placeholder without exposing protocol source', () => {
+    expect(botGroupBodyParts(rich({ kind: 'image', props: { src: 'cindy-media://blobs/example.png' } }), 'bot'))
+      .toEqual([{ kind: 'text', content: '🖼' }]);
+  });
   it('uses final tree content and exposes media descriptions without requesting local media', () => {
     const content = rich({ kind: 'stack', props: { label: 'Summary' } }, { parent: 'n0', kind: 'text', props: { text: 'Old' } },
       { op: 'patch', id: 'n1', props: { text: 'Updated' } }, { kind: 'image', props: { alt: 'Diagram', src: 'cindy-media://blobs/example.png' } });
     expect(botGroupBodyParts(content, 'bot')).toEqual([
       { kind: 'text', content: 'Summary' }, { kind: 'text', content: 'Updated' },
-      { kind: 'text', content: 'Diagram\ncindy-media://blobs/example.png' },
+      { kind: 'text', content: 'Diagram' },
     ]);
   });
 });

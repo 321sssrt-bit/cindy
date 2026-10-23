@@ -38,6 +38,19 @@ describe('desktop scheduler cross-device transport', () => {
     expect(result.ok).toBe(supported);
     if (!supported) expect(result).toMatchObject({ code: 'REMOTE_UNSUPPORTED' });
   });
+  // PR #6830, unit: route clearing needs the same new-host capability as setting
+  // a location, including partial clears that omit the location field entirely.
+  it.each([false, true])('checks support before forwarding null model axes (%s)', async (supported) => {
+    const s = setup();
+    const patch = { modelAgentKind: null, model: null, providerId: null, effort: null };
+    s.invoke.mockResolvedValueOnce({ ok: true, result: { supportsScheduleAgentDeviceSelection: supported } });
+    s.invoke.mockResolvedValueOnce({ ok: true, result: { id: 's1' } });
+    const result = await s.remote.invoke('mac', 'update', ['s1', patch]);
+    expect(result.ok).toBe(supported);
+    expect(s.invoke).toHaveBeenCalledTimes(supported ? 2 : 1);
+    if (supported) expect(s.invoke.mock.calls[1].slice(0, 3)).toEqual(['mac', 'maker:schedule:update', ['s1', patch]]);
+    else expect(result).toMatchObject({ code: 'REMOTE_UNSUPPORTED' });
+  });
   it('reuses the existing remote-control schedule channels with their argument shapes', async () => {
     const s = setup();
     await s.remote.invoke('mac', 'list', [{ status: 'active' }]);

@@ -287,10 +287,11 @@ export function ScheduleFormDialog({
         scheduleName: form.name.trim() || undefined,
         providerId: providerId ?? undefined,
         // Remote selections use the existing local utility-model fallback above.
-        modelAgentDeviceId: undefined,
+        modelAgentDeviceId: remoteAgentLocation ? undefined : form.modelAgentDeviceId,
         // bound 任务的缺省模型/来源维度由 main 按绑定会话补齐；provider/model 的显式
         // 覆盖仍原样透传。persistent 任务即使已回写 targetSessionId，也按任务级选择生成。
-        agentKind: resolveBoundSessionRoute || remoteAgentLocation ? undefined : form.agentKind,
+        agentKind: remoteAgentLocation || (resolveBoundSessionRoute && form.modelAgentDeviceId !== '')
+          ? undefined : form.agentKind,
         model: inheritsBoundSessionModel || remoteAgentLocation ? undefined : form.model.trim() || undefined,
         // 绑定会话任务:workingDir 不发(表单残留值可能是改绑前的过期项目目录,
         // 显式值会压过会话解析),真实 cwd 由 main 按会话 meta.workDir 解析 ——
@@ -322,6 +323,7 @@ export function ScheduleFormDialog({
     form.name,
     form.providerId,
     selectedAgentDeviceId,
+    form.modelAgentDeviceId,
     form.effort,
     form.agentKind,
     form.model,

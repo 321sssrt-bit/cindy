@@ -80,6 +80,23 @@ beforeEach(() => {
   localStorage.clear();
 });
 afterEach(cleanup);
+afterEach(() => vi.unstubAllGlobals());
+
+// PR #6830, unit/jsdom: a bound remote task must not hide an explicit local
+// model-only selection from the real hook-generation IPC request.
+it('sends the explicit local Harness and location when generating a bound hook', async () => {
+  const generatePreRunHook = vi.fn(async () => ({ ok: false, reason: 'no_candidate', attempts: [] }));
+  vi.stubGlobal('electronAPI', { maker: { schedule: { generatePreRunHook } } });
+  state.references.set('bound', { id: 'bound', state: 'available', status: 'active', agentKind: 'claude-code', agentDeviceId: 'studio' });
+  mount(schedule({ targetSessionId: 'bound', modelAgentKind: 'codex', modelAgentDeviceId: '', providerId: '',
+    preRunHook: { command: 'node check.mjs' } }));
+  fireEvent.click(screen.getByRole('button', { name: 'scheduler.editor.preRunHook.aiModify' }));
+  fireEvent.change(screen.getByPlaceholderText('scheduler.editor.preRunHook.aiPlaceholder'), { target: { value: 'check changes' } });
+  fireEvent.click(screen.getByRole('button', { name: 'scheduler.editor.preRunHook.aiGenerate' }));
+  await waitFor(() => expect(generatePreRunHook).toHaveBeenCalledWith(expect.objectContaining({
+    targetSessionId: 'bound', modelAgentDeviceId: '', agentKind: 'codex', model: 'shared', resolveBoundSessionRoute: true,
+  })));
+});
 
 it('saves a selected remote-only model against its own catalog', async () => {
   const form = mount(schedule());

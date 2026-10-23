@@ -224,14 +224,15 @@ export class SchedulerScriptCapabilityBroker implements ScriptCapabilityBroker {
     if (schedule.modelAgentDeviceId ?? schedule.agentDeviceId) {
       fail('PRECONDITION_FAILED', 'script execution does not support remote model sources; select a local model before switching modes');
     }
+    const agentKind = schedule.modelAgentKind ?? schedule.agentKind;
     const explicitProviderId = schedule.providerId?.trim() || null;
     const dynamicDefaultRoute = !schedule.model?.trim()
-      ? await this.deps.resolveDefaultModelRoute?.(schedule.agentKind, explicitProviderId) ?? null
+      ? await this.deps.resolveDefaultModelRoute?.(agentKind, explicitProviderId) ?? null
       : null;
     const model = schedule.model?.trim() || dynamicDefaultRoute?.model;
-    if (!model) fail('PRECONDITION_FAILED', `${schedule.agentKind} has no connected model source`);
+    if (!model) fail('PRECONDITION_FAILED', `${agentKind} has no connected model source`);
     return {
-      agentKind: schedule.agentKind,
+      agentKind,
       model,
       providerId: explicitProviderId ?? dynamicDefaultRoute?.providerId ?? null,
       effort: schedule.effort as DispatchEffort | undefined,

@@ -24,7 +24,7 @@ export function registerScheduleUpdateTool(
     name: 'schedule_update',
     category: 'scheduler',
     description:
-      '修改一条定时任务的部分字段（patch 形态）。默认改本机的；其它电脑上的任务传 device（此时不支持 bindToCurrentSession，也不支持用 null 清空 intervalMs 以外的字段；改 preRunHook 必须显式带 timeoutMs（数值，或 null 表示不限时）；targetSessionId 可传该电脑的 deviceId::sessionId 或其本机 id，不能指向别的电脑）。改 cronExpr / timezone 时 nextFireAt 会自动重算。要暂停 / 恢复请用 schedule_pause / schedule_resume，不要直接 patch status。把任务改成跟进**当前对话**的 heartbeat 请传 bindToCurrentSession=true（代码自动绑定本会话,无需也不要自己查 / 传 session id）。' +
+      '修改一条定时任务的部分字段（patch 形态）。默认改本机的；其它电脑上的任务传 device（此时不支持 bindToCurrentSession；null 可清空 intervalMs，以及支持模型位置选择的目标电脑上的 modelAgentDeviceId / modelAgentKind / model / providerId / effort，其它字段暂不支持；改 preRunHook 必须显式带 timeoutMs（数值，或 null 表示不限时）；targetSessionId 可传该电脑的 deviceId::sessionId 或其本机 id，不能指向别的电脑）。改 cronExpr / timezone 时 nextFireAt 会自动重算。要暂停 / 恢复请用 schedule_pause / schedule_resume，不要直接 patch status。把任务改成跟进**当前对话**的 heartbeat 请传 bindToCurrentSession=true（代码自动绑定本会话,无需也不要自己查 / 传 session id）。' +
       '**目标值缺失时先问用户，禁止盲猜**：用户指令模糊（如"改一下时间"没说改到几点、"换个模型"没说换哪个）时，先用 AskUserQuestion（或一句话追问）确认目标值再 patch；只改用户点名的字段，不要顺手"优化"其它字段。',
     inputShape: {
       id: z.string().min(1).describe('Schedule id'),
@@ -150,8 +150,9 @@ export function registerScheduleUpdateTool(
             ? '改其它电脑上的 preRunHook 必须显式传 timeoutMs(数值,或 null 表示不限时;先用 schedule_get 读到当前值)'
           : (patch as { agentDeviceId?: string | null }).agentDeviceId !== undefined
             ? '其它电脑上的定时任务不能设运行位置 agentDeviceId'
-          : Object.entries(patch).some(([key, value]) => value === null && key !== 'intervalMs')
-            ? '其它电脑上的定时任务暂不支持用 null 清空 intervalMs 以外的字段'
+          : Object.entries(patch).some(([key, value]) => value === null
+              && !['intervalMs', 'modelAgentDeviceId', 'modelAgentKind', 'model', 'providerId', 'effort'].includes(key))
+            ? '其它电脑上的定时任务只支持用 null 清空间隔和模型选择字段'
             : null;
         if (unsupported) {
           return buildJsonResult(
@@ -169,6 +170,7 @@ export function registerScheduleUpdateTool(
         }
         const hook = patch.preRunHook as { command: string; timeoutMs?: number | null } | undefined;
         // 不限时在对方入口的表达就是不带 timeoutMs 的整对象。
+        // Model-selection nulls must survive JSON; the receiving IPC clears them.
         const remotePatch = hook?.timeoutMs === null
           ? { ...patch, preRunHook: { command: hook.command } }
           : patch;

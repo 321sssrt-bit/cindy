@@ -17,6 +17,18 @@ import { BUILTIN_TEMPLATES, Scheduler } from '@cindy/maker-scheduler';
 import { applyTemplateToMobileScheduleDraft, buildMobileScheduleInput, createMobileScheduleDraft, updateDraftBoundSessionId } from '@cindy/maker-shared/schedule-form';
 
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => Promise<unknown>>());
+const generation = vi.hoisted(() => ({ install: vi.fn(), providers: vi.fn(), sessionProvider: vi.fn() }));
+vi.mock('../../scheduler-host/hook-script-generator.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../scheduler-host/hook-script-generator.js')>(),
+  installHookScript: generation.install,
+}));
+vi.mock('../../maker-host/createDesktopProviderService.js', () => ({
+  getDesktopProviderService: () => ({ listProviders: generation.providers }),
+}));
+vi.mock('../../maker-host/session-provider-store.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../maker-host/session-provider-store.js')>(),
+  getSessionProvider: generation.sessionProvider,
+}));
 
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn((name, handler) => handlers.set(name, handler)) },
@@ -144,6 +156,52 @@ describe('scheduled model selection IPC compatibility', () => {
     modelAgentKind: 'pi', model: 'pi-model', providerId: 'pi-source', effort: 'high', fastMode: true } as Schedule;
   const fullForm = { cronExpr: '0 9 * * *', manual: false, notify: { desktop: true, feishu: false },
     targetSessionId: 'bound', agentKind: 'codex', model: 'pi-model' } as UpdateScheduleInput;
+
+  // PR #6830, unit: actual IPC + Scheduler + storage, after a JSON round-trip.
+  // The old remote MCP could set this route but could never restore follow mode.
+  it('persists remote model clearing while omitted model fields remain untouched', async () => {
+    let saved = { ...existing, modelAgentDeviceId: 'shared:owner', name: 'Bound', prompt: 'Run',
+      recurring: true, timezone: 'UTC', cronExpr: '0 9 * * *', status: 'active', workspaceKind: 'dialogue' } as Schedule;
+    const storage = {
+      get: vi.fn(async () => ({ ...saved })),
+      update: vi.fn(async (_id: string, patch: Partial<Schedule>) => (saved = { ...saved, ...patch })),
+    };
+    setSchedulerReady(new Scheduler({ storage: storage as never, runner: { fire: vi.fn() } }), storage as never);
+    registerScheduleHandlers();
+    await handlers.get('maker:schedule:update')!(null, saved.id, JSON.parse(JSON.stringify({ name: 'Renamed' })));
+    expect(saved).toMatchObject({ modelAgentDeviceId: 'shared:owner', modelAgentKind: 'pi', model: 'pi-model' });
+    const clear = { modelAgentDeviceId: null, modelAgentKind: null, model: null, providerId: null, effort: null, fastMode: false };
+    await handlers.get('maker:schedule:update')!(null, saved.id, JSON.parse(JSON.stringify(clear)));
+    const reopened = await handlers.get('maker:schedule:get')!(null, saved.id);
+    expect(reopened).toMatchObject({ name: 'Renamed', targetSessionId: 'bound', agentKind: 'codex',
+      modelAgentDeviceId: undefined, modelAgentKind: undefined, model: undefined, providerId: undefined, effort: undefined, fastMode: false });
+  });
+
+  // PR #6830, unit: a remote bound task supplies cwd only when the user explicitly
+  // selects a local Codex model. The generator must use the connected local source.
+  it('resolves an explicit local hook model without inheriting the remote task route', async () => {
+    generation.providers.mockResolvedValue([{ id: 'local-source', source: 'user', connected: true, agents: ['codex'],
+      routing: { codex: {} }, models: { codex: [{ id: 'local-model', name: 'Local', contextWindow: 1000 }] } }]);
+    generation.sessionProvider.mockReturnValue('remote-source');
+    generation.install.mockResolvedValue({ command: 'node check.mjs' });
+    const maker = { getSessionMeta: vi.fn(async () => ({ agentKind: 'claude-code', model: 'remote-model', agentDeviceId: 'studio' })) };
+    registerScheduleHandlers(() => maker as never);
+    const result = await handlers.get('maker:schedule:generate-pre-run-hook')!(null, {
+      description: 'check changes', targetSessionId: 'bound', resolveBoundSessionRoute: true,
+      modelAgentDeviceId: '', agentKind: 'codex', model: 'local-model',
+    });
+    expect(result).toMatchObject({ ok: true, command: 'node check.mjs' });
+    expect(generation.install).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+      agentKind: 'codex', model: 'local-model', providerId: 'local-source',
+    }));
+    const calls = generation.install.mock.calls.length;
+    const unavailable = await handlers.get('maker:schedule:generate-pre-run-hook')!(null, {
+      description: 'check changes', targetSessionId: 'bound', resolveBoundSessionRoute: true,
+      modelAgentDeviceId: '', agentKind: 'codex', model: 'missing',
+    });
+    expect(unavailable).toMatchObject({ ok: false, reason: 'no_candidate' });
+    expect(generation.install).toHaveBeenCalledTimes(calls);
+  });
 
   it('normalizes an old Mobile full form inside the update handler before partial merge', async () => {
     const updateFromCurrent = vi.fn(async (_id, update) => ({ ...existing, ...await update(existing) }));

@@ -101,7 +101,8 @@ export function createSchedulerRemoteDeps(deps: {
       let response: InvokeResultPayload;
       try {
         const patch = op === 'update' ? args[1] as Record<string, unknown> | undefined : undefined;
-        if (patch && Object.prototype.hasOwnProperty.call(patch, 'modelAgentDeviceId')) {
+        if (patch && (Object.prototype.hasOwnProperty.call(patch, 'modelAgentDeviceId')
+          || ['modelAgentKind', 'model', 'providerId', 'effort'].some((key) => patch[key] === null))) {
           const capabilities = await deps.invoke(deviceId, 'maker:get-capabilities', ['claude-code'], { preSend: assertCurrent });
           assertCurrent();
           if (!capabilities.ok || !(capabilities.result as { supportsScheduleAgentDeviceSelection?: boolean } | null)?.supportsScheduleAgentDeviceSelection) {

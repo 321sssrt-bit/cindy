@@ -386,6 +386,12 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
   ipcMain.handle(MAKER_INVOKE.SCHEDULE_UPDATE, async (_e, id: unknown, patch: unknown) => {
     const scheduleId = requireString(id, 'id');
     requireObject(patch, 'patch');
+    // JSON must keep null until this receiving boundary; undefined keys disappear
+    // in transit. Only model-selection axes gain explicit clearing semantics.
+    const normalizedPatch = { ...patch as Record<string, unknown> };
+    for (const key of ['modelAgentDeviceId', 'modelAgentKind', 'model', 'providerId', 'effort']) {
+      if (normalizedPatch[key] === null) normalizedPatch[key] = undefined;
+    }
     return withScheduler(({ scheduler }) =>
       scheduler.updateFromCurrent(scheduleId, (existing) =>
         stabilizePreRunHookForUpdate(
@@ -394,7 +400,7 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
             existing,
             normalizeLegacyDeviceLinkIntervalClear(
               normalizeNullableIntervalMs(
-                patch as UpdateScheduleInput & { intervalMs?: number | null },
+                normalizedPatch as UpdateScheduleInput & { intervalMs?: number | null },
               ),
               isDeviceLinkInvoke(),
             ),
@@ -509,7 +515,12 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
       targetSessionId,
       resolveBoundSessionRoute: body.resolveBoundSessionRoute === true,
     })) {
-      const session = await maker.getSessionMeta(targetSessionId).catch(() => null);
+      // Explicit local choices resolve only against the host catalog. The bound
+      // task still supplies cwd, but its remote model/provider must not leak in.
+      const explicitLocal = body.modelAgentDeviceId === '';
+      const session = explicitLocal
+        ? requestedAgentKind ? { agentKind: requestedAgentKind, model: model ?? '', agentDeviceId: null } : null
+        : await maker.getSessionMeta(targetSessionId).catch(() => null);
       if (session?.agentDeviceId) return unsupportedRemoteGeneration(providerId, model ?? session.model, session.agentKind);
       // Bound-session fallback must use the same live connection snapshot as
       // the provider picker. Never turn an unconnected built-in provider into
@@ -523,7 +534,7 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
       });
       const route = resolveBoundSessionGenerationRoute({
         session,
-        sessionProviderId: getSessionProvider(targetSessionId),
+        sessionProviderId: explicitLocal ? undefined : getSessionProvider(targetSessionId),
         requestedProviderId: providerId,
         requestedModel: model,
         providers,
@@ -533,7 +544,7 @@ export function registerScheduleHandlers(getMaker?: () => Maker | null): void {
           ok: false as const,
           reason: 'no_candidate' as const,
           attempts: [{
-            providerId: getSessionProvider(targetSessionId) ?? targetSessionId,
+            providerId: explicitLocal ? providerId ?? '' : getSessionProvider(targetSessionId) ?? targetSessionId,
             model: session?.model?.trim() ?? '',
             transport: session?.agentKind === 'codex' ? 'codex-responses' as const : 'litellm-chat-completions' as const,
             status: 'skipped' as const,

@@ -599,6 +599,20 @@ describe('SchedulerScriptCapabilityBroker', () => {
     expect(result).toMatchObject({ target_session_id: 'session-1', wake_kind: 'created' });
   });
 
+  // PR #6830 / unit: MCP may persist a different model Harness. Exercise the
+  // actual dispatch entry, which previously paired this Codex model with Claude.
+  it('dispatches a new task with the explicit model Harness', async () => {
+    sendToSessionMock.mockResolvedValue({ ok: true, targetSessionId: 'new', agentKind: 'codex', wakeKind: 'created' });
+    await new SchedulerScriptCapabilityBroker().call(
+      { method: 'sessions.dispatch', params: { message: 'run task' } },
+      new Set(['sessions.dispatch']),
+      { schedule: schedule({ agentKind: 'claude-code', modelAgentKind: 'codex', modelAgentDeviceId: '' }) },
+    );
+    expect(sendToSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      createDefaults: expect.objectContaining({ agentKind: 'codex', model: 'gpt-5.5', providerId: 'provider-1' }),
+    }));
+  });
+
   // Integration regression: a persisted remote route must never become local
   // create defaults merely because sessions.dispatch omits a target task.
   it.each([

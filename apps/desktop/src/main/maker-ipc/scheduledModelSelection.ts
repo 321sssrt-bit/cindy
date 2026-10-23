@@ -2,6 +2,7 @@ import type { AgentKind, Effort } from '@cindy/maker-core';
 import { effectiveSourceIdForModel, findCatalogModel, type ProviderView } from '@cindy/model-providers';
 import { resolveCompatibleSessionRuntimeEffort } from './sessionRuntimeControl';
 import { parseScheduledModelBaseline, type ScheduledModelBaseline } from '../../shared/scheduledModelBaseline';
+import { throwIpcError } from '../utils/ipcValidate';
 
 /** A saved automation choice, applied only while its target's send lock is held. */
 export interface ScheduledModelSelection {
@@ -91,8 +92,10 @@ export function assertScheduledHarnessSupported(
   const changesHarness = agentKind && target.agentKind !== agentKind;
   const changesDevice = agentDeviceId !== undefined && agentDeviceId !== (target.agentDeviceId ?? null);
   if (!changesHarness && !changesDevice) return;
-  if (target.remoteHostId || target.orcaRole) {
-    throw new Error('SSH and Orca automation targets must keep their current Harness');
+  // Ordinary Orca Lead/Worker use the existing handoff for both axes, including
+  // restoration before the next manual send. SSH still cannot change either.
+  if (target.remoteHostId) {
+    throwIpcError('SSH_HARNESS_SWITCH_UNSUPPORTED', 'SSH automation targets must keep their current Harness');
   }
 }
 
@@ -106,7 +109,7 @@ export function resolveScheduledModelSelection(
   const provider = providers.find((candidate) => candidate.id === providerId);
   const model = findCatalogModel(provider, selection.model, selection.agentKind, { exact: true });
   if (!provider?.connected || !model) {
-    throw new Error(`Scheduled model "${selection.model}" is unavailable from provider "${providerId ?? 'default'}"`);
+    throwIpcError('MODEL_SELECTION_UNAVAILABLE', `Scheduled model "${selection.model}" is unavailable from provider "${providerId ?? 'default'}"`);
   }
   return {
     ...selection,
@@ -141,9 +144,13 @@ export async function applyScheduledModelSelection(
     ...(selection.agentDeviceId === undefined && target.agentDeviceId !== undefined
       ? { agentDeviceId: target.agentDeviceId } : {}),
   });
-  if (target.agentKind !== resolved.agentKind || (target.agentDeviceId ?? null) !== (resolved.agentDeviceId ?? null)) {
-    const result = await deps.switchHarness(resolved);
-    if (!result.engineReady || result.retryPending) throw new Error('Scheduled Harness switch did not become ready');
+  const changesDevice = (target.agentDeviceId ?? null) !== (resolved.agentDeviceId ?? null);
+  if (target.agentKind !== resolved.agentKind || changesDevice) {
+    // The handoff treats an explicit location as a relocation request. Preserve
+    // engine-only switching for execution-device Workers without relaxing that boundary.
+    const { agentDeviceId: _location, ...harnessSelection } = resolved;
+    const result = await deps.switchHarness(changesDevice ? resolved : harnessSelection);
+    if (!result.engineReady || result.retryPending) throwIpcError('HARNESS_SWITCH_NOT_READY', 'Scheduled Harness switch did not become ready');
   }
   await deps.applyModel(resolved);
   return resolved;

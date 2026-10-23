@@ -861,6 +861,43 @@ describe('AgentIslandService native publishing', () => {
     expect(published.at(-1)?.sessions.map((session) => session.sessionId)).toEqual(['muted-task']);
   }, 20_000);
 
+  it('取消静音时不为静音期间已经发生的旧状态补播提示音', async () => {
+    const { AgentIslandService } = await import('../service.js');
+    const publish = vi.fn(() => true);
+    const playSound = vi.fn<(sound: AgentIslandSoundChoice) => boolean>(() => true);
+    const service = new AgentIslandService({
+      getMainWindow: () => null,
+      nativeHost: {
+        failed: false,
+        headless: false,
+        publish,
+        suspend: () => undefined,
+        playSound,
+      },
+    });
+    syncEnabledForTest(service, publish);
+    service.setSoundSettings({
+      enabled: true,
+      sounds: {
+        ...DEFAULT_AGENT_ISLAND_SOUND_SETTINGS.sounds,
+        start: customSound('start.wav'),
+        complete: customSound('complete.wav'),
+      },
+    });
+
+    // 静音期间任务跑完：岛面看不到它，自然也不响。
+    mocks.isSessionNotificationsMutedSync.mockImplementation((id: string) => id === 'muted-task');
+    playSound.mockClear();
+    service.handleUserPrompt({ sessionId: 'muted-task', agentKind: 'codex' }, 'run tests');
+    service.handleAgentEvent({ sessionId: 'muted-task', agentKind: 'codex' }, doneEvent());
+    expect(playSound).not.toHaveBeenCalled();
+
+    // 取消静音 → 任务带着「已完成」重新出现在岛面上，但那是旧状态，不该补播完成音。
+    mocks.isSessionNotificationsMutedSync.mockReturnValue(false);
+    service.handleNotificationMuteChanged();
+    expect(playSound).not.toHaveBeenCalled();
+  }, 20_000);
+
   it('exposes the canonical snapshot and emits per-session transition edges', async () => {
     const { AgentIslandService } = await import('../service.js');
     const service = new AgentIslandService({

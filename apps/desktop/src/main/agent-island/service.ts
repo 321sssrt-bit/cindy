@@ -1308,6 +1308,19 @@ export class AgentIslandService {
    * 侧栏卡片的实时活动、等待交互态与远端活动镜像不受影响。
    */
   handleNotificationMuteChanged(): void {
+    // 取消静音会让任务重新进入展示面。若它在此期间还在跑 / 已完成 / 报错 / 等确认,
+    // 逐帧比较会把「重新出现」当成一次新转移,补播一次 start / complete / error /
+    // attention 提示音。把刚解除抑制的任务记进本帧的声音基线,只为旧状态重发一次画面。
+    if (this.enabledSynced && this.enabled) {
+      for (const sessionId of this.state.sessions.keys()) {
+        if (
+          this.state.displaySuppressedSessionIds.has(sessionId) &&
+          !isSessionNotificationsMutedSync(sessionId)
+        ) {
+          this.baselineSoundSessionIds.add(sessionId);
+        }
+      }
+    }
     this.publish();
   }
 

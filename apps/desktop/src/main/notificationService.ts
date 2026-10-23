@@ -174,7 +174,12 @@ export function showDesktopSessionEvent(
   },
 ): boolean {
   const { sessionId, title, kind } = payload;
-  if (sessionId && payload.markAttention !== false) markSessionNeedsAttention(sessionId);
+  const isLocalSession = !!sessionId && payload.markAttention !== false;
+  if (isLocalSession) markSessionNeedsAttention(sessionId);
+  // 「消息免打扰」门放在这个**公共出口**上：scheduler、伙伴自主跟进等 main 内
+  // 直接调用方都不经过 IPC handler 的那道判定，只挡 handler 会漏出系统 toast。
+  // 其它设备的任务（markAttention === false）不查本机静音标记。
+  if (isLocalSession && isSessionNotificationsMutedSync(sessionId)) return false;
   const safeTitle = title?.trim() || sessionId.slice(0, 8) || getSessionNotificationUntitled();
   return showDesktopToast(safeTitle, kind, () => focusWindow(getWindow, sessionId), payload.body, payload.teammate);
 }

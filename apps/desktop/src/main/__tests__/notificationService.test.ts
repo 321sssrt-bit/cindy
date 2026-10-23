@@ -223,6 +223,21 @@ describe('notificationService — channels 分发', () => {
     expect(feishuIm.sendText).not.toHaveBeenCalled();
   });
 
+  // bot-autonomy / scheduler 这类 main 内直调方不经过 IPC handler，静音门必须在
+  // 公共出口（showDesktopSessionEvent）上，否则静音任务仍会弹出系统 toast。
+  it('main 内直接调公共出口时同样受静音门禁，其它设备任务不受影响', async () => {
+    const { initNotificationService, showDesktopSessionEvent } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('owner')));
+    isSessionNotificationsMutedSync.mockReturnValue(true);
+
+    expect(showDesktopSessionEvent(() => null, { sessionId: 'muted', title: 'Muted', kind: 'needs-reply' })).toBe(false);
+    expect(notificationCtor).not.toHaveBeenCalled();
+
+    // 其它设备的任务（markAttention: false）不查本机静音标记，照旧弹。
+    expect(showDesktopSessionEvent(() => null, { sessionId: 'muted', title: 'Remote', kind: 'needs-reply', markAttention: false })).toBe(true);
+    expect(notificationCtor).toHaveBeenCalledOnce();
+  });
+
   it('keeps every channel for a task that is not muted', async () => {
     const { initNotificationService } = await freshService();
     const feishuIm = makeFeishuIm('owner');

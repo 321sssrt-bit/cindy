@@ -1,5 +1,5 @@
 import type { AgentKind, Effort } from '@cindy/maker-core';
-import { effectiveSourceIdForModel, findCatalogModel, isModelSelectableForNewRoute, type ProviderView } from '@cindy/model-providers';
+import { connectedProvidersForAgent, effectiveSourceIdForModel, findCatalogModel, isModelSelectableForNewRoute, type ProviderView } from '@cindy/model-providers';
 import { resolveCompatibleSessionRuntimeEffort } from './sessionRuntimeControl';
 import { parseScheduledModelBaseline, type ScheduledModelBaseline } from '../../shared/scheduledModelBaseline';
 import { throwIpcError } from '../utils/ipcValidate';
@@ -29,7 +29,7 @@ export function createScheduledModelScope(deps: {
     baseline: string | null;
     profileRevision?: string | null;
   } | null>;
-  write: (sessionId: string, baseline: ScheduledModelBaseline | null, profileRevision?: string | null) => Promise<void | boolean>;
+  write: (sessionId: string, baseline: ScheduledModelBaseline | null, profileRevision?: string | null, expectedBaseline?: string | null) => Promise<void | boolean>;
   isBusy: (sessionId: string) => boolean;
   apply: (sessionId: string, profile: ScheduledModelSelection) => Promise<void>;
   createId: () => string;
@@ -45,19 +45,21 @@ export function createScheduledModelScope(deps: {
       let row = await deps.read(sessionId);
       assertOwner(owner);
       if (!row) return undefined;
-      const existing = parseScheduledModelBaseline(row.baseline);
-      if (existing) {
+      const reuseBaseline = async (existing: ScheduledModelBaseline, captured: NonNullable<typeof row>) => {
         // Older baselines predate location overrides. Capture the current location
         // before this automation can move it, without replacing the owner's model.
         if (existing.agentDeviceId === undefined) {
           const written = await deps.write(sessionId,
-            { ...existing, agentDeviceId: row.profile.agentDeviceId ?? null }, row.profileRevision);
+            { ...existing, agentDeviceId: captured.profile.agentDeviceId ?? null }, captured.profileRevision, captured.baseline);
+          assertOwner(owner);
           if (written === false) {
             throw new ScheduledModelSelectionBusyError('Companion profile changed during baseline upgrade');
           }
         }
         return existing.scopeId;
-      }
+      };
+      const existing = parseScheduledModelBaseline(row.baseline);
+      if (existing && !existing.pendingBotProfileVersion) return reuseBaseline(existing, row);
       const profileRevision = row.profileRevision;
       // Settings may have committed while their asynchronous runtime refresh is
       // still queued. Align the owner under this same send lease before capture.
@@ -71,12 +73,16 @@ export function createScheduledModelScope(deps: {
       if (row.profileRevision !== profileRevision) {
         throw new ScheduledModelSelectionBusyError('Companion profile changed during baseline preparation');
       }
+      const prepared = parseScheduledModelBaseline(row.baseline);
+      if (prepared?.pendingBotProfileVersion) {
+        throw new ScheduledModelSelectionBusyError('Permanent model selection is still pending');
+      }
+      if (prepared) return reuseBaseline(prepared, row);
       const scopeId = deps.createId();
       const written = await deps.write(sessionId, { ...row.profile, agentDeviceId: row.profile.agentDeviceId ?? null,
-        effort: row.profile.effort || null, scopeId }, profileRevision);
-      if (written === false) {
-        throw new ScheduledModelSelectionBusyError('Companion profile changed during baseline capture');
-      }
+        effort: row.profile.effort || null, scopeId }, profileRevision, row.baseline);
+      assertOwner(owner);
+      if (written === false) throw new ScheduledModelSelectionBusyError('Scheduled model selection changed before scope creation');
       return scopeId;
     },
     async restore(sessionId: string, expectedScopeId?: string): Promise<void> {
@@ -86,10 +92,15 @@ export function createScheduledModelScope(deps: {
       assertOwner(owner);
       const baseline = parseScheduledModelBaseline(row?.baseline);
       if (!baseline || (expectedScopeId && baseline.scopeId !== expectedScopeId)) return;
+      // A permanent save owns the next selection, including across restart.
+      // Keep its old baseline for retries until reconciliation accepts the save.
+      if (baseline.pendingBotProfileVersion) return;
       // Keep the saved choice on failure so the next input retries before dispatch.
       await deps.apply(sessionId, baseline);
       assertOwner(owner);
-      await deps.write(sessionId, null);
+      const written = await deps.write(sessionId, null, row!.profileRevision, row!.baseline);
+      assertOwner(owner);
+      if (written === false) throw new ScheduledModelSelectionBusyError('Scheduled model selection changed before scope cleanup');
     },
   };
 }
@@ -103,14 +114,15 @@ export async function writeScheduledModelBaselineIfProfileCurrent(
   sessionId: string,
   baseline: ScheduledModelBaseline,
   profileRevision: string | null,
+  expectedBaseline: string | null = null,
 ): Promise<boolean> {
   const result = await db.exec(`UPDATE sessions SET scheduled_model_baseline = ?
-    WHERE id = ? AND status = 'active'
+    WHERE id = ? AND status = 'active' AND scheduled_model_baseline IS ?
       AND (SELECT json_array(p.id, p.current_version)
            FROM bot_session_links l JOIN bot_profiles p ON p.id = l.bot_id
            WHERE l.session_id = sessions.id AND l.archived_at IS NULL
              AND l.role IN ('canonical', 'group', 'channel', 'thread') LIMIT 1) IS ?`,
-  [JSON.stringify(baseline), sessionId, profileRevision]);
+  [JSON.stringify(baseline), sessionId, expectedBaseline, profileRevision]);
   return result.changes === 1;
 }
 
@@ -148,14 +160,11 @@ export function resolveScheduledModelSelection(
 ): ScheduledModelSelection {
   const providerId = selection.providerId ??
     effectiveSourceIdForModel(providers, null, selection.model, selection.agentKind);
-  const provider = providers.find((candidate) => candidate.id === providerId);
+  const provider = connectedProvidersForAgent(providers, selection.agentKind)
+    .find((candidate) => candidate.id === providerId);
   const model = findCatalogModel(provider, selection.model, selection.agentKind, { exact: true });
-  // Preserve the previous remote reader's admission checks. Local routes keep
-  // their existing live guard and owner-baseline restoration policy.
-  if (!provider?.connected || provider.suspended || !model || (selection.agentDeviceId && (
-    !provider.agents.includes(selection.agentKind) ||
-    !isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' })
-  ))) {
+  if (!provider || !model ||
+    !isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' })) {
     throwIpcError('MODEL_SELECTION_UNAVAILABLE', `Scheduled model "${selection.model}" is unavailable from provider "${providerId ?? 'default'}"`);
   }
   return {
@@ -166,13 +175,31 @@ export function resolveScheduledModelSelection(
   };
 }
 
+/** Resolve against the bound execution computer; the runner owns inactive-target recovery. */
+export function createScheduledModelSelectionResolver(deps: {
+  readRemoteProviders: (deviceId: string, agent: AgentKind, model: string, providerId: string | null) => Promise<ProviderView[]>;
+  resolveLocalSelection: (selection: ScheduledModelSelection) => Promise<ScheduledModelSelection>;
+}) {
+  return async (selection: ScheduledModelSelection, target?: ScheduledModelTarget | null): Promise<ScheduledModelSelection> => {
+    const agentDeviceId = selection.agentDeviceId === undefined
+      ? target?.agentDeviceId : selection.agentDeviceId;
+    if (agentDeviceId && !target?.remoteHostId) {
+      const providers = await deps.readRemoteProviders(
+        agentDeviceId, selection.agentKind, selection.model, selection.providerId,
+      );
+      return resolveScheduledModelSelection(selection, providers);
+    }
+    return deps.resolveLocalSelection(selection);
+  };
+}
+
 /** Reuse the ordinary history handoff; never stage an automation intent on a busy task. */
 export async function applyScheduledModelSelection(
   selection: ScheduledModelSelection,
   deps: {
     getTarget: () => Promise<ScheduledModelTarget | null>;
     isBusy: () => boolean;
-    resolveSelection: (selection: ScheduledModelSelection) => Promise<ScheduledModelSelection>;
+    resolveSelection: (selection: ScheduledModelSelection, target?: ScheduledModelTarget | null) => Promise<ScheduledModelSelection>;
     switchHarness: (selection: ScheduledModelSelection) => Promise<{ engineReady: boolean; retryPending?: boolean }>;
     applyModel: (selection: ScheduledModelSelection) => Promise<void>;
   },
@@ -190,7 +217,7 @@ export async function applyScheduledModelSelection(
   const resolved = await deps.resolveSelection({ ...selection,
     ...(selection.agentDeviceId === undefined && target.agentDeviceId !== undefined
       ? { agentDeviceId: target.agentDeviceId } : {}),
-  });
+  }, target);
   const changesDevice = (target.agentDeviceId ?? null) !== (resolved.agentDeviceId ?? null);
   if (target.agentKind !== resolved.agentKind || changesDevice) {
     // The handoff treats an explicit location as a relocation request. Preserve

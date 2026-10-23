@@ -199,7 +199,7 @@ import {
   readInputDeliveryClientIds,
 } from '@cindy/device-link';
 import { and, asc, desc, eq, gte, inArray, isNull, like, lt, or, sql } from 'drizzle-orm';
-import { applyScheduledModelSelection, createScheduledModelScope, resolveScheduledModelSelection, writeScheduledModelBaselineIfProfileCurrent, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
+import { applyScheduledModelSelection, createScheduledModelScope, createScheduledModelSelectionResolver, writeScheduledModelBaselineIfProfileCurrent, ScheduledModelSelectionBusyError, type ScheduledModelSelection, type ScheduledModelSelectionLease } from './scheduledModelSelection';
 import { parseScheduledModelBaseline } from '../../shared/scheduledModelBaseline';
 import { recordTurnModelChange, type TurnModelIdentity } from './turnModelChange';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
@@ -7216,6 +7216,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     setProviderOrder: (providerIds) => setProviderOrder(providerIds),
     getProviderOrder: () => readProviderOrder(),
     listPresets: () => getActiveCatalog().presets ?? [],
+    getModelCatalog: () => getActiveCatalog(),
     testConnection: (input) => testProviderConnection(input),
     fetchModels: async (spec) => {
       if (spec.savedProviderId && subscriptionAccountKind(spec.savedProviderId)) {
@@ -11041,18 +11042,19 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     getTarget: async () => {
       const row = await agentSwitchDeps.getSessionRow(sessionId);
       return row ? { agentKind: dbToMakerAgentKind(row.agentKind), status: row.status,
-        agentDeviceId: row.agentDeviceId, remoteHostId: row.remoteHostId, orcaRole: row.orcaRole } : null;
+        remoteHostId: row.remoteHostId, agentDeviceId: row.agentDeviceId, orcaRole: row.orcaRole } : null;
     },
     isBusy: () => isSessionInTurn(sessionId) || !!maker.getSession(sessionId)?.isTurnRunning(),
-    resolveSelection: async (route) => {
-      if (route.agentDeviceId) return resolveScheduledModelSelection(route,
-        await readUsableAgentDeviceProviders(route.agentDeviceId, route.agentKind, route.model, route.providerId));
-      const reroute = await assertModelRouteUsable(route.agentKind, route.model, route.providerId);
-      return resolveScheduledModelSelectionLive({ ...route,
-        providerId: reroute && shouldApplyExclusiveProviderRerouteLive(route.providerId)
-          ? reroute : route.providerId,
-      });
-    },
+    resolveSelection: createScheduledModelSelectionResolver({
+      readRemoteProviders: readUsableAgentDeviceProviders,
+      resolveLocalSelection: async (route) => {
+        const reroute = await assertModelRouteUsable(route.agentKind, route.model, route.providerId);
+        return resolveScheduledModelSelectionLive({ ...route,
+          providerId: reroute && shouldApplyExclusiveProviderRerouteLive(route.providerId)
+            ? reroute : route.providerId,
+        });
+      },
+    }),
     switchHarness: async (route) => {
       const [savedModes] = await getDbClient().drizzle
         .select({ planMode: sessions.planModeEnabled }).from(sessions)
@@ -11115,19 +11117,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         effort: row.effort, fastMode: row.fastMode,
       } } : null;
     },
-    write: async (sessionId, baseline, profileRevision) => {
+    write: async (sessionId, baseline, profileRevision, expectedBaseline = null) => {
+      const owner = captureSessionRuntimeControlOwnerEpoch();
+      const client = getDbClient();
       if (baseline) {
-        const written = await writeScheduledModelBaselineIfProfileCurrent(getDbClient(), sessionId, baseline, profileRevision ?? null);
+        const written = await writeScheduledModelBaselineIfProfileCurrent(
+          client, sessionId, baseline, profileRevision ?? null, expectedBaseline,
+        );
+        if (!sessionRuntimeControlOwnerEpochMatches(owner)) throw new Error('Account changed during scheduled model selection');
         if (written) await broadcastSessionRuntimeProjection(sessionId);
         return written;
       }
-      const owner = captureSessionRuntimeControlOwnerEpoch();
-      const db = getDbClient().drizzle;
-      const [row] = await db.select({ baseline: sessions.scheduledModelBaseline })
-        .from(sessions).where(eq(sessions.id, sessionId)).limit(1);
-      const saved = parseScheduledModelBaseline(row?.baseline);
+      const db = client.drizzle;
+      const saved = parseScheduledModelBaseline(expectedBaseline);
       if (!sessionRuntimeControlOwnerEpochMatches(owner)) throw new Error('Account changed during scheduled model selection');
-      await db.update(sessions)
+      const updated = await db.update(sessions)
         .set({
           scheduledModelBaseline: null,
           ...(saved ? {
@@ -11135,8 +11139,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             providerId: saved.providerId, effort: saved.effort ?? undefined, fastMode: saved.fastMode,
           } : {}),
         })
-        .where(eq(sessions.id, sessionId));
+        .where(and(eq(sessions.id, sessionId), expectedBaseline === null
+          ? isNull(sessions.scheduledModelBaseline) : eq(sessions.scheduledModelBaseline, expectedBaseline)))
+        .returning({ id: sessions.id });
+      if (!updated.length) return false;
       await broadcastSessionRuntimeProjection(sessionId);
+      return true;
     },
     isBusy: (sessionId) => isSessionInTurn(sessionId) || !!maker.getSession(sessionId)?.isTurnRunning() ||
       isUserPendingAgentSwitchIntent(agentSwitchPending.get(sessionId)),
@@ -11144,16 +11152,21 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   const updateScheduledPreference = async (
     sessionId: string, patch: { effort?: ScheduledModelSelection['effort']; fastMode?: ScheduledModelSelection['fastMode'] } | null,
+    expectedBaseline?: string | null,
   ) => {
     const db = getDbClient().drizzle;
     const [row] = await db.select({ baseline: sessions.scheduledModelBaseline }).from(sessions)
       .where(eq(sessions.id, sessionId)).limit(1);
     const baseline = parseScheduledModelBaseline(row?.baseline);
-    if (!baseline) return;
-    await db.update(sessions).set({
+    if (expectedBaseline !== undefined && row?.baseline !== expectedBaseline) return false;
+    if (!baseline) return true;
+    const updated = await db.update(sessions).set({
       scheduledModelBaseline: patch ? JSON.stringify({ ...baseline, ...patch }) : null,
-    }).where(eq(sessions.id, sessionId));
+    }).where(and(eq(sessions.id, sessionId), eq(sessions.scheduledModelBaseline, row.baseline!)))
+      .returning({ id: sessions.id });
+    if (!updated.length) return false;
     await broadcastSessionRuntimeProjection(sessionId);
+    return true;
   };
   const updateSavedScheduledAxis = async (
     sessionId: string,
@@ -16123,6 +16136,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   const reconcileBotModelRoute = createBotModelRouteReconciler({
     ownerEpoch: captureSessionRuntimeControlOwnerEpoch,
+    onSelectionAccepted: (sessionId, expectedBaseline) => updateScheduledPreference(sessionId, null, expectedBaseline),
     withSessionLock: withSendToSessionLock,
     read: async (sessionId, purpose) => {
       const [row] = await getDbClient().drizzle.select({
@@ -16160,8 +16174,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       const live = maker.getSession(sessionId);
       return {
         chain: selection.chain,
+        scheduledModelBaseline: row.scheduledModelBaseline,
         followsCindyDefault: selection.followsCindyDefault,
-        scheduledModelBaseline: parseScheduledModelBaseline(row.scheduledModelBaseline),
         current: {
           agentDeviceId: row.agentDeviceId,
           agentKind: live?.agentKind ?? dbToMakerAgentKind(row.agentKind),

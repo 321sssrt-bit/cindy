@@ -300,7 +300,11 @@ export async function resolveLenientSessionRoute(
   return route;
 }
 
-/** Resolve one provider-specific snapshot after route admission for fresh and bound sends. */
+/**
+ * Resolve one provider-specific snapshot after route admission for fresh and bound sends.
+ * An Agent on another computer resolves against that computer's authorized catalog and
+ * never falls back to a local provider with the same id.
+ */
 export async function resolveScheduledModelSelectionLive(
   selection: ScheduledModelSelection,
   readRemoteProviders?: (agentDeviceId: string) => Promise<ProviderView[]>,

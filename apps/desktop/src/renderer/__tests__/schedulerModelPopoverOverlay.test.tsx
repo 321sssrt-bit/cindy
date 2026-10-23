@@ -85,6 +85,13 @@ vi.mock('@/hooks/useAvailableAgents', () => ({ useModelPickerAgents: () => ['cla
 // These cases exercise the popover; location discovery is covered by useWorkerAgentDevices.
 vi.mock('@/hooks/useModelRouteDevices', () => ({ useModelRouteDevices: () => ({ devices: undefined }) }));
 
+// PR #6832: these local popover interaction tests now also import remote location
+// discovery. Keep the unit fixture local; loading real account/chat state made
+// collection fail before the existing selection/refresh assertions could run.
+vi.mock('@/hooks/useModelRouteDevices', () => ({
+  useModelRouteDevices: () => ({ leadAgentDeviceId: null, devices: [] }),
+}));
+
 vi.mock('@/hooks/useAgentCapabilities', () => ({
   getCachedCapabilities: () => null,
   useAgentCapabilities: () => ({

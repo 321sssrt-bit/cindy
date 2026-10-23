@@ -17,10 +17,9 @@ export interface ScheduledModelSelection {
 export interface ScheduledModelSelectionLease {
   release: () => void;
   selection: ScheduledModelSelection;
-  restore?: () => Promise<void>;
 }
 
-/** All calls run under the existing session send lock. The saved preference survives restart. */
+/** Send-boundary operations only. The saved preference survives idle time and restart. */
 export function createScheduledModelScope(deps: {
   read: (sessionId: string) => Promise<{
     profile: Omit<ScheduledModelSelection, 'effort'> & {
@@ -44,9 +43,17 @@ export function createScheduledModelScope(deps: {
       assertOwner(owner);
       if (!row) return undefined;
       const existing = parseScheduledModelBaseline(row.baseline);
-      if (existing) return existing.scopeId;
+      if (existing) {
+        // Older baselines predate location overrides. Capture the current location
+        // before this automation can move it, without replacing the owner's model.
+        if (existing.agentDeviceId === undefined) {
+          await deps.write(sessionId, { ...existing, agentDeviceId: row.profile.agentDeviceId ?? null });
+        }
+        return existing.scopeId;
+      }
       const scopeId = deps.createId();
-      await deps.write(sessionId, { ...row.profile, effort: row.profile.effort || null, scopeId });
+      await deps.write(sessionId, { ...row.profile, agentDeviceId: row.profile.agentDeviceId ?? null,
+        effort: row.profile.effort || null, scopeId });
       return scopeId;
     },
     async restore(sessionId: string, expectedScopeId?: string): Promise<void> {
@@ -121,9 +128,12 @@ export async function applyScheduledModelSelection(
   },
 ): Promise<ScheduledModelSelection> {
   const target = await deps.getTarget();
-  // The runner owns missing/archived target recovery, including persistent-task rebinding.
+  // The runner restores ordinary archived targets before selection and owns
+  // deleted/missing-target rebinding for persistent tasks.
+  // Its replacement resolves at the schedule's saved location. Do not query the old
+  // target's catalog: that device may be offline or its provider share revoked.
   if (!target || target.status === 'archived' || target.status === 'deleted') {
-    return deps.resolveSelection(selection);
+    return selection;
   }
   if (deps.isBusy()) throw new ScheduledModelSelectionBusyError('Scheduled model selection waits for the current turn');
   assertScheduledHarnessSupported(target, selection.agentKind, selection.agentDeviceId);

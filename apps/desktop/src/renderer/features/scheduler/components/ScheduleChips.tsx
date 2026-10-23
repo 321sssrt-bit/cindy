@@ -66,6 +66,8 @@ interface ChipButtonProps {
   active?: boolean;
   variant?: 'toolbar' | 'pill';
   className?: string;
+  /** 悬停 / 读屏的完整说明(label 会被截断时用)。 */
+  title?: string;
   onClick?: () => void;
 }
 

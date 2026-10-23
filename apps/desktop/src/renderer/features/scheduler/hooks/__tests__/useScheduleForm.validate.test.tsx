@@ -3,6 +3,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { Schedule, ScheduleTemplate } from '@cindy/maker-scheduler';
+import type { ProviderView } from '@cindy/model-providers';
 import type { Session } from '@/lib/ccAgent.types';
 
 import { useScheduleForm } from '../useScheduleForm';
@@ -56,6 +57,47 @@ describe('saved automation model selection', () => {
     category: 'code-quality', source: 'builtin',
   };
 
+  // Merge regression, unit/jsdom: opening and renaming a legacy persistent task
+  // must retain its fresh-run default without pinning its existing task location.
+  it('keeps legacy location semantics until the user explicitly changes the selection', () => {
+    const saved = { id: 'legacy', name: 'Legacy', prompt: 'run', cronExpr: '0 * * * *',
+      timezone: 'UTC', recurring: true, agentKind: 'codex', model: 'remote-model',
+      providerId: 'remote-provider', agentDeviceId: 'studio', persistentSession: true,
+      targetSessionId: 'bound-task', notify: { desktop: true, feishu: false } } as Schedule;
+    const { result } = renderHook(() => useScheduleForm(saved));
+    act(() => result.current.setField('name', 'Renamed'));
+    expect(result.current.toInput()).toMatchObject({ name: 'Renamed', agentDeviceId: 'studio',
+      modelAgentDeviceId: undefined, modelAgentKind: undefined });
+    act(() => result.current.selectModelConfiguration(null));
+    expect(result.current.toInput()).toMatchObject({ agentDeviceId: undefined,
+      modelAgentDeviceId: undefined, model: undefined });
+  });
+
+  // PR #6830 merge review, unit/jsdom: without matching local history a provider-only
+  // template used to clear its local intent and leave the bound task on a share.
+  it.each([true, false])('keeps a local template complete or blocks saving (catalog ready=%s)', (ready) => {
+    const { result } = renderHook(() => useScheduleForm(null));
+    act(() => {
+      result.current.setField('name', 'Template');
+      result.current.setField('prompt', 'Run');
+      result.current.selectBoundSession({ id: 'remote-task', agentKind: 'codex' } as Session);
+    });
+    act(() => result.current.selectModelConfiguration({ agentKind: 'codex', model: 'remote-model',
+      providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner', effort: 'high', fastMode: false }));
+    const providers = [{ id: 'template-local-provider', name: 'Local', source: 'user', connected: true,
+      agents: ['codex'], models: { codex: [{ id: 'local-model', name: 'Local model' }] },
+      routing: { codex: {} }, auth: { method: 'none' },
+    }] as ProviderView[];
+    act(() => result.current.applyTemplateAgentFields({ ...template, providerId: 'template-local-provider' },
+      ready ? providers : undefined));
+    expect(result.current.toInput()).toMatchObject({ targetSessionId: 'remote-task',
+      modelAgentKind: 'codex', modelAgentDeviceId: '', providerId: 'template-local-provider',
+      model: ready ? 'local-model' : undefined });
+    expect(result.current.validate()).toEqual(ready ? null : {
+      key: 'scheduler.editor.validation.modelUnavailable', values: { model: 'template-local-provider' },
+    });
+  });
+
   // PR #6830: the hook used to reset location separately from the retained route.
   // Unit/jsdom: apply a same-Harness template to a shared choice, then serialize it.
   it('keeps the shared route when a template only repeats the current Harness', () => {
@@ -70,12 +112,18 @@ describe('saved automation model selection', () => {
 
   // A partial local template must not combine its model/provider with the old share.
   it.each([
-    { model: 'local-model' },
-    { providerId: 'local-provider' },
-  ])('discards inherited shared fields when applying a local route %j', (override) => {
+    { override: { model: 'local-model' }, legacy: false },
+    { override: { providerId: 'local-provider' }, legacy: false },
+    { override: { model: 'local-model' }, legacy: true },
+    { override: { providerId: 'local-provider' }, legacy: true },
+  ])('discards inherited shared fields when applying a local route %j', ({ override, legacy }) => {
     const { result } = renderHook(() => useScheduleForm(null));
     act(() => result.current.selectModelConfiguration({ agentKind: 'claude-code', model: 'remote-model',
       providerId: 'remote-provider', modelAgentDeviceId: 'shared:owner', effort: 'high', fastMode: true }));
+    if (legacy) act(() => {
+      result.current.setField('modelAgentDeviceId', undefined);
+      result.current.setField('agentDeviceId', 'studio');
+    });
     act(() => result.current.applyTemplateAgentFields({ ...template, ...override }));
     expect(result.current.form).toMatchObject({ ...override, modelAgentDeviceId: '' });
     expect(result.current.form.model).not.toBe('remote-model');

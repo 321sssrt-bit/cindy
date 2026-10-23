@@ -111,7 +111,7 @@ describeMigrationReplay('migration replay', () => {
       if (shape !== 'missing') db.exec(`CREATE TABLE orca_workers (id TEXT PRIMARY KEY${shape === 'partial' ? ', pending_remote_report TEXT' : ''}); INSERT INTO orca_workers (id) VALUES ('worker-1');`);
       db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 124 });
-      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130]);
+      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130, 131]);
       expect(columnNames(db, 'sessions')).toContain('scheduled_model_baseline');
       expect(tableExists(db, 'plugin_usage_subjects')).toBe(true);
       expect(tableExists(db, 'plugin_usage_events')).toBe(true);
@@ -224,7 +224,7 @@ describeMigrationReplay('migration replay', () => {
       const stagedDir = mkdtempSync(path.join(tmpdir(), 'cindy-scheduled-agent-location-'));
       try {
         db.exec('CREATE TABLE migration_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)');
-        const migration = listMigrations(drizzleDir()).find((item) => item.seq === 130)!;
+        const migration = listMigrations(drizzleDir()).find((item) => item.seq === 131)!;
         copyFileSync(migration.sqlPath, path.join(stagedDir, migration.fileName));
         mkdirSync(path.join(stagedDir, 'scripts'));
         copyFileSync(migration.tsScriptPath!, path.join(stagedDir, 'scripts', path.basename(migration.tsScriptPath!)));

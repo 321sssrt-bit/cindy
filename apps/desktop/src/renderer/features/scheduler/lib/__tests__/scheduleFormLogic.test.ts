@@ -451,7 +451,8 @@ describe('buildScheduleInput — heartbeat 分支', () => {
     const bound = applyRunMode(fresh, 'bound', remembered);
     expect(buildScheduleInput(bound)).toMatchObject({ targetSessionId: 'bound-task',
       modelAgentDeviceId: 'shared:owner', model: 'remote-model', providerId: 'remote-provider' });
-    expect(buildScheduleInput({ ...bound, model: '' })).toHaveProperty('modelAgentDeviceId', undefined);
+    // An incomplete explicit choice must reach validation whole, not become follow mode.
+    expect(buildScheduleInput({ ...bound, model: '' })).toHaveProperty('modelAgentDeviceId', 'shared:owner');
     expect(buildScheduleInput({ ...fresh, modelAgentDeviceId: '' })).toHaveProperty('modelAgentDeviceId', '');
   });
   it('model/effort 空值时恒带 key 且值为 undefined(跟随会话 → patch 清列)', () => {

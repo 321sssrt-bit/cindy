@@ -54,6 +54,8 @@ export interface ProjectScheduleConfig {
   model?: string;
   /** 可选：显式来源(供应商)id。省略 → 走原生默认来源（与旧配置字节级一致）。详见 Schedule.providerId。 */
   providerId?: string;
+  /** Agent 运行位置，相对项目自动化所在电脑；省略 = 本机。 */
+  agentDeviceId?: string;
   effort?: string;
   /** Codex Fast 模式开关，仅 Codex 有意义。详见 Schedule.fastMode。 */
   fastMode?: boolean | 'ultrafast';
@@ -461,6 +463,8 @@ function scheduleConfigToCreateInput(
     modelAgentDeviceId: config.modelAgentDeviceId,
     model: config.model,
     providerId: config.providerId,
+    // 恒带 key：配置删掉运行位置时清除已保存的位置。
+    agentDeviceId: config.agentDeviceId,
     effort: config.effort,
     fastMode: config.fastMode,
     workspaceKind: 'project',
@@ -503,6 +507,7 @@ export function schedulesDiffer(
     schedule.modelAgentDeviceId !== expected.modelAgentDeviceId ||
     schedule.model !== expected.model ||
     (schedule.providerId ?? undefined) !== (expected.providerId ?? undefined) ||
+    (schedule.agentDeviceId ?? undefined) !== (expected.agentDeviceId ?? undefined) ||
     schedule.effort !== expected.effort ||
     (schedule.fastMode ?? false) !== (expected.fastMode ?? false) ||
     schedule.workspaceKind !== expected.workspaceKind ||
@@ -576,6 +581,10 @@ function isProjectScheduleConfig(value: unknown): value is ProjectScheduleConfig
     (config.modelAgentKind === undefined || (typeof config.model === 'string' && config.model.trim() !== '')) &&
     optionalString(config.model) &&
     optionalString(config.providerId) &&
+    (config.agentDeviceId === undefined || (
+      typeof config.agentDeviceId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(config.agentDeviceId) &&
+      typeof config.model === 'string' && config.model.trim() !== ''
+    )) &&
     optionalString(config.effort) &&
     (optionalBoolean(config.fastMode) || config.fastMode === 'ultrafast') &&
     optionalBoolean(config.useWorktree) &&

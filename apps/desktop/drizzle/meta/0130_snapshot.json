@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a34bb774-dc04-4a11-b70c-f87f457d109e",
+  "id": "a9590771-933e-4d44-a046-c52e69437fb4",
   "prevId": "4080b7b1-04ec-45f5-833c-cc80efbbf146",
   "tables": {
     "account_usage_snapshots": {
@@ -4717,13 +4717,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "model_agent_device_id": {
-          "name": "model_agent_device_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "model": {
           "name": "model",
           "type": "text",
@@ -4733,6 +4726,13 @@
         },
         "provider_id": {
           "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_device_id": {
+          "name": "agent_device_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

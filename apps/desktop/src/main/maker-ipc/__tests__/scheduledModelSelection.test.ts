@@ -13,7 +13,7 @@ describe('one-run automation model preferences', () => {
   function scopeFixture(
     effort: ScheduledModelSelection['effort'] | '' = 'high',
     fastMode: ScheduledModelSelection['fastMode'] = true,
-    agentDeviceId?: string | null,
+    agentDeviceId: string | null = null,
   ) {
     const original: ScheduledModelSelection = {
       agentKind: 'codex', model: 'owner-model', providerId: 'owner-provider',
@@ -54,6 +54,17 @@ describe('one-run automation model preferences', () => {
     const scopeId = await h.scope.begin('task');
     h.automate();
     await createScheduledModelScope(h.deps).restore('task', scopeId);
+    expect(h.state()).toEqual({ profile: h.original, baseline: null });
+  });
+  // Merge regression, unit: old baselines have no location. A repeated automation
+  // must capture that missing axis before moving the task, preserving the old model.
+  it.each([null, 'shared:owner'])('upgrades a legacy baseline at %j before a location change', async (device) => {
+    const h = scopeFixture('high', false, device);
+    const { agentDeviceId: _location, ...legacy } = h.original;
+    await h.deps.write('task', { ...legacy, scopeId: 'legacy-scope' });
+    expect(await h.scope.begin('task')).toBe('legacy-scope');
+    h.automate();
+    await createScheduledModelScope(h.deps).restore('task', 'legacy-scope');
     expect(h.state()).toEqual({ profile: h.original, baseline: null });
   });
   // PR #6559 + #6579 integration: the persisted scope must restore an
@@ -178,12 +189,15 @@ describe('saved automation model selection at dispatch', () => {
     expect(deps.switchHarness).not.toHaveBeenCalled();
     expect(deps.applyModel).not.toHaveBeenCalled();
   });
-  it.each(['missing', 'archived', 'deleted'])('returns the resolved snapshot for %s target recovery without touching the target', async (status) => {
+  // PR #6832: recovery must not depend on a dead target's catalog. The previous
+  // fixture only resolved successfully, hiding offline/revoked-share failures.
+  // Unit tier: unresolved saved preferences reach the runner without remote I/O.
+  it.each(['missing', 'archived', 'deleted'])('preserves the saved choice for %s recovery without resolving the old catalog', async (status) => {
     const deps = fixture();
-    const expected = { ...selection, effort: 'medium' as const };
     deps.getTarget.mockResolvedValue(status === 'missing' ? null as never : { agentKind: 'codex', status });
-    deps.resolveSelection.mockResolvedValue(expected);
-    await expect(applyScheduledModelSelection(selection, deps)).resolves.toEqual(expected);
+    deps.resolveSelection.mockRejectedValue(new Error('old target offline or share revoked'));
+    await expect(applyScheduledModelSelection(selection, deps)).resolves.toEqual(selection);
+    expect(deps.resolveSelection).not.toHaveBeenCalled();
     expect(deps.switchHarness).not.toHaveBeenCalled();
     expect(deps.applyModel).not.toHaveBeenCalled();
   });

@@ -40,7 +40,7 @@ import { getDesktopNotificationsEnabled } from '../notificationService.js';
 import {
   applyPiImModelSelectionUnderLock,
   acquirePendingAgentSwitchForDirectSend,
-  preserveScheduledModelPreferencesUnderLock,
+  prepareScheduledModelPreferencesUnderLock,
   recordDispatchedModel,
   broadcastSessionCreated,
   cancelSchedulerAutoResume,
@@ -132,12 +132,15 @@ async function startSchedulerInternal(deps: StartSchedulerDeps): Promise<Schedul
     onUndispatchedUserTurn: deps.onUndispatchedUserTurn,
     findUsageLimitWait: findSchedulerUsageLimitWait,
     acquirePendingAgentSwitch: acquirePendingAgentSwitchForDirectSend,
-    preserveModelPreferences: preserveScheduledModelPreferencesUnderLock,
+    prepareModelPreferences: prepareScheduledModelPreferencesUnderLock,
     onModelDispatched: recordDispatchedModel,
     applyPiModelSelectionUnderLock: applyPiImModelSelectionUnderLock,
-    resolveModelSelection: (selection) => resolveScheduledModelSelectionLive(selection, async (agentDeviceId) => [
-      (await readRemoteProviderRoute({ ...selection, agentDeviceId })).provider,
-    ]),
+    resolveModelSelection: (selection, location) => {
+      const route = { ...selection, agentDeviceId: selection.agentDeviceId === undefined ? location?.agentDeviceId : selection.agentDeviceId };
+      return resolveScheduledModelSelectionLive(route, async (agentDeviceId) => [
+        (await readRemoteProviderRoute({ ...route, agentDeviceId })).provider,
+      ]);
+    },
     onSessionCreated: broadcastSessionCreated,
     // 停用轴裁决:每次 fire 前判保存路由是否已被用户停用(见 runner deps 注释)。
     checkModelRoute: verdictForModelRoute,

@@ -192,6 +192,35 @@ describe('Agent Island display state', () => {
     expect(buildAgentIslandDisplayState(state, 1_300).currentSessionId).toBeNull();
   });
 
+  it('静音任务的待交互态不参与阻塞态仲裁，不再挡住其它任务的完成卡', () => {
+    const state = createAgentIslandState();
+
+    applyAgentIslandEvent(state, { sessionId: 'done', title: 'Done' }, doneEvent(), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'ask', title: 'Ask' }, permissionRequest('r1'), 1_100);
+    // 静音任务自己不上岛面，也不能继续按阻塞态按住队列里的完成卡。
+    setAgentIslandSessionDisplaySuppressed(state, 'ask', true);
+
+    const display = buildAgentIslandDisplayState(state, 1_200);
+
+    expect(display.sessions.map((session) => session.sessionId)).toEqual(['done']);
+    expect(display.displayPolicy).toBe('transient');
+    expect(display.displaySurface).toBe('completionCard');
+    expect(display.currentSessionId).toBe('done');
+    expect(display.pillSnapshot.deferredRevealCount).toBe(0);
+  });
+
+  it('静音任务的待交互态不再禁用灵动岛的悬停展开', () => {
+    const state = createAgentIslandState();
+
+    applyAgentIslandEvent(state, { sessionId: 'running', title: 'Running' }, statusEvent(true, 'Running'), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'ask', title: 'Ask' }, permissionRequest('r1'), 1_100);
+    setAgentIslandSessionDisplaySuppressed(state, 'ask', true);
+
+    setAgentIslandHovered(state, true, 1_200);
+
+    expect(buildAgentIslandDisplayState(state, 1_750).mode).toBe('expanded');
+  });
+
   it('does not complete the island on claimed SDK boundary events', () => {
     const state = createAgentIslandState();
     const meta = { sessionId: 'continuing', title: 'Continuing', agentKind: 'codex' };

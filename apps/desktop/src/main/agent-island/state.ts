@@ -2101,6 +2101,9 @@ function shouldSmartSuppressSession(state: AgentIslandState, session: AgentIslan
 function hasBlockingSession(state: AgentIslandState, now: number): boolean {
   for (const session of state.sessions.values()) {
     if (!isBlockingSession(session)) continue;
+    // 静音任务不占阻塞态仲裁:它本来就不上岛面,也不该挡住其它任务的卡片提升
+    // 与悬停展开。和 shouldDisplaySession 用同一个抑制集合。
+    if (state.displaySuppressedSessionIds.has(session.sessionId)) continue;
     if (isBlockingRevealInactive(state, session, now)) continue;
     return true;
   }

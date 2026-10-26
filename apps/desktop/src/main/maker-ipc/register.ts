@@ -43,6 +43,8 @@ import {
   findAvailableGhostForAuthorization,
   getPluginTaskInstallRevision,
   pluginTaskAuthorizationRevision,
+  preparePluginInvocation,
+  acceptPluginInvocation,
 } from '../cindy-brain/index.js';
 import { listPluginTargetCandidates, resolvePluginTargetSession } from './pluginTargetCandidates.js';
 import { createPluginTargetStore } from './pluginTargetStore.js';
@@ -226,6 +228,8 @@ import { applyScheduledModelSelection, createScheduledModelScope, createSchedule
 import { parseScheduledModelBaseline } from '../../shared/scheduledModelBaseline';
 import { recordTurnModelChange, type TurnModelIdentity } from './turnModelChange';
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { accessChatDisplayCache } from './chatDisplayCache.js';
+import { accessBotGroupOutbox } from './botGroupOutboxStorage.js';
 import {
   activeOwnerScopeKey,
   getActiveAppSession,
@@ -1479,6 +1483,7 @@ import {
   broadcastGhostMessageBlocked,
   broadcastGhostMessageRewritten,
   createGhostSessionTap,
+  bindGhostHarnessSession,
   getGhostFsSlot,
   hasEnabledUserMessageHookGhost,
   screenGhostUserMessage,
@@ -6259,6 +6264,8 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
   // 订阅槽①旁听 tap(独立监听,叠加在主转发之外互不干扰):AgentEvent →
   // did-turn-*。资格(用户主会话)与自动化轮次过滤都在 tap 内部,这里零逻辑。
   const ghostSessionTap = createGhostSessionTap(session.id);
+  registration.disposers.push(bindGhostHarnessSession(session,
+    () => sessionBindings.getSession(session.id) === session));
   // 拆线收口:实例替换(上面的 existing.disposers)与会话关闭(下面 closed 的
   // finally)两条路径都要给插件补上缺失的 did-turn-end 与在场审批的 end,否则订阅方
   // 的「AI 在忙 / 在等审批」外层状态永久卡住。observer 也在这里摘掉。
@@ -13496,6 +13503,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     assertTrustedAppRendererEvent(event);
     return botGroupChatServiceHolder ? botGroupChatServiceHolder.sendMessage(input) : botGroupNotReady;
   });
+  ipcMain.handle(MAKER_INVOKE.CHAT_DISPLAY_CACHE, (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return accessChatDisplayCache(input);
+  });
+  ipcMain.handle(MAKER_INVOKE.BOT_GROUP_OUTBOX, async (event, input: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    return accessBotGroupOutbox(input);
+  });
   ipcMain.handle(MAKER_INVOKE.BOT_GROUP_CONTINUE, async (event, groupId: unknown) => {
     assertTrustedAppRendererEvent(event);
     return botGroupChatServiceHolder ? botGroupChatServiceHolder.continueRound(groupId) : botGroupNotReady;
@@ -13544,9 +13559,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       throwIpcError('INVALID_PARAMS', 'Invalid cursor');
     const runtime = activeCompanionCloud();
     if (!runtime) throwIpcError('PRECONDITION_FAILED', 'Cloud companions are not available');
+    const owner = getActiveAppSession();
     try {
       return await runtime.transcript(id, typeof before === 'string' ? before : undefined);
     } catch (error) {
+      const status = (error as { status?: number } | null)?.status;
+      const removed = error instanceof Error && error.message === 'COMPANION_NOT_FOUND' && currentCompanionHomes().snapshot().enabled;
+      if ((status === 403 || status === 404 || removed) && getActiveAppSession().generation === owner.generation) {
+        try { accessChatDisplayCache({ action: 'remove', key: `companion:${id}`, owner }); } catch { /* Current view is still invalidated. */ }
+        throwIpcError('PERMISSION_DENIED', 'Companion conversation is not available');
+      }
       log.warn('companion transcript read failed', { error: error instanceof Error ? error.message.slice(0, 80) : 'UNKNOWN' });
       throwIpcError('PRECONDITION_FAILED', 'Companion conversation is not available');
     }
@@ -13839,6 +13861,11 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     pluginTaskEpoch = snapshot;
     pluginTasks = createPluginTaskService({
       store: createPluginTaskStore(snapshot.client), assertCurrent, assertAuthorized: assertPlugin, resolveRoute,
+      prepareInvocation: (id, operationId, parentId, operation, sessionId) => {
+        try { return preparePluginInvocation(id, operationId, parentId, operation, sessionId); }
+        catch { throw new PluginTaskError('INVALID_INVOCATION', 'Host invocation is unavailable'); }
+      },
+      acceptInvocation: acceptPluginInvocation,
       readModelPreference: pluginId => {
         const config = readPluginTaskConfig(pluginId);
         // Match the shared resolver: a complete explicit identity does not
@@ -14328,6 +14355,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   };
   setPluginTaskHandler(handlePluginTask);
   setPluginTargetAdapter({
+    prepareInvocation: preparePluginInvocation,
+    acceptInvocation: acceptPluginInvocation,
     store: () => {
       const snapshot = getCurrentDbClientSnapshot();
       if (!snapshot) throw new Error('HOST_NOT_READY');

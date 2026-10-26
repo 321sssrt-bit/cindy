@@ -107,6 +107,7 @@ describe('keep-alive microphone idle window', () => {
   });
 
   it('releases the warm microphone once the idle window elapses', async () => {
+    mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     expect(track.stopped).toBe(false);
 
@@ -156,7 +157,67 @@ describe('keep-alive microphone idle window', () => {
     expect(track.stopped).toBe(true);
   });
 
+  it('does not open the microphone for a mount-time prewarm before any dictation', async () => {
+    // Mounting a ChatInput or the overlay is bookkeeping, not use. The AudioContext
+    // and worklet may warm up, but the capture device — and the OS privacy
+    // indicator — must stay off until the user asks to dictate.
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('does not relight the microphone from a later mount after the idle release', async () => {
+    mod.noteVoiceInputUse();
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    await vi.advanceTimersByTimeAsync(IDLE_TTL_MS);
+    expect(track.stopped).toBe(true);
+    getUserMedia.mockClear();
+
+    // Past the window the user stopped dictating: remounting the ChatInput (a new
+    // task, a settings change) must not start a fresh 30-minute window, otherwise
+    // the indicator never goes out while the user just keeps working.
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('reopens the warm microphone from a later mount inside the use window', async () => {
+    mod.noteVoiceInputUse();
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    // A devicechange released the warm session, but the user dictated moments
+    // ago: the next mount may warm the new configuration right away.
+    await mod.disposeKeepAliveVoiceInputMicrophone('devicechange');
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('reclaims a session whose recording claim leaked', async () => {
+    mod.noteVoiceInputUse();
+    // Startup hangs on the device handshake and its owner never stops: the claim
+    // outlives any plausible startup, so the session would read as busy forever
+    // and neither the idle window nor a settings change could reclaim it.
+    getUserMedia.mockImplementationOnce(() => new Promise(() => undefined));
+    const engine = new mod.WebMicAudioEngine({
+      workletUrl: WORKLET_URL,
+      keepAlive: true,
+      onInterrupted: vi.fn(),
+    });
+    void engine.start().catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+
+    // The leaked session is reclaimed and a fresh warm-up owns the device again.
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
   it('does not extend the idle window when prewarm re-asserts keep-alive intent', async () => {
+    mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
 
     // A ChatInput mounting (or an unrelated voice setting changing) 20 minutes
@@ -172,6 +233,7 @@ describe('keep-alive microphone idle window', () => {
   });
 
   it('restarts the full window after real dictation ends', async () => {
+    mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
 
@@ -193,6 +255,7 @@ describe('keep-alive microphone idle window', () => {
   });
 
   it('releases the microphone when the machine suspends or the screen locks', async () => {
+    mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     expect(powerCallback).toBeDefined();
 
@@ -208,6 +271,7 @@ describe('keep-alive microphone idle window', () => {
       resolveStream = resolve;
     }));
 
+    mod.noteVoiceInputUse();
     const prewarming = mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     // Let start() reach the pending getUserMedia await.
     await vi.advanceTimersByTimeAsync(0);
@@ -318,6 +382,7 @@ describe('keep-alive microphone idle window', () => {
       resolveStream = resolve;
     }));
 
+    mod.noteVoiceInputUse();
     const engine = new mod.WebMicAudioEngine({
       workletUrl: WORKLET_URL,
       keepAlive: true,
@@ -344,6 +409,7 @@ describe('keep-alive microphone idle window', () => {
       resolveStream = resolve;
     }));
 
+    mod.noteVoiceInputUse();
     const first = mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     await vi.advanceTimersByTimeAsync(0);
 

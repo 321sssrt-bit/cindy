@@ -31,6 +31,7 @@ import {
   type VoiceInputSettingsPatch,
 } from '../../shared/voiceInputData';
 import type { VoiceInputShortcut } from '@/voice-input/shortcut';
+import { noteVoiceInputUse } from '@/voice-input/WebMicAudioEngine';
 import { findComposerVoiceInputConflict } from '@/voice-input/composerVoiceInputConflict';
 import { getComposerSendShortcutPreference } from './useComposerSendShortcutPreference';
 
@@ -260,7 +261,14 @@ export function useVoiceInputSettings(): {
   );
 
   const setFastActivationEnabled = useCallback(
-    (fastActivationEnabled: boolean) => updateSettings({ fastActivationEnabled }),
+    (fastActivationEnabled: boolean) => {
+      // Flipping this switch on is an explicit statement of intent, so it counts
+      // as use and lets the immediate prewarm open the microphone. Without it the
+      // setting would stay inert until the first dictation, which is not what the
+      // user just asked for.
+      if (fastActivationEnabled) noteVoiceInputUse();
+      return updateSettings({ fastActivationEnabled });
+    },
     [updateSettings],
   );
 

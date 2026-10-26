@@ -203,6 +203,17 @@ let keepAliveIdleDisposeTimer: number | undefined;
 // (component mount, unrelated settings changes) clear and re-arm the timer, and
 // must land on the original deadline instead of restarting the countdown.
 let keepAliveIdleDeadlineAt: number | undefined;
+// Last time the user actually dictated, on the same monotonic clock. Mounting a
+// ChatInput or the overlay is *not* use: prewarm may only (re)open the capture
+// device while this timestamp is still inside the idle window, otherwise every
+// task switch would light up a fresh 30-minute window and the OS privacy
+// indicator would never go out on a machine the user is merely working in —
+// contradicting the promise in settings.voiceInput.fastActivation.hint.
+let lastVoiceInputUseAt: number | undefined;
+// A recording claim that never reached activate() is a leak: the session stays
+// isBusy() forever, so neither the idle window nor "setting turned off" is
+// allowed to touch it and the microphone can never be reclaimed.
+const STALE_RECORDING_RESERVATION_MS = 60 * 1000;
 
 function isSpecificMicrophoneDeviceId(deviceId?: string): deviceId is string {
   return Boolean(deviceId && deviceId !== 'default');
@@ -460,6 +471,9 @@ class KeepAliveMicSession {
   // session, and a flag would let whichever finishes first clear the other's
   // claim — handing the still-live session to a replacing prewarm.
   private recordingReservations = 0;
+  // When the current claim was taken. Only used to detect a claim that never
+  // reached activate() and never got released.
+  private reservationClaimedAt: number | undefined;
 
   constructor(options: KeepAliveSessionOptions) {
     this.options = options;
@@ -673,11 +687,28 @@ class KeepAliveMicSession {
    * stop(), or on any startup path that fails after claiming.
    */
   reserveForRecording(): void {
+    if (this.recordingReservations === 0) this.reservationClaimedAt = keepAliveMonotonicNow();
     this.recordingReservations += 1;
   }
 
   releaseRecordingReservation(): void {
     this.recordingReservations = Math.max(0, this.recordingReservations - 1);
+    if (this.recordingReservations === 0) this.reservationClaimedAt = undefined;
+  }
+
+  /**
+   * A claim that has outlived any plausible startup.
+   *
+   * start() takes the claim before its first await and stop() drops it, but a
+   * startup that dies in an unforeseen way would keep it forever: the session
+   * then reads as busy, so neither the idle window nor "fast activation turned
+   * off" may dispose it — the microphone stays open with no path back. Callers
+   * use this to reclaim such a session instead of trusting the claim blindly.
+   */
+  hasStaleRecordingReservation(): boolean {
+    if (this.active || this.recordingReservations === 0) return false;
+    if (this.reservationClaimedAt === undefined) return false;
+    return keepAliveMonotonicNow() - this.reservationClaimedAt > STALE_RECORDING_RESERVATION_MS;
   }
 
   /** Someone other than the caller still needs this session live. */
@@ -898,9 +929,23 @@ export async function prewarmVoiceInputMicrophone(options: WebMicAudioEngineOpti
   // track the user is speaking into when the device/profile changed. stop()
   // already owns both re-arming the idle window and honouring the new config.
   if (keepAliveSession?.isBusy()) {
-    if (keepAliveSession.key !== keepAliveKey(normalized)) {
-      keepAliveSession.markStaleForReplacement();
+    if (keepAliveSession.hasStaleRecordingReservation()) {
+      // Self-heal a leaked claim (see hasStaleRecordingReservation): without this
+      // the session is busy forever and no later prewarm can ever reclaim it.
+      await disposeKeepAliveVoiceInputMicrophone('stale_recording_reservation');
+    } else {
+      if (keepAliveSession.key !== keepAliveKey(normalized)) {
+        keepAliveSession.markStaleForReplacement();
+      }
+      return;
     }
+  }
+  if (!isWithinVoiceInputUseWindow()) {
+    // Nobody asked to dictate inside the retention window, so mounting a
+    // ChatInput must not open (or re-open) the capture device. Whatever idle
+    // session is still around is reclaimed here — the audio context and the
+    // worklet stay warm, which is the part that needs no microphone.
+    await disposeKeepAliveVoiceInputMicrophone('idle_timeout_after_use_window');
     return;
   }
   let session: KeepAliveMicSession;
@@ -987,6 +1032,29 @@ function keepAliveMonotonicNow(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
+}
+
+/**
+ * Record that the user actually dictated.
+ *
+ * Called by an engine once capture really starts, and by the settings switch
+ * when the user turns fast activation on (that click is an explicit statement of
+ * intent). It is the only thing that re-opens the door for mount-time prewarm
+ * after the idle window has released the device; mounting components never does.
+ */
+export function noteVoiceInputUse(): void {
+  lastVoiceInputUseAt = keepAliveMonotonicNow();
+}
+
+/**
+ * Is the user still inside the window where a warm microphone is justified?
+ *
+ * Deliberately in-memory: a restart drops the timestamp, so a fresh launch
+ * never lights the privacy indicator before the user has asked for dictation.
+ */
+function isWithinVoiceInputUseWindow(): boolean {
+  if (lastVoiceInputUseAt === undefined) return false;
+  return keepAliveMonotonicNow() - lastVoiceInputUseAt <= KEEP_ALIVE_MIC_IDLE_TTL_MS;
 }
 
 /**
@@ -1363,7 +1431,10 @@ export class WebMicAudioEngine {
           await disposeKeepAliveVoiceInputMicrophone('devicechange_after_recording');
         } else {
           // Real use just ended — this is the only event allowed to restart the
-          // full 30-minute window the settings copy promises.
+          // full 30-minute window the settings copy promises. The use timestamp
+          // moves with it, so "last use" and the idle deadline (which starts at
+          // the *end* of a recording) never disagree about when the window ends.
+          noteVoiceInputUse();
           scheduleKeepAliveIdleDispose(session, 'idle_timeout_after_recording', { refresh: true });
         }
       }
@@ -1646,6 +1717,11 @@ export class WebMicAudioEngine {
 
   private startWatchdog(): void {
     this.clearWatchdog();
+    // Reached by both capture paths (keep-alive and direct) once the device is
+    // actually delivering, so this is where a real dictation starts counting as
+    // "use" — the only event that lets a later mount prewarm the microphone
+    // again after the idle window has released it.
+    noteVoiceInputUse();
     this.watchdogId = window.setInterval(() => this.checkAudioHealth(), AUDIO_FRAME_WATCHDOG_INTERVAL_MS);
   }
 

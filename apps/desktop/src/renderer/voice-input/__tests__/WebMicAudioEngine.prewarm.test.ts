@@ -8,6 +8,7 @@ import {
 import {
   disposeKeepAliveVoiceInputMicrophone,
   isMicrophoneDeviceUnavailableError,
+  noteVoiceInputUse,
   prewarmVoiceInputMicrophoneWithAutomaticFallback,
   prepareVoiceInputMicrophone,
   WebMicAudioEngine,
@@ -61,6 +62,10 @@ describe('prewarmVoiceInputMicrophoneWithAutomaticFallback', () => {
   let deviceChangeListener: (() => void) | undefined;
 
   beforeEach(() => {
+    // Every case here exercises prewarming for a user who is dictating, so put
+    // the process inside the use window first — mounting alone never opens the
+    // device (see WebMicAudioEngine.keepAliveIdle.test.ts).
+    noteVoiceInputUse();
     track = createFakeTrack();
     getUserMedia = vi.fn(async () => ({
       getAudioTracks: () => [track],

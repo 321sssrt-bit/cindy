@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { i18n } from '@/i18n';
 import { botGroupNewMessageCount } from '@cindy/maker-shared/botGroupPresentation';
 import { chatGroupView, chatRoomRow, chatReadAt, createChatServerClient, type ChatMessage, type ChatPage, type ChatRoom, type ChatSnapshot } from '@/chat/chatServerClient';
+import type { ChatHistory } from '@cindy/maker-shared/chat-history';
 import { botGroupQuoteFromMessage, resolveBotGroupQuote, buildBotGroupQuoteCard, buildBotGroupTaskCard } from '@cindy/maker-shared/botGroupChat';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const room = (n = 1, state = 'joined'): ChatRoom => ({ id: id(n), name: 'Discussion', kind: 'group', state, archived: false,
@@ -12,6 +13,29 @@ const message = (n: number): ChatMessage => ({ id: id(n), seq: String(9007199254
 const snapshot = (): ChatSnapshot => ({ room: room(), cursor: '9007199254741099', messages: [], members: [
   { id: id(10), kind: 'human', name: 'Other member', state: 'joined', ownerActorId: id(10), ownerName: '', avatar: null, role: 'member' },
 ] });
+
+// Merge regression: history generation changes while execution state is read.
+// Production load must retry, retaining both the new revision and fresh work.
+it('retains fresh executions when cached history changes during load', async () => {
+  const stored = {
+    snapshot: vi.fn().mockResolvedValueOnce({ ...snapshot(), cacheGeneration: 'old' })
+      .mockResolvedValue({ ...snapshot(), cacheGeneration: 'current' }),
+    page: vi.fn(async () => [message(20)]),
+    projection: vi.fn(async () => ({ generation: 'current', messages: [] })),
+  };
+  let reads = 0;
+  const request = vi.fn(async (path: string) => {
+    if (path === '/me') return { actor: { id: id(11), kind: 'human' } };
+    if (path.endsWith('/executions')) return [{ id: id(++reads === 1 ? 30 : 31), bot_id: id(12), status: 'stopping', epoch: 1, source_message_id: id(20) }];
+    if (path.includes('/execution-failures?')) return [];
+    throw new Error(path);
+  });
+  const client = createChatServerClient(request as any, undefined, async () => stored as unknown as ChatHistory);
+  const page = await client.load(id(1));
+  expect(stored.snapshot).toHaveBeenCalledTimes(2);
+  expect(page.historyRevision).toBe('current');
+  expect(chatGroupView(page, id(11)).round.speakers.map(speaker => [speaker.executionId, speaker.executionStatus])).toEqual([[id(31), 'stopping']]);
+});
 
 describe('direct Chat Server client', () => {
   // #6907: existing fixtures never pair a human's group name A with account ownerName B (unit tier).

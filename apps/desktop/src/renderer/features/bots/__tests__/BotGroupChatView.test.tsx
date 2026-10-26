@@ -26,7 +26,8 @@ import type {
 const mocks = vi.hoisted(() => ({
   // Keep translation identity stable so attachment effects do not reload on every render.
   t: (key: string, options?: Record<string, unknown>) =>
-    options && 'name' in options ? `${key}:${String(options.name)}` : key,
+    options && 'name' in options ? `${key}:${String(options.name)}`
+      : key === 'bots.groupChat.memberCount' ? `${key}:${String(options?.count)}` : key,
   groupId: 'g1',
   navigate: vi.fn(),
   getBotGroup: vi.fn(),
@@ -1148,7 +1149,7 @@ describe('BotGroupChatView', () => {
     const header = screen.getByTestId('content-header');
     expect(header.textContent).toContain('周末出游');
     // The line under the name reads the group's size, not every member; the names stay in the tooltip.
-    expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount');
+    expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount:2');
     expect(header.querySelector('button[title]')?.getAttribute('title')).toBe('咪咪bots.groupChat.memberSeparator小满');
     fireEvent.click(screen.getByRole('button', { name: 'bots.groupChat.settings.open' }));
     expect(mocks.navigate).toHaveBeenCalledWith('/bots/groups/g1?groupSettings=1');
@@ -1364,7 +1365,7 @@ describe('BotGroupChatView', () => {
       renderView();
       const header = screen.getByTestId('content-header');
       expect(header.textContent).toContain('周末出游');
-      expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount');
+      expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount:2');
       expect(screen.queryByTestId('bot-group-timeline-loading')).toBeNull();
       expect(screen.queryByRole('textbox')).toBeNull();
       expect(await screen.findByRole('status', { name: 'ccAgent.common.loading' })).toBeTruthy();

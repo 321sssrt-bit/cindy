@@ -12,7 +12,7 @@
 
 ## 2026-10
 
-- **10-26 群聊顶栏群名下一行改为人数，不再列出所有成员**——用户指出群名下面把成员名用「、」平铺列满，跨账号的群里「Miao (dash)、Cindy (chris)、dash、Opus (dash)…」又长又乱，要求「不能列满」。现行：Desktop 与 Mobile 群聊顶栏群名下只写「N 位成员」（人与伙伴一起算，Desktop 用等宽数字），不再在这一行标「负责人」；有人在发言、安排或做某一步时，这一行换成原有的进行中状态（✨「X 正在说…」），结束后回到人数，与 Telegram／Slack 的群头一致。完整名单移到悬停提示（Desktop）与读屏标签（Mobile），群设置的成员列表不变；私聊仍显示对方名字。`memberCount` 文案由「N 位伙伴」改为「N 位成员」，因为群里也有人类成员，群设置抽屉同步受益。被取代：bot-group-chat.md §5「成员名单（负责人带标）」。落点：`BotGroupChatView.tsx` 顶栏、`BotGroupChatScreen.tsx` 副标题；单页场景 `group-chat --case crowded`。
+- **10-26 群聊顶栏群名下一行改为人数，不再列出所有成员**——用户指出群名下面把成员名用「、」平铺列满，跨账号的群里「Miao (dash)、Cindy (chris)、dash、Opus (dash)…」又长又乱，要求「不能列满」。现行：Desktop 与 Mobile 群聊顶栏群名下只写「N 位成员」（人与伙伴一起算，Desktop 用等宽数字），不再在这一行标「负责人」；Desktop 有人在发言、安排或做某一步时，这一行换成原有的进行中状态（✨「X 正在说…」），结束后回到人数；Mobile 群聊主界面始终显示人数，不做该状态切换。完整名单移到悬停提示（Desktop）与读屏标签（Mobile），群设置的成员列表不变；私聊仍显示对方名字。`memberCount` 文案由「N 位伙伴」改为「N 位成员」，因为群里也有人类成员，群设置抽屉同步受益。被取代：bot-group-chat.md §5「成员名单（负责人带标）」。落点：`BotGroupChatView.tsx` 顶栏、`BotGroupChatScreen.tsx` 副标题；单页场景 `group-chat --case crowded`。
 
 - **10-24 手机退役「任务／伙伴」两种首页模式：伙伴与任务完全打平，和电脑一致**——用户指出伙伴段上线后抽屉里的「任务 | 伙伴」切换和标题范围菜单里的「伙伴」仍是一套独立筛选，既然伙伴已经并入任务首页就不应再有独立筛选。现行：首页只有一种；抽屉不再放任务／伙伴分段控件，标题范围菜单不再列出伙伴；首页搜索同时列出匹配的伙伴；伙伴未读显示在伙伴段行与头像条蓝点上。被取代：10-13 的任务／伙伴左右滑动切换、伙伴首页、分段计数与菜单键注意点（`menu-attention` 资源已删除）。旧版本存下的「上次停在伙伴页」偏好在下次写入时清除，不再恢复。落点：`DESIGN.md` 手机首页段落；`apps/mobile/src/session/HomeSurface.tsx`、`HomeTeammatesSection.tsx`、`useHomeMode.ts`。
 

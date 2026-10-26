@@ -14,7 +14,8 @@
  *   停止被当成做完叫醒伙伴；首次安装时事件赶在 ensure 之前发布、accepted=0 后永久丢失；伙伴主任务的欢迎轮出错
  *   后宿主把 errored 发给它自己，排在正在失败的主任务后面打转；启动时第一次读归属失败，补快照里已出错的任务被按
  *   「没人跟」结清、之后归属读到也不再发；内置规则落地失败仍发布（accepted=0 + 回执）后永久丢失；
- *   120 字符的合法伙伴 id 拼出超过 128 字符的规则 id、永远没有内置规则。
+ *   120 字符的合法伙伴 id 拼出超过 128 字符的规则 id、永远没有内置规则；PR 任务每处理一轮评审就发一次
+ *   finished、逐轮叫醒伙伴模型（实测 6 小时 57 次唤醒里 49 次是 finished）。
  * - tier：unit（真实引擎 + 内存 load/save；状态表 IO 为内存 fake；时间由 now() 推进）。
  */
 import type { SessionActivitySnapshot } from '@cindy/maker-shared/session-activity';
@@ -568,6 +569,10 @@ it.each([false, true])('keeps a fast delegation completion across delayed owners
       t.advance(30_000);
       await vi.advanceTimersByTimeAsync(30_000);
     }
+    // finished 等安静期满才发：期满前不叫醒，期满后由扫描发出一次。
+    expect(publish).not.toHaveBeenCalled();
+    t.advance(AUTONOMY_THRESHOLDS.finishedQuietMs);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(publish).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledWith(HOST_SESSIONS_SOURCE_ID,
       expect.objectContaining({ type: 'finished', subject: 'child' }), expect.any(Function));
@@ -603,7 +608,8 @@ it.each(['ensure', 'publish'] as const)('retries the last completion after %s fa
     await runtime.watch.settled();
     runtime.watch.applyActivity('child', { ...running('child'), phase: 'completed' } as SessionActivitySnapshot);
     await runtime.watch.settled();
-    await vi.advanceTimersByTimeAsync(0);
+    t.advance(AUTONOMY_THRESHOLDS.finishedQuietMs);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(runtime.watch.needsSweep()).toBe(false);
     failing = false;
     publish.mockClear();
@@ -623,6 +629,42 @@ it.each(['ensure', 'publish'] as const)('retries the last completion after %s fa
     runtime.watch.applyActivity('child', { ...running('child'), phase: 'completed' } as SessionActivitySnapshot);
     await runtime.refreshFollowers();
     await vi.advanceTimersByTimeAsync(0);
+    expect(publish).toHaveBeenCalledOnce();
+  } finally {
+    runtime.stop();
+    vi.useRealTimers();
+  }
+});
+
+// Unit / bot follow-up wake storm: a PR task handles one review round per turn, and every
+// turn end used to publish `finished` and wake the teammate's model (49 of 57 wakes in 6h).
+// Rounds that resume within the quiet period are superseded; the final round still wakes once.
+it('wakes the follower once for the final round, not for every intermediate turn end', async () => {
+  vi.useFakeTimers();
+  const t = await setup({ schedulerOff: true, creators: { child: 'a' } });
+  const publish = vi.fn<AutonomyEngine['publish']>(async () => ({ accepted: 1, duplicate: false }));
+  const runtime = t.create({ registerSource: vi.fn(), publish, ensureBuiltin: vi.fn(async () => ({} as never)) });
+  const turn = (phase: 'running' | 'completed') => ({
+    ...running('child'), phase, startedAtMs: t.now(), lastActivityAtMs: t.now(),
+  } as SessionActivitySnapshot);
+  try {
+    await runtime.start();
+    for (let round = 0; round < 3; round += 1) {
+      runtime.watch.applyActivity('child', turn('running'));
+      t.advance(60_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      runtime.watch.applyActivity('child', turn('completed'));
+      t.advance(AUTONOMY_THRESHOLDS.finishedQuietMs / 2);
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(publish).not.toHaveBeenCalled();
+    const finalSince = t.now() - AUTONOMY_THRESHOLDS.finishedQuietMs / 2;
+    t.advance(AUTONOMY_THRESHOLDS.finishedQuietMs / 2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith(HOST_SESSIONS_SOURCE_ID,
+      expect.objectContaining({ type: 'finished', id: `finished:child:${finalSince}` }), expect.any(Function));
+    await vi.advanceTimersByTimeAsync(120_000);
     expect(publish).toHaveBeenCalledOnce();
   } finally {
     runtime.stop();

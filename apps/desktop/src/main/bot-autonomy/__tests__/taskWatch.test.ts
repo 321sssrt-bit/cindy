@@ -494,9 +494,10 @@ it('captures completion execution before asynchronous reads or a later turn', as
   h.watch.applyActivity('child', activity('child', 'completed', { turnGeneration: null }));
   execution = { instanceId: 'native-2', generation: 2 };
   await h.watch.settled();
-  const [candidate] = new AutonomyEventLedger().evaluate(h.watch.list(), h.now()).due;
+  const quietAt = h.now() + AUTONOMY_THRESHOLDS.finishedQuietMs;
+  const [candidate] = new AutonomyEventLedger().evaluate(h.watch.list(), quietAt).due;
   expect(candidate).toBeDefined();
-  const saved = JSON.parse(JSON.stringify(toRoutineEvent(candidate, h.now())));
+  const saved = JSON.parse(JSON.stringify(toRoutineEvent(candidate, quietAt)));
   expect(saved.data).toMatchObject({ executionInstanceId: 'native-1', executionGeneration: 1 });
   h.watch.applyActivity('child', activity('child', 'running', { turnGeneration: 2 }));
   await h.watch.settled();

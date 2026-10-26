@@ -36,8 +36,8 @@ import {
   truncateSummary,
 } from './phase.js';
 
-/** 做完的行在表里停留多久（之后只留在「今天做完」计数里）。 */
-export const FINISHED_ROW_RETENTION_MS = 15 * 60_000;
+/** 做完的行在表里停留多久（之后只留在「今天做完」计数里）；须长于 finished 的安静期，否则事件来不及判定。 */
+export const FINISHED_ROW_RETENTION_MS = AUTONOMY_THRESHOLDS.finishedQuietMs + 15 * 60_000;
 /** 伙伴、委派与接手关系的重读间隔。 */
 export const OWNERSHIP_REFRESH_MS = 60_000;
 /** 设备目录（服务端 HTTP）重读间隔；轮询本身按 remotePollMs。 */

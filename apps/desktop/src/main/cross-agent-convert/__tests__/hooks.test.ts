@@ -105,6 +105,17 @@ describe('convertHooks — to-codex', () => {
     expect(json.hooks.SessionStart).toBeDefined();
     expect(json.hooks.hooks).toBeUndefined();
   });
+  it('upgrades a legacy flat hooks.json even when no event or script is added', async () => {
+    await fs.mkdir(path.join(wd, '.claude'), { recursive: true });
+    await fs.writeFile(path.join(wd, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ a: 1 }] } }));
+    await fs.mkdir(path.join(wd, '.codex'), { recursive: true });
+    await fs.writeFile(path.join(wd, '.codex', 'hooks.json'), JSON.stringify({ Stop: [{ a: 1 }] }));
+
+    const r = await convertHooks(toCodexItem());
+    expect(r.status).toBe('success');
+    const json = JSON.parse(await fs.readFile(path.join(wd, '.codex', 'hooks.json'), 'utf8'));
+    expect(json).toEqual({ hooks: { Stop: [{ a: 1 }] } });
+  });
 });
 
 describe('convertHooks — to-claude', () => {
@@ -171,4 +182,5 @@ describe('convertHooks — to-claude', () => {
     expect(settings.permissions).toBe('user-keeps');
     expect(settings.hooks.Stop).toBeDefined();
   });
+
 });

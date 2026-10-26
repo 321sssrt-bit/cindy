@@ -175,6 +175,8 @@ async function convertToCodex(item: MigrationItem): Promise<ConvertOutcome> {
   }
   // Codex 规范：事件放在顶层 "hooks" 对象内；旧的平铺文件就地升级为包装结构
   const codexEvents = extractCodexEvents(existing);
+  // 旧平铺文件（有事件但无顶层 hooks 包装）即使没有新增也要写回升级
+  const upgraded = hadExisting && !isPlainObject(existing.hooks) && Object.keys(codexEvents).length > 0;
   const codexRoot: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(existing)) {
     if (k === 'hooks' || k in codexEvents) continue;
@@ -194,7 +196,7 @@ async function convertToCodex(item: MigrationItem): Promise<ConvertOutcome> {
     }
   }
 
-  if (added === 0 && scriptResult.copied === 0) {
+  if (added === 0 && scriptResult.copied === 0 && !upgraded) {
     return { status: 'skipped', detail: '所有 hook 已存在' };
   }
 
@@ -206,6 +208,7 @@ async function convertToCodex(item: MigrationItem): Promise<ConvertOutcome> {
   if (scriptResult.copied > 0) parts.push(`脚本 ${scriptResult.copied}`);
   if (added > 0) parts.push(`索引 ${added}`);
   if (skipped > 0) parts.push(`跳过 ${skipped}`);
+  if (upgraded) parts.push('升级为 hooks 包装结构');
   return { status: 'success', detail: parts.join(', ') };
 }
 

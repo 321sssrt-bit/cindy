@@ -684,7 +684,7 @@ import { createWireNoteMemory } from './wireNoteMemory.js';
 import { isBotCanonicalReplacementBusy } from './botCanonicalReplacementGuard.js';
 import { configureBotCanonicalReplacementCoordinator } from './botCanonicalReplacementCoordinator.js';
 import { configureBotModelSelectionCoordinator, createBotModelSelectionCoordinator } from './botModelSelectionCoordinator.js';
-import { botSessionInputBlockReason, isShadowedCompanionCanonical, SHADOWED_COMPANION_INPUT_MESSAGE } from './botSessionInputGuard.js';
+import { botSessionInputBlockReason, isShadowedCompanionSession, SHADOWED_COMPANION_INPUT_MESSAGE } from './botSessionInputGuard.js';
 import { configureBotRuntimeEpochRefreshRequest } from './botRuntimeEpochRefreshSignal.js';
 import { createGitSnapshotCoordinator } from '../maker-host/git-snapshot-host.js';
 import {
@@ -11972,7 +11972,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .select({ role: botSessionLinks.role, botId: botSessionLinks.botId })
         .from(botSessionLinks).where(eq(botSessionLinks.sessionId, sessionId)).limit(1);
       dispatchCompanionLink = link;
-      return isShadowedCompanionCanonical(link, isCompanionShadowed)
+      return isShadowedCompanionSession(link, isCompanionShadowed)
         ? { ok: false as const, errorCode: 'AGENT_NOT_READY' as const, message: SHADOWED_COMPANION_INPUT_MESSAGE }
         : null;
     };
@@ -11981,7 +11981,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const onInternalDispatching = () => {
       // Session invokes this synchronously immediately before provider send,
       // after bootstrap, authorization and message persistence have all awaited.
-      if (isShadowedCompanionCanonical(dispatchCompanionLink, isCompanionShadowed)) {
+      if (isShadowedCompanionSession(dispatchCompanionLink, isCompanionShadowed)) {
         dispatchRejectedForDemotion = true;
         throw new TurnDispatchRejectedError(SHADOWED_COMPANION_INPUT_MESSAGE);
       }
@@ -18355,7 +18355,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       assertCindyMakeSessionAvailable(botInput?.source);
       const blocked = botSessionInputBlockReason(botInput ?? null);
       // Rechecked under the send lock right before every real send, including queue drains.
-      if (botInput?.source === 'bot' && isShadowedCompanionCanonical(botInput, isCompanionShadowed)) {
+      if (botInput?.source === 'bot' && isShadowedCompanionSession(botInput, isCompanionShadowed)) {
         throwIpcError('PRECONDITION_FAILED', SHADOWED_COMPANION_INPUT_MESSAGE);
       }
       if (args[2] && typeof args[2] === 'object') {

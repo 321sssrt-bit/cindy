@@ -9549,8 +9549,8 @@
         "speaking": "{{name}} が返信中…",
         "planning": "{{name}} が役割分担を考え中…"
       },
-      "memberCount_one": "仲間 {{count}} 人",
-      "memberCount_other": "仲間 {{count}} 人",
+      "memberCount_one": "メンバー {{count}} 人",
+      "memberCount_other": "メンバー {{count}} 人",
       "nameLabel": "グループ名",
       "waitingConfirm": "{{name}} があなたの確認を待っています",
       "loadFailedTitle": "このグループチャットを読み込めません",

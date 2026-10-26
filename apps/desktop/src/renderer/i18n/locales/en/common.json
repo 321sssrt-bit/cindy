@@ -9583,8 +9583,8 @@
         "speaking": "{{name}} is replying…",
         "planning": "{{name}} is splitting the work…"
       },
-      "memberCount_one": "{{count}} teammate",
-      "memberCount_other": "{{count}} teammates",
+      "memberCount_one": "{{count}} member",
+      "memberCount_other": "{{count}} members",
       "nameLabel": "Group Name",
       "waitingConfirm": "{{name}} is waiting for your go-ahead",
       "loadFailedTitle": "Couldn’t Load This Group Chat",

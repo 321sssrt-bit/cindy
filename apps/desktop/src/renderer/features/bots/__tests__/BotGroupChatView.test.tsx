@@ -1147,7 +1147,9 @@ describe('BotGroupChatView', () => {
     expect(screen.getByText('bots.groupChat.timeline.roundEnded')).toBeTruthy();
     const header = screen.getByTestId('content-header');
     expect(header.textContent).toContain('周末出游');
-    expect(header.textContent).toContain('咪咪');
+    // The line under the name reads the group's size, not every member; the names stay in the tooltip.
+    expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount');
+    expect(header.querySelector('button[title]')?.getAttribute('title')).toBe('咪咪bots.groupChat.memberSeparator小满');
     fireEvent.click(screen.getByRole('button', { name: 'bots.groupChat.settings.open' }));
     expect(mocks.navigate).toHaveBeenCalledWith('/bots/groups/g1?groupSettings=1');
   });
@@ -1362,7 +1364,7 @@ describe('BotGroupChatView', () => {
       renderView();
       const header = screen.getByTestId('content-header');
       expect(header.textContent).toContain('周末出游');
-      expect(header.textContent).toContain('咪咪');
+      expect(within(header).getByTestId('bot-group-header-summary').textContent).toBe('bots.groupChat.memberCount');
       expect(screen.queryByTestId('bot-group-timeline-loading')).toBeNull();
       expect(screen.queryByRole('textbox')).toBeNull();
       expect(await screen.findByRole('status', { name: 'ccAgent.common.loading' })).toBeTruthy();
@@ -2328,7 +2330,7 @@ describe('BotGroupChatView', () => {
       expect(card.textContent).toContain('bots.groupChat.plan.intro');
       expect(card.textContent).toContain('想清楚这页讲什么');
       expect(card.textContent).toContain('画设计稿');
-      // The organizer tag sits next to the plan card's author (the header shows it too).
+      // The organizer tag sits next to the plan card's author.
       expect(within(card.closest('article')!).getByText('bots.groupChat.organizer')).toBeTruthy();
       expect(screen.getByText('bots.groupChat.plan.editHint')).toBeTruthy();
       expect(screen.getByText('bots.groupChat.plan.pauseNote')).toBeTruthy();

@@ -100,7 +100,7 @@ interface Running {
   lane?: string;
   laneLookup?: Promise<void>;
   context?: ExecutionContext;
-  settlement?: { terminal: BotGroupLaneTerminal; payload?: Record<string, unknown>; reply?: { sourceText: string; text: string; attachments: ChatUploadAttachment[] }; fileReply?: Awaited<ReturnType<typeof prepareChatReplyFiles>>; retryAt: number; keepLease?: boolean };
+  settlement?: { terminal: BotGroupLaneTerminal; cancelled?: boolean; payload?: Record<string, unknown>; reply?: { sourceText: string; text: string; attachments: ChatUploadAttachment[] }; fileReply?: Awaited<ReturnType<typeof prepareChatReplyFiles>>; retryAt: number; keepLease?: boolean };
   delivery?: Promise<void>;
   plan?: ServerPlan;
   workspace?: { workDir: string; branch: string | null; ownerSessionId: string | null };
@@ -1349,14 +1349,17 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const workspace = workspaces().read(roomId);
     const plans = serverPlans.map(plan => planView(plan, s.members, workspace));
     const open = plans.find(p => ['proposed', 'running', 'waiting'].includes(p.status));
-    // A companion answering in several Threads at once is still one speaker per activity; the one
-    // whose turn runs on this computer is shown, so its Session can be opened.
+    // Keep execution identity across computers and concurrent threads. Only the executing
+    // computer resolves a lane; authenticated peers retrieve it through the group resource.
     const speakers: BotGroupSpeaker[] = [];
-    for (const e of executions.filter(e => e.status === 'running')) {
-      const speaker = { botId: localBot(e.bot_id)?.id ?? e.bot_id, sessionId: running.get(e.id)?.sessionId ?? null, activity: e.plan_id ? 'step' as const : 'reply' as const };
-      const known = speakers.findIndex(other => other.botId === speaker.botId && other.activity === speaker.activity);
-      if (known < 0) speakers.push(speaker);
-      else if (!speakers[known]!.sessionId && speaker.sessionId) speakers[known] = speaker;
+    for (const e of executions.filter(e => ['queued', 'running', 'needs_input', 'stopping'].includes(e.status))) {
+      const run = running.get(e.id);
+      const startedAt = run?.started ?? (e.created_at ? Date.parse(e.created_at) : undefined);
+      const speaker: BotGroupSpeaker = { botId: localBot(e.bot_id)?.id ?? e.bot_id, sessionId: run?.sessionId || null,
+        executionId: e.id, ...(Number.isFinite(startedAt) ? { startedAt } : {}), stopping: e.status === 'stopping',
+        executionStatus: e.status as BotGroupSpeaker['executionStatus'],
+        activity: e.plan_id ? 'step' : 'reply' };
+      speakers.push(speaker);
     }
     // The organizer is visibly 「正在看」 while this device decides whether to arrange (§7.2),
     // as the local service showed it. It works on the auxiliary model, not in a lane session.
@@ -1401,7 +1404,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       createdAt: Date.parse(s.room.created_at), updatedAt: Date.parse(s.room.updated_at ?? s.room.created_at),
       messages, executionFailures, ...(threadShareUpdates && Object.keys(threadShareUpdates).length ? { threadShareUpdates } : {}),
       ...(shares ? { threadShareVersion: shares.version } : {}), ...(threadList ? { threads: threadList } : {}), hasMoreBefore: page.length === (o.limit ?? 100), plans,
-      round: { status: deciding || executions.some(e => ['queued', 'running'].includes(e.status)) ? 'running' : 'idle', speakers,
+      round: { status: deciding || executions.some(e => ['queued', 'running', 'needs_input', 'stopping'].includes(e.status)) ? 'running' : 'idle', speakers,
         othersActive: executions.some(e => ['queued', 'running', 'needs_input'].includes(e.status) && e.requester_id !== selfId
           && !localBot(e.bot_id) && !s.members.some(m => m.id === e.bot_id && m.ownerActorId === selfId)), canContinue: !open && !planning.has(roomId) && (executions.some(e => !e.plan_id && ordinaryExecution(e)) || s.messages.some(discussionSource)) && !executions.some(e => ['queued','running','stopping'].includes(e.status)) } };
   }
@@ -1647,6 +1650,17 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     });
   }
   /** One execution gets one immutable terminal result, regardless of which boundary ends it. */
+  async function cancelExecution(run: Running): Promise<void> {
+    if (!current() || running.get(run.execution.id) !== run) return;
+    if (!run.settlement?.cancelled) {
+      run.settlement = { terminal: { sessionId: run.sessionId, activeInputClientId: run.clientId, outcome: 'done', resultText: '' }, cancelled: true, payload: {}, retryAt: 0 };
+      run.releaseToolAuthority?.();
+      if (run.sessionId) await deps.abortLane(run.sessionId).catch(() => undefined);
+    }
+    // Keep the lane resolvable while the existing cancel receipt is being delivered.
+    // A transport failure retries this receipt, never the model or a completion reply.
+    await deliverSettlement(run);
+  }
   async function settleExecution(run: Running, terminal: BotGroupLaneTerminal, abort = false): Promise<void> {
     if (!current() || running.get(run.execution.id) !== run) return;
     if (!run.settlement) {
@@ -1737,9 +1751,9 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
               // A single-speaker server never chains rounds, so there is nothing to continue.
               ...(singleSpeaker ? {} : { continueDiscussion: run.context?.kind !== 'member.joined' && !run.plan && !isBotGroupNoReplyText(text) }) };
         }
-        if (!current() || running.get(run.execution.id) !== run) return;
-        await updateExecution(run, pending.terminal.outcome === 'error' ? 'fail' : 'complete', pending.payload);
-        if (run.plan && deps.onStepSettled) {
+        if (!current() || running.get(run.execution.id) !== run || run.settlement !== pending) return;
+        await updateExecution(run, pending.cancelled ? 'cancel' : pending.terminal.outcome === 'error' ? 'fail' : 'complete', pending.payload);
+        if (!pending.cancelled && run.plan && deps.onStepSettled) {
           const s = await snapshot(run.execution.conversation_id);
           const step = run.plan.steps[run.execution.plan_step!];
           const latest = (await api<ServerPlan[]>(`/conversations/${s.room.id}/plans?ids=${run.plan.id}`)).find(p => p.id === run.plan!.id);
@@ -1748,6 +1762,14 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
             botName: step.botName, task: step.task, outcome: pending.terminal.outcome === 'error' ? 'failed' : 'done', planDone: latest?.status === 'done' }, scope);
         }
       } catch (error) {
+        if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED' && !pending.cancelled) {
+          // A remote stop can race the final reply. Retire the lease with cancel,
+          // without publishing that reply or waiting for the server's lease expiry.
+          run.settlement = { terminal: pending.terminal, cancelled: true, payload: {}, retryAt: 0 };
+          run.releaseToolAuthority?.();
+          if (run.sessionId) await deps.abortLane(run.sessionId).catch(() => undefined);
+          return;
+        }
         // Keep the result during transport/temporary service failures. A definitive
         // rejection (including revoked/expired leases) must never rerun the Agent
         // or post the private result under a new execution identity.
@@ -1763,7 +1785,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           return;
         }
       } finally { run.delivery = undefined; }
-      if (running.get(run.execution.id) === run) {
+      if (running.get(run.execution.id) === run && run.settlement === pending) {
         run.releaseToolAuthority?.();
         forgetRun(run);
         // Refresh both delivered results and local failures without waiting for an echo.
@@ -2267,9 +2289,13 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     if (run.settlement) {
       // Auth/rate-limit waits need lease renewal; ordinary lost-response retries
       // preserve the existing receipt lookup without an intervening heartbeat.
-      if (!run.settlement.payload || run.settlement.keepLease) {
+      if (!run.settlement.cancelled && (!run.settlement.payload || run.settlement.keepLease)) {
         try { await updateExecution(run, 'heartbeat'); }
         catch (error) {
+          if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED') {
+            await cancelExecution(run);
+            return;
+          }
           if (error instanceof ChatResponseError && !retryableResponse(error)) {
             if (running.get(run.execution.id) === run) {
               run.releaseToolAuthority?.();
@@ -2295,7 +2321,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         await settleExecution(run, { sessionId: run.sessionId, activeInputClientId: run.clientId,
           outcome: 'error', resultText: '', failureCode: 'RUNTIME_TIMEOUT' }, true);
       } else await updateExecution(run, 'heartbeat');
-    } catch {
+    } catch (error) {
+      if (error instanceof ChatResponseError && error.message === 'STOP_REQUESTED') {
+        await cancelExecution(run);
+        return;
+      }
       // An in-flight heartbeat must not discard a result that became ready while
       // it was awaiting its response; retry the terminal operation for its receipt.
       if (!run.settlement && running.get(run.execution.id) === run) {
@@ -2824,7 +2854,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         for (const e of executions.filter(e => ['queued', 'running', 'needs_input'].includes(e.status) && !e.plan_id)) {
           await api(`/conversations/${room}/executions/${e.id}/control`, 'POST', { operationId: randomUUID(), action: 'stop' });
           const run = running.get(e.id);
-          if (run) { forgetRun(run); if (run.sessionId) await deps.abortLane(run.sessionId); }
+          if (run) await cancelExecution(run);
         }
         changed(room); return { ok: true as const };
       }
@@ -2849,7 +2879,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
         try { await api(`/conversations/${room}/executions/${e.id}/control`, 'POST', { operationId: randomUUID(), action: 'stop' }, asBot ? e.bot_id : everything && e.requester_id !== selfId ? asManager : undefined); }
         catch (error) { if (refused(error)) continue; throw error; }
         const run = running.get(e.id);
-        if (run) { forgetRun(run); if (run.sessionId) await deps.abortLane(run.sessionId); }
+        if (run) await cancelExecution(run);
       }
       changed(room); return { ok: true as const };
     }),

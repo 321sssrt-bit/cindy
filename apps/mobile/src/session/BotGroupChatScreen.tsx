@@ -101,7 +101,7 @@ import {
   type BotGroupPlanCardAction,
 } from './BotGroupPlan';
 import { BotGroupSettingsSheet } from './BotGroupSettingsSheet';
-import { BotGroupSpeakerRow } from './BotGroupSpeakerRow';
+import { BotGroupWorkArea } from './BotGroupWorkArea';
 import { botGroupActionErrorText } from './botGroupCopy';
 import { keyboardAvoidingBehaviorForPlatform } from './mobileNativeShellLayout';
 import type { ResolveRemoteMediaFn } from './remoteMedia';
@@ -573,6 +573,8 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
         <View style={styles.flex}><BotGroupQuote display={resolveBotGroupQuote(replyTo, group.messages)} onPress={() => locateMessage(replyTo.messageId)} /></View>
         <MainWindowActionButton density="compact" action={{ label: t('message.quote.remove'), onPress: () => setReplyTo(null), testID: 'botGroup.cancelReply' }} />
       </View> : null}
+      <BotGroupWorkArea group={group} deviceId={deviceId} online={chat.online} identityFor={identityFor}
+        onError={message => { if (message) Alert.alert(message); }} />
       <BotGroupComposer members={group.members} identityFor={identityFor} deviceId={deviceId} online={chat.online && !group.archived && !group.dissolvedAt}
         focusKey={replyTo?.messageId}
         running={group.round.status === 'running'} planState={botGroupComposerPlanState(openBotGroupPlan(group), group.replyMode)}
@@ -653,9 +655,6 @@ export function BotGroupTimeline({
   const mentionLabels = useMemo(() => [allLabel, ...group.members.map((member) => member.name)], [allLabel, group.members]);
   const running = group.round.status === 'running';
   const memberById = new Map(group.members.map((member) => [member.botId, member]));
-  const speakers = running
-    ? group.round.speakers.filter((speaker) => memberById.has(speaker.botId))
-    : [];
   const pendingFor = (planId: string | null) => planId && planPending?.planId === planId ? planPending.action : null;
   return <>
     {group.hasMoreBefore && loadOlder ? <MainWindowActionButton action={{ label: t('groupChat.server.loadOlder'), busy: loadingOlder, onPress: loadOlder, testID: 'botGroup.loadOlder' }} /> : group.hasMoreBefore ? <Text style={styles.olderNote} testID="botGroup.olderOnComputer">{t('groupChat.timeline.olderOnComputer')}</Text> : null}
@@ -704,16 +703,7 @@ export function BotGroupTimeline({
         onEnd={() => onPlanAction('dismiss', openPlan.id)} />
     </View> : null}
     </AnimatedContentHeight>
-    <AnimatedContentHeight open={speakers.length > 0}>
-    <View style={[styles.item, (messages.length > 0 || group.hasMoreBefore || !!(openPlan && followUp)) && { paddingTop: spacing.lg }]}>
-    {speakers.map((speaker) => {
-      const member = memberById.get(speaker.botId)!;
-      return <BotGroupSpeakerRow key={speaker.botId} deviceId={deviceId} online={online}
-        identity={identityFor(member.botId, member.name)} sessionId={speaker.sessionId} activity={speaker.activity}
-        onError={onInteractionError} />;
-    })}
-    </View>
-    </AnimatedContentHeight>
+
   </>;
 }
 

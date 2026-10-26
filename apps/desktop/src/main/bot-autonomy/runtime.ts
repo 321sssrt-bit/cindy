@@ -22,8 +22,6 @@ import {
 import { FOLLOW_UP_BUILTIN_VERSION, buildFollowUpRoutineInput, builtinFollowUpRoutineId } from './builtinRoutine.js';
 import {
   AutonomyEventLedger,
-  awaitsFinishedEvent,
-  awaitsFinishedQuiet,
   hostSessionsSource,
   isPendingForFallback,
   sweepEventId,
@@ -125,8 +123,7 @@ export class BotAutonomyRuntime {
   }
 
   private needsSweep(): boolean {
-    return this.watch.needsSweep() || this.deferredEvents.size > 0
-      || this.watch.list().some(awaitsFinishedEvent);
+    return this.watch.needsSweep() || this.deferredEvents.size > 0;
   }
 
   stop(): void {
@@ -302,9 +299,7 @@ export class BotAutonomyRuntime {
     }
     const unsettled = new Set(due.filter(candidate => !this.ledger.isSettled(candidate.id)).map(candidate => candidate.row.sessionId));
     for (const row of rows) {
-      if (row.phase === 'finished' && !unsettled.has(row.sessionId) && !awaitsFinishedQuiet(row, now)) {
-        this.watch.retireFinished(row.sessionId, row.phaseSince);
-      }
+      if (row.phase === 'finished' && !unsettled.has(row.sessionId)) this.watch.retireFinished(row.sessionId, row.phaseSince);
     }
     this.pruneReminded(now);
     this.syncSweepTimer();

@@ -65,11 +65,6 @@ export const AUTONOMY_THRESHOLDS = {
   stuckInToolAfterMs: 45 * 60_000,
   /** 等权限 / 等回答达到这么久 → waiting（主人不在时伙伴代答或提醒）。 */
   waitingAfterMs: 5 * 60_000,
-  /**
-   * 做完后安静满这么久、仍停在做完才发 finished。期间任务又开始下一轮（例如 PR 每来一轮评审处理一轮），
-   * 这一轮的做完被下一轮取代、不叫醒伙伴；最后一轮停下后照常发，最终交付不会漏。
-   */
-  finishedQuietMs: 20 * 60_000,
   /** 同一任务同一类事件 24h 内最多发布次数，防止伙伴与任务互相推着打转。 */
   maxEventsPerSessionPerDay: 6,
   /** 远程电脑状态轮询间隔（仅有在线且已授权的电脑时才轮询）。 */
@@ -107,6 +102,8 @@ export interface WatchedSession {
   online: boolean;
   title: string;
   workingDir: string | null;
+  /** Executing model explicitly reported final delivery for this execution. */
+  finalDelivery?: boolean;
   phase: WatchedPhase;
   /** 进入当前 phase 的时刻（ms）。同一 (phase, phaseSince) 只发布一次事件。 */
   phaseSince: number;

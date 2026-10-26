@@ -1,7 +1,7 @@
 /**
  * 伙伴自主跟进 · 事件判定（程序级，不经模型）。
  *
- * 从状态表判定 stuck / waiting / errored / usage-limit / finished（做完后安静满 finishedQuietMs），发布到例行任务引擎的宿主
+ * 从状态表判定 stuck / waiting / errored / usage-limit / finished，发布到例行任务引擎的宿主
  * 内置事件源 `host:sessions`。去重：同一任务同一 (类型, phaseSince) 只发一次（事件 id 天然唯一，
  * 引擎另有 24h 回执去重）；防打转：同一任务同一类事件 24h 内最多
  * `AUTONOMY_THRESHOLDS.maxEventsPerSessionPerDay` 次，超出只记日志。
@@ -77,28 +77,12 @@ export function dueEventType(row: WatchedSession, now: number): AutonomyEventTyp
     case 'usage-limit':
       return 'usage-limit';
     case 'finished':
-      return emitsFinished(row) && now - row.phaseSince >= AUTONOMY_THRESHOLDS.finishedQuietMs ? 'finished' : null;
+      // 自动化运行的任务有自己的结果通知，「做完」不再叫醒伙伴；卡住 / 等你 / 出错照常。
+      // 伙伴主任务的一轮回复做完不是「任务做完」：否则别的伙伴每回一句话都会叫醒总调度。
+      return row.source === 'routine' || row.canonicalOfBotId || !row.finalDelivery ? null : 'finished';
     default:
       return null;
   }
-}
-
-/**
- * 自动化运行的任务有自己的结果通知，「做完」不再叫醒伙伴；卡住 / 等你 / 出错照常。
- * 伙伴主任务的一轮回复做完不是「任务做完」：否则别的伙伴每回一句话都会叫醒总调度。
- */
-function emitsFinished(row: WatchedSession): boolean {
-  return row.source !== 'routine' && !row.canonicalOfBotId;
-}
-
-/** 本机任务做完、finished 还没发：这一行由扫描到点判定（发出或结清后即离表）。 */
-export function awaitsFinishedEvent(row: WatchedSession): boolean {
-  return row.online && row.deviceId === null && row.phase === 'finished' && emitsFinished(row);
-}
-
-/** 还在安静期内：这一行要留在表里，期满再判定。 */
-export function awaitsFinishedQuiet(row: WatchedSession, now: number): boolean {
-  return awaitsFinishedEvent(row) && now - row.phaseSince < AUTONOMY_THRESHOLDS.finishedQuietMs;
 }
 
 export interface AutonomyEventCandidate {

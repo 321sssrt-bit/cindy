@@ -215,7 +215,8 @@ async function detectHooks(wd: string, direction: MigrationDirection, items: Mig
     // 目标缺失判断：claude settings.json 不存在 / 不含 hooks 段，或 .claude/hooks/ 不存在
     const claudeSettingsHasHooks = await fileHasJsonKey(claudeSettings, 'hooks');
     const claudeHooksDirExists = await isDir(claudeHooksDir);
-    if (claudeSettingsHasHooks && claudeHooksDirExists) return;
+    // 按源端资产对齐：源端只有 hooks.json、没有 hooks/ 目录时，目标有 hooks 配置即视为完备
+    if ((!hasSourceJson || claudeSettingsHasHooks) && (!hasSourceDir || claudeHooksDirExists)) return;
     items.push({
       id: 'hooks:0',
       kind: 'hooks',
@@ -230,7 +231,7 @@ async function detectHooks(wd: string, direction: MigrationDirection, items: Mig
     if (!hasSourceDir && !hasSourceJson) return;
     const codexHooksJsonExists = await isNonEmptyTextFile(codexHooksJson);
     const codexHooksDirExists = await isDir(codexHooksDir);
-    if (codexHooksJsonExists && codexHooksDirExists) return;
+    if ((!hasSourceJson || codexHooksJsonExists) && (!hasSourceDir || codexHooksDirExists)) return;
     items.push({
       id: 'hooks:0',
       kind: 'hooks',

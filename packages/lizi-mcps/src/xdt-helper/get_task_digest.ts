@@ -4,7 +4,8 @@
  * 给被程序叫醒的伙伴用:先读这一份再决定继续、代答、换模型还是提醒主人,不必拉整段聊天记录。
  * 本机任务直接给 id;另一台电脑上的任务写 deviceId::sessionId(只读,对方须在线)。
  * 宿主负责取数;本文件只负责输出合同:每段文字 ≤300 字,整份 JSON ≤2KB(UTF-8 字节),
- * 超出时先收紧长文字、最后置空,不截断成非法 JSON;必填元数据仍装不下时返回短错误。
+ * 正文超出时先收紧长文字、最后置空;可选链接仅在剩余预算内保留,不挤占正文。
+ * 不截断成非法 JSON;必填元数据仍装不下时返回短错误。
  */
 import { z } from 'zod';
 
@@ -95,6 +96,8 @@ export function boundTaskDigest(raw: TaskDigestWire): TaskDigestWire {
     error: clip(raw.error, TASK_DIGEST_TEXT_MAX),
     pr_status: clip(raw.pr_status, TASK_DIGEST_TEXT_MAX),
   };
+  // 先分配摘要内容的预算,避免可选链接导致正文或建议路线被清空。
+  delete digest.sessionUrl;
   for (let max = TASK_DIGEST_TEXT_MAX; payloadBytes(digest) > TASK_DIGEST_MAX_BYTES && max >= 20; max = Math.floor(max / 2)) {
     for (const key of SHRINKABLE) digest[key] = clip(digest[key], max, key === 'last_assistant_line');
     digest.title = clip(digest.title, Math.min(TITLE_MAX, max)) ?? '';
@@ -108,7 +111,10 @@ export function boundTaskDigest(raw: TaskDigestWire): TaskDigestWire {
     digest.suggested_route = null;
     digest.title = clip(digest.title, 20) ?? '';
   }
-  if (payloadBytes(digest) > TASK_DIGEST_MAX_BYTES) delete digest.sessionUrl;
+  if (raw.sessionUrl !== undefined) {
+    digest.sessionUrl = raw.sessionUrl;
+    if (payloadBytes(digest) > TASK_DIGEST_MAX_BYTES) delete digest.sessionUrl;
+  }
   return digest;
 }
 

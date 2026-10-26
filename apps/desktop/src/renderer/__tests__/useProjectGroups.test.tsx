@@ -63,7 +63,7 @@ it('updates collision labels when another device starts or stops sharing the nam
   });
   expect(result.current.projects[0].remoteMachineIdentity?.detail).toBeNull();
   rerender({ rows: [rows[0], { ...rows[1], deviceLinkDeviceName: 'Mac' }] });
-  expect(result.current.projects[0].remoteMachineIdentity?.detail).toBe('one');
+  expect(result.current.projects[0].remoteMachineIdentity?.displayLabel).toBe('Mac (1)');
   rerender({ rows });
   expect(result.current.projects[0].remoteMachineIdentity?.detail).toBeNull();
 });

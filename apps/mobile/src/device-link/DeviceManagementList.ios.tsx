@@ -1,3 +1,4 @@
+import { deviceDisplayName } from './deviceName';
 import { useMemo, useState } from 'react';
 import { Host, ListItem } from '@expo/ui';
 import { Button, Circle, HStack, List, Section, SwipeActions, Text } from '@expo/ui/swift-ui';
@@ -86,7 +87,7 @@ export function DeviceManagementList({
               foregroundStyle({ type: 'hierarchical', style: 'primary' }),
             ]}
           >
-            {device.name}
+            {deviceDisplayName(device.deviceId, device.name)}
           </Text>
         </ListItem>
         <SwipeActions.Actions edge="leading" allowsFullSwipe={false}>

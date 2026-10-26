@@ -21,7 +21,7 @@ import {
   type ProjectNode,
 } from '../lib/projectGrouping';
 import {
-  collectAmbiguousDeviceNames,
+  collectProjectDevices,
   resolveRemoteProjectMachineIdentity,
 } from '../lib/remoteProjectIdentity';
 
@@ -71,11 +71,11 @@ export function useProjectGroups(
     botOwnerBySessionId,
     provisionalDraftTaskId,
   ]);
-  const ambiguousDeviceNames = useMemo(
-    () => collectAmbiguousDeviceNames(groups.projects),
+  const projectDevices = useMemo(
+    () => collectProjectDevices(groups.projects),
     [groups.projects],
   );
-  const ambiguityKey = JSON.stringify([...ambiguousDeviceNames].sort());
+  const ambiguityKey = JSON.stringify(projectDevices);
   // Weak keys keep only live grouping nodes. Registry/collision changes must
   // re-enrich even unchanged nodes so remote labels never retain stale names.
   const enrichedProjects = useMemo(
@@ -92,12 +92,12 @@ export function useProjectGroups(
         const enriched = {
           ...project,
           remoteMachineIdentity: resolveRemoteProjectMachineIdentity(project, sshHosts, {
-            ambiguousDeviceNames,
+            devices: projectDevices,
           }),
         };
         enrichedProjects.set(project, enriched);
         return enriched;
       }),
     };
-  }, [groups, equivalentResult, enrichedProjects, sshHosts, ambiguousDeviceNames]);
+  }, [groups, equivalentResult, enrichedProjects, sshHosts, projectDevices]);
 }

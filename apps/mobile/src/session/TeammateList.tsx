@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/device-link/deviceName';
 import { readWorkingPhase } from '@cindy/maker-shared';
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
@@ -109,7 +110,7 @@ export function useTeammateRowRenderer({ items, isOnline, connectionState, quiet
     const time = timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime())
       ? formatRemoteSessionSidebarTime(new Date(timestamp).toISOString(), now) : '';
     return <TeammateRow key={`bot:${row.key}`} rowKey={row.key} deviceId={row.host.deviceId} botId={row.item.ref.id}
-      title={title} device={ambiguous ? row.host.deviceName : undefined}
+      title={title} device={ambiguous ? deviceDisplayName(row.host.deviceId, row.host.deviceName) : undefined}
       rawPreview={!generating && display.preview ? resolveRemoteText(display.preview, i18n.language) : ''}
       subtitle={display.subtitle ? resolveRemoteText(display.subtitle, i18n.language) : ''}
       avatarKind={display.avatar?.kind} avatarValue={display.avatar?.value}

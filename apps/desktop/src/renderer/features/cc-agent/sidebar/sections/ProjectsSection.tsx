@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/lib/deviceName';
 import { isCindyMakeFamilySource } from '../../../../../shared/cindyMakeMerge';
 /**
  * ProjectsSection — Sidebar 中部的 Projects 段
@@ -1215,7 +1216,7 @@ export function ProjectsSection({
                   ? remoteDeviceIndex?.get(section.deviceId)
                   : undefined;
                 const name = section.deviceId
-                  ? (device?.name ?? cachedDeviceNames.get(section.deviceId) ?? section.deviceId)
+                  ? (deviceDisplayName(section.deviceId, device?.name ?? cachedDeviceNames.get(section.deviceId)))
                   : t('ccAgent.sidebar.deviceGroup.local');
                 const online = section.deviceId ? (device?.online ?? false) : true;
                 const sectionCollapsed = collapsedDevices.has(key);

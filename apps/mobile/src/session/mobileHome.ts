@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/device-link/deviceName';
 import type { RemoteSession } from '@/session/types';
 import { isSharedTaskPeer } from '@cindy/device-link';
 import { i18n } from '@/i18n';
@@ -24,7 +25,7 @@ export function buildMobileHomePresentation(options: MobileHomeOptions): MobileH
   const base = buildMobileHomePresentationShared({ ...options, selectedDeviceId, localizer: mobilePresentationLocalizer });
   const deviceFilters = base.deviceFilters.filter((filter) => !filter.deviceId || !isSharedTaskPeer(filter.deviceId)).map((filter) => ({
     ...filter,
-    label: filter.deviceId === null ? i18n.t('devices.presentation.home.allDevices') : filter.label,
+    label: filter.deviceId === null ? i18n.t('devices.presentation.home.allDevices') : deviceDisplayName(filter.deviceId, filter.label),
     statusLabel: filter.waitingCount > 0
       ? i18n.t('devices.presentation.home.waitingCount', { count: filter.waitingCount })
       : filter.deviceId === null
@@ -52,7 +53,7 @@ export function buildMobileHomePresentation(options: MobileHomeOptions): MobileH
           : undefined);
       const deviceName = sourceDeviceName == null
         ? i18n.t('devices.presentation.home.unknownComputer')
-        : project.deviceName;
+        : deviceDisplayName(project.deviceId ?? '', project.deviceName);
       const workingDir = project.workingDir;
       return {
         ...project,

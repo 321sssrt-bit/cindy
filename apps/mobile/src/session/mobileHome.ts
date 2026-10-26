@@ -23,9 +23,13 @@ export function buildMobileHomePresentation(options: MobileHomeOptions): MobileH
   const selectedDeviceId = options.selectedDeviceId && isSharedTaskPeer(options.selectedDeviceId)
     ? null : options.selectedDeviceId;
   const base = buildMobileHomePresentationShared({ ...options, selectedDeviceId, localizer: mobilePresentationLocalizer });
-  const deviceFilters = base.deviceFilters.filter((filter) => !filter.deviceId || !isSharedTaskPeer(filter.deviceId)).map((filter) => ({
+  const ownDeviceFilters = base.deviceFilters.filter((filter) => !filter.deviceId || !isSharedTaskPeer(filter.deviceId));
+  const deviceNameSources = ownDeviceFilters.flatMap((filter) => filter.deviceId ? [{
+    deviceId: filter.deviceId, name: filter.label,
+  }] : []);
+  const deviceFilters = ownDeviceFilters.map((filter) => ({
     ...filter,
-    label: filter.deviceId === null ? i18n.t('devices.presentation.home.allDevices') : deviceDisplayName(filter.deviceId, filter.label),
+    label: filter.deviceId === null ? i18n.t('devices.presentation.home.allDevices') : deviceDisplayName(filter.deviceId, filter.label, deviceNameSources),
     statusLabel: filter.waitingCount > 0
       ? i18n.t('devices.presentation.home.waitingCount', { count: filter.waitingCount })
       : filter.deviceId === null

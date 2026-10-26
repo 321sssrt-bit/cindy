@@ -43,7 +43,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
     >
       {p.page === 'device' ? <Section>
         {p.devices.map(device => <ComposerNativeRow key={device.deviceId}
-          title={deviceDisplayName(device.deviceId, device.name)} leading={icon('laptopcomputer')}
+          title={deviceDisplayName(device.deviceId, device.name, p.devices)} leading={icon('laptopcomputer')}
           selected={device.deviceId === p.selectedDeviceId} disabled={p.busy}
           onPress={() => p.onDevice(device.deviceId)} testID="newSession.deviceOption" />)}
       </Section> : p.page === 'workspace' ? <>

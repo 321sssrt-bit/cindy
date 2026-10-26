@@ -92,7 +92,7 @@ export function NewTaskSelectionSheet(p: NewTaskSelectionSheetProps) {
           p.devices.map((device) => (
             <NewTaskSelectionRow
               key={device.deviceId}
-              title={deviceDisplayName(device.deviceId, device.name)}
+              title={deviceDisplayName(device.deviceId, device.name, p.devices)}
               leading={icon(Laptop)}
               selected={device.deviceId === p.selectedDeviceId}
               disabled={p.busy}

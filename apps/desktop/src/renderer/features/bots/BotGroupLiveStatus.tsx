@@ -121,10 +121,16 @@ export function BotGroupSpeakerInteraction({ speaker }: { speaker: BotGroupLiveS
  */
 export function BotGroupProgressStrip(props: BotGroupProgressStripProps) {
   const active = props.speakers.filter(speaker => speaker.activity !== 'planning');
+  // The control belongs to the whole group, even though it is rendered once on
+  // the last row. A different execution may still be stoppable while that row
+  // is waiting for its cancel receipt, so the last speaker's state cannot be
+  // used as the button's disabled/loading state.
+  const hasStoppableExecution = active.some(speaker => !speaker.stopping && speaker.executionStatus !== 'stopping');
+  const stopPending = props.stopping || !hasStoppableExecution;
   if (active.length <= 1) return <BotGroupSingleProgressStrip {...props} />;
   return <>{active.map((speaker, index) => <BotGroupSingleProgressStrip
     key={speaker.executionId ?? `${speaker.member.botId}:${speaker.activity}`}
-    {...props} step={props.step?.step.botId === speaker.member.botId && speaker.activity === 'step' ? props.step : null} speakers={[speaker]} showStop={index === active.length - 1}
+    {...props} step={props.step?.step.botId === speaker.member.botId && speaker.activity === 'step' ? props.step : null} speakers={[speaker]} showStop={index === active.length - 1} stopPending={stopPending}
   />)}</>;
 }
 
@@ -143,7 +149,8 @@ function BotGroupSingleProgressStrip({
   canStopAll = false,
   stopping,
   showStop = true,
-}: BotGroupProgressStripProps & { showStop?: boolean }) {
+  stopPending,
+}: BotGroupProgressStripProps & { showStop?: boolean; stopPending?: boolean }) {
   const { t } = useTranslation();
   const [mountedAt] = useState(() => Date.now());
   const navigate = useNavigate();
@@ -158,6 +165,7 @@ function BotGroupSingleProgressStrip({
   const live = useSpeakerActivity(lead);
   const since = live?.startedAtMs ?? lead?.startedAt ?? (step ? step.plan.updatedAt : mountedAt);
   const isStopping = stopping || lead?.stopping === true || (!!live?.gracefulStopState && live.gracefulStopState !== 'none');
+  const buttonPending = stopPending ?? isStopping;
   const now = useBotGroupNow(true);
   if (!step && (!lead || now - since < BOT_GROUP_PROGRESS_STRIP_DELAY_MS)) return null;
   const member = step ? step.member : lead?.member;
@@ -210,7 +218,7 @@ function BotGroupSingleProgressStrip({
             {!showStop ? null : canStopAll ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="secondary" tone="quiet" size="sm" compact loading={isStopping} className="text-[var(--text-danger)]">
+                  <Button type="button" variant="secondary" tone="quiet" size="sm" compact loading={buttonPending} className="text-[var(--text-danger)]">
                     {t('bots.groupChat.progress.stop')}
                   </Button>
                 </DropdownMenuTrigger>
@@ -233,7 +241,7 @@ function BotGroupSingleProgressStrip({
                 tone="quiet"
                 size="sm"
                 compact
-                loading={isStopping}
+                loading={buttonPending}
                 onClick={() => onStop()}
                 className="text-[var(--text-danger)]"
               >

@@ -12,6 +12,7 @@ interface GroupData {
   workState?: 'thinking' | 'reading-file' | 'testing' | 'waiting' | 'stopping' | 'unknown';
   workRemote?: boolean;
   workParallel?: boolean;
+  workLastStopping?: boolean;
   bodyAnswer?: boolean;
   name: string;
   members: Array<{ botId: string; name: string }>;
@@ -275,7 +276,7 @@ function groupFrom(data: GroupData) {
     })),
     hasMoreBefore: false,
     round: data.workState ? { status: 'running', speakers: [{ botId: 'a', executionId: 'fixture-execution', sessionId: data.workRemote || data.workState === 'unknown' ? null : 'fixture-work', activity: 'reply', executionStatus: data.workState === 'waiting' ? 'needs_input' : 'running', startedAt: Date.now() - 83_000, stopping: data.workState === 'stopping' },
-      ...(data.workParallel ? [{ botId: 'b', executionId: 'fixture-second', sessionId: 'fixture-second-work', activity: 'reply', startedAt: Date.now() - 41_000 }] : [])], canContinue: false }
+      ...(data.workParallel ? [{ botId: 'b', executionId: 'fixture-second', sessionId: 'fixture-second-work', activity: 'reply', startedAt: Date.now() - 41_000, stopping: !!data.workLastStopping, executionStatus: data.workLastStopping ? 'stopping' : 'running' }] : [])], canContinue: false }
       : { status: 'idle', speakers: [], canContinue: false },
   };
 }

@@ -4,7 +4,7 @@
  * 给被程序叫醒的伙伴用:先读这一份再决定继续、代答、换模型还是提醒主人,不必拉整段聊天记录。
  * 本机任务直接给 id;另一台电脑上的任务写 deviceId::sessionId(只读,对方须在线)。
  * 宿主负责取数;本文件只负责输出合同:每段文字 ≤300 字,整份 JSON ≤2KB(UTF-8 字节),
- * 超出时先收紧长文字、最后置空,不截断成非法 JSON。
+ * 超出时先收紧长文字、最后置空,不截断成非法 JSON;必填元数据仍装不下时返回短错误。
  */
 import { z } from 'zod';
 
@@ -84,7 +84,7 @@ const encoder = new TextEncoder();
 const payloadBytes = (digest: TaskDigestWire) =>
   encoder.encode(JSON.stringify({ ok: true, ...digest })).length;
 
-/** 输出合同:文字逐段 ≤300 字,整份(含 ok 外壳)≤2KB。 */
+/** 尽力收缩文字与可选字段;handler 负责拒绝仍超过 2KB 的必填元数据。 */
 export function boundTaskDigest(raw: TaskDigestWire): TaskDigestWire {
   const digest: TaskDigestWire = {
     ...raw,
@@ -99,7 +99,7 @@ export function boundTaskDigest(raw: TaskDigestWire): TaskDigestWire {
     for (const key of SHRINKABLE) digest[key] = clip(digest[key], max, key === 'last_assistant_line');
     digest.title = clip(digest.title, Math.min(TITLE_MAX, max)) ?? '';
   }
-  // 极端情况(超长 id / 模型名):去掉可选文字,保证合同成立。
+  // 极端情况(超长 id / 模型名):继续去掉可选文字,不破坏任务身份。
   for (const key of SHRINKABLE) {
     if (payloadBytes(digest) <= TASK_DIGEST_MAX_BYTES) break;
     digest[key] = null;
@@ -108,6 +108,7 @@ export function boundTaskDigest(raw: TaskDigestWire): TaskDigestWire {
     digest.suggested_route = null;
     digest.title = clip(digest.title, 20) ?? '';
   }
+  if (payloadBytes(digest) > TASK_DIGEST_MAX_BYTES) delete digest.sessionUrl;
   return digest;
 }
 
@@ -158,10 +159,14 @@ export function registerGetTaskDigestTool(
         callerSessionId: deps.getSessionContext?.()?.sessionId,
       });
       if (!result.ok) return errorPayload(result.errorCode, result.message);
-      return okPayload({ ...boundTaskDigest({
+      const digest = boundTaskDigest({
         ...result.digest,
         ...(deps.history.sessionUrl ? { sessionUrl: deps.history.sessionUrl(result.digest.session_id) } : {}),
-      }) });
+      });
+      if (payloadBytes(digest) > TASK_DIGEST_MAX_BYTES) {
+        return errorPayload('DIGEST_TOO_LARGE', '任务摘要的必填元数据超过 2KB，无法安全返回。');
+      }
+      return okPayload({ ...digest });
     },
   });
 }

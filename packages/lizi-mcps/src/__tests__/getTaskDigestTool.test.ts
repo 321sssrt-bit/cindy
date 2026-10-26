@@ -2,8 +2,8 @@
  * 测试价值
  * - 生产入口与可观察结果:get_task_digest 经 registry.call 返回给模型的 JSON(字段、大小、错误码)。
  * - 规则依据:被程序叫醒的伙伴先读 ≤2KB 摘要再决定;每段文字 ≤300 字;只读调用方可读范围内的任务。
- * - 现有覆盖缺口:长助手回复只截开头,丢掉末尾结果;总预算收紧时也须保留结论。
- * - 最小失败输入:超过 300 字、末尾才写失败结论的回复,分别带有/不带其他长字段;受限范围外任务。
+ * - 现有覆盖缺口:长助手回复只截开头,丢掉末尾结果;总预算收紧时也须保留结论;可选链接与必填元数据的字节预算未覆盖。
+ * - 最小失败输入:超过 300 字、末尾才写失败结论的回复,分别带有/不带其他长字段;超长链接或模型元数据;受限范围外任务。
  * - tier:unit(纯工具层,宿主回调 mock)。
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -96,6 +96,31 @@ describe('get_task_digest', () => {
     expect(reply.startsWith(opening)).toBe(true);
     expect(reply.endsWith(conclusion)).toBe(true);
     expect(Array.from(reply).length).toBeLessThanOrEqual(pressure ? 299 : 300);
+  });
+
+  it('omits an oversized optional sessionUrl without corrupting task identity', async () => {
+    const reg = setup({
+      taskDigest: async () => ({ ok: true as const, digest }),
+      sessionUrl: () => `cindy://session/laptop::s-9?${'x'.repeat(4096)}`,
+    });
+    const result = await reg.call('get_task_digest', { session_id: digest.session_id });
+    const { text, json } = parse(result);
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(TASK_DIGEST_MAX_BYTES);
+    expect(json).toMatchObject({ ok: true, session_id: digest.session_id });
+    expect(json).not.toHaveProperty('sessionUrl');
+  });
+
+  it('returns a small explicit error when required metadata cannot fit the byte budget', async () => {
+    const raw = {
+      ...digest,
+      current_route: { ...digest.current_route!, model: 'm'.repeat(4096) },
+    };
+    const reg = setup({ taskDigest: async () => ({ ok: true as const, digest: raw }) });
+    const result = await reg.call('get_task_digest', { session_id: raw.session_id });
+    const { text, json } = parse(result);
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(TASK_DIGEST_MAX_BYTES);
+    expect(json).toMatchObject({ ok: false, errorCode: 'DIGEST_TOO_LARGE' });
+    expect(result.isError).toBe(true);
   });
 
   it('refuses a task outside a scoped caller\'s readable history and passes host errors through', async () => {

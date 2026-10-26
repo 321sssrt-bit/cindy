@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   appStateListeners: new Set<(state: string) => void>(),
   closeSettings: null as null | (() => void),
   row: null as any,
+  inputFocus: vi.fn(),
   inputs: {} as Record<string, any>,
   teammates: { rows: [] as any[], loading: false, failed: false },
   teammateQuery: '',
@@ -181,6 +182,7 @@ vi.mock('@/session/MobileComposerInputRow', () => ({
   // Like the real row: the card shows the tray above the input and the toolbar below it.
   MobileComposerInputRow: (props: any) => {
     h.row = props;
+    if (props.inputRef) props.inputRef.current = { focus: h.inputFocus };
     return el('div', { 'data-testid': 'composer-row', 'data-card': props.cardActive ? 'true' : 'false' },
       props.cardActive ? props.accessoryAbove : props.leading,
       el('span', { 'data-testid': 'placeholder' }, props.placeholder),
@@ -800,6 +802,20 @@ describe('group composer', () => {
     }));
     expect(byId('botGroup.cancelReply')).toBeNull();
     expect(h.row.value).toBe('');
+  });
+
+  // Replying to the same message again (e.g. after the keyboard was dismissed) must focus the
+  // input again; the quote id alone did not change, so the second tap used to leave it unfocused.
+  it('focuses the input on every reply tap, including the same message again', async () => {
+    const originalId = '22222222-2222-4222-8222-222222222222';
+    await render(group({ serverBacked: true, openPlan: null, messages: [
+      message(originalId, 1, { authorName: '咪咪', authorBotId: 'mimi', content: '请回复这条' }),
+    ] }));
+    h.inputFocus.mockClear();
+    await click(`botGroup.reply.${originalId}`);
+    expect(h.inputFocus).toHaveBeenCalledTimes(1);
+    await click(`botGroup.reply.${originalId}`);
+    expect(h.inputFocus).toHaveBeenCalledTimes(2);
   });
 
   it.each([true, false])('locks an existing draft when dissolved without being archived (direct server %s)', async server => {

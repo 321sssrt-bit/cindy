@@ -16,7 +16,7 @@
  * 占位文字跟随未结束的安排。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, View, type TextInput as NativeTextInput } from 'react-native';
+import { Alert, Keyboard, Platform, Pressable, ScrollView, StyleSheet, View, type TextInput as NativeTextInput } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { Camera, Folder, Image as ImageIcon, Plus, Square, Users, X } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
@@ -108,7 +108,14 @@ export function BotGroupComposer({
   const waitForLeaveDecision = useConfirmLeaveWhileUploading(waitingUploads);
   const [stopping, setStopping] = useState(false);
   const inputRef = useRef<NativeTextInput>(null);
-  useEffect(() => { if (focusRequest) inputRef.current?.focus(); }, [focusRequest]);
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!focusRequest || !input) return;
+    // focus() is a no-op on an input that is already focused, and Android keeps focus after Back
+    // hides the keyboard. Re-focus only then; with the keyboard up, an IME composition is left alone.
+    if (input.isFocused() && !Keyboard.isVisible()) input.blur();
+    input.focus();
+  }, [focusRequest]);
   const textRef = useRef(text); textRef.current = text;
   const selectionRef = useRef({ start: 0, end: 0 });
   const sendingRef = useRef(false);

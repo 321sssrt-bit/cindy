@@ -18,6 +18,9 @@ const h = vi.hoisted(() => ({
   closeSettings: null as null | (() => void),
   row: null as any,
   inputFocus: vi.fn(),
+  inputBlur: vi.fn(),
+  inputFocused: false,
+  keyboardVisible: false,
   inputs: {} as Record<string, any>,
   teammates: { rows: [] as any[], loading: false, failed: false },
   teammateQuery: '',
@@ -90,7 +93,7 @@ vi.mock('react-native', () => {
     AppState: { get currentState() { return h.appState; }, addEventListener: (_event: string, listener: (state: string) => void) => {
       h.appStateListeners.add(listener); return { remove: () => h.appStateListeners.delete(listener) };
     } },
-    Keyboard: { dismiss: () => {} },
+    Keyboard: { dismiss: () => {}, isVisible: () => h.keyboardVisible },
     Animated: { View: box('div'), Value: class { setValue() {} interpolate() { return this; } }, timing: () => ({ start() {}, stop() {} }),
       loop: () => ({ start() {}, stop() {} }), sequence: () => ({}) },
     Easing: { inOut: () => undefined, ease: undefined, bezier: () => undefined },
@@ -182,7 +185,7 @@ vi.mock('@/session/MobileComposerInputRow', () => ({
   // Like the real row: the card shows the tray above the input and the toolbar below it.
   MobileComposerInputRow: (props: any) => {
     h.row = props;
-    if (props.inputRef) props.inputRef.current = { focus: h.inputFocus };
+    if (props.inputRef) props.inputRef.current = { focus: h.inputFocus, blur: h.inputBlur, isFocused: () => h.inputFocused };
     return el('div', { 'data-testid': 'composer-row', 'data-card': props.cardActive ? 'true' : 'false' },
       props.cardActive ? props.accessoryAbove : props.leading,
       el('span', { 'data-testid': 'placeholder' }, props.placeholder),
@@ -322,7 +325,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.uuid = 0; h.inputs = {}; h.teammateQuery = ''; h.teammates = { rows: [], loading: false, failed: false };
   h.appState = 'active'; h.appStateListeners.clear();
-  h.platform.OS = 'ios'; h.focused = true; h.keyboardAvoidingView = null; h.headerBlur = []; h.headerFade = [];
+  h.platform.OS = 'ios'; h.focused = true; h.inputFocused = false; h.keyboardVisible = false; h.keyboardAvoidingView = null; h.headerBlur = []; h.headerFade = [];
   h.nativeViewportAvailable = false; h.nativeViewport = null; h.keyboardLift = null;
   h.nativeChatViewportAvailable = false; h.nativeChatViewport = null;
   h.chat = { reload: vi.fn(), act: vi.fn(async () => ({ effects: [] })), online: true };
@@ -804,18 +807,25 @@ describe('group composer', () => {
     expect(h.row.value).toBe('');
   });
 
-  // Replying to the same message again (e.g. after the keyboard was dismissed) must focus the
-  // input again; the quote id alone did not change, so the second tap used to leave it unfocused.
-  it('focuses the input on every reply tap, including the same message again', async () => {
+  // Every reply tap must bring the keyboard back. The quote id alone does not change when the same
+  // message is replied to again, and RN's focus() is a no-op on an input that is still focused —
+  // Android keeps focus after Back hides the keyboard. With the keyboard up, the input is not blurred
+  // so an IME composition survives.
+  it.each([
+    { state: 'unfocused', focused: false, keyboard: false, blurs: 0 },
+    { state: 'focused with the keyboard hidden', focused: true, keyboard: false, blurs: 1 },
+    { state: 'focused with the keyboard up', focused: true, keyboard: true, blurs: 0 },
+  ])('re-focuses the input when replying to the same message again ($state)', async ({ focused, keyboard, blurs }) => {
     const originalId = '22222222-2222-4222-8222-222222222222';
     await render(group({ serverBacked: true, openPlan: null, messages: [
       message(originalId, 1, { authorName: '咪咪', authorBotId: 'mimi', content: '请回复这条' }),
     ] }));
-    h.inputFocus.mockClear();
     await click(`botGroup.reply.${originalId}`);
+    h.inputFocus.mockClear(); h.inputBlur.mockClear();
+    h.inputFocused = focused; h.keyboardVisible = keyboard;
+    await click(`botGroup.reply.${originalId}`);
+    expect(h.inputBlur).toHaveBeenCalledTimes(blurs);
     expect(h.inputFocus).toHaveBeenCalledTimes(1);
-    await click(`botGroup.reply.${originalId}`);
-    expect(h.inputFocus).toHaveBeenCalledTimes(2);
   });
 
   it.each([true, false])('locks an existing draft when dissolved without being archived (direct server %s)', async server => {

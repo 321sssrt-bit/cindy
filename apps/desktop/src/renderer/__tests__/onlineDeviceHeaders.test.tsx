@@ -308,9 +308,9 @@ describe('Offline device header names', () => {
     expect(screen.queryByText('offline')).toBeNull();
   });
 
-  it('still falls back to the device ID when no name is known', () => {
+  it('uses a readable fallback when no device name is known', () => {
     render(<ProjectsSection {...cachedProjectProps()} />);
-    expect(screen.getByText('offline')).toBeTruthy();
+    expect(screen.getByText('another computer')).toBeTruthy();
   });
 
   it('does not enable device grouping when only disconnected devices remain', () => {

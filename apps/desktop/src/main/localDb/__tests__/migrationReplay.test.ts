@@ -110,17 +110,36 @@ describeMigrationReplay('migration replay', () => {
       db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL); CREATE TABLE sessions (id TEXT PRIMARY KEY)");
       if (shape !== 'missing') db.exec(`CREATE TABLE orca_workers (id TEXT PRIMARY KEY${shape === 'partial' ? ', pending_remote_report TEXT' : ''}); INSERT INTO orca_workers (id) VALUES ('worker-1');`);
       db.exec("CREATE TABLE bot_delegations (id TEXT PRIMARY KEY)");
+      db.exec("INSERT INTO sessions (id) VALUES ('legacy-session')");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 124 });
-      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130, 131]);
+      expect(result.applied.map((migration) => migration.seq)).toEqual([125, 126, 127, 128, 129, 130, 131, 132, 133]);
       expect(columnNames(db, 'sessions')).toContain('scheduled_model_baseline');
+      expect(columnNames(db, 'sessions')).toContain('last_activity_at');
+      expect(db.prepare('SELECT last_activity_at FROM sessions').get()).toEqual({ last_activity_at: null });
       expect(tableExists(db, 'plugin_usage_subjects')).toBe(true);
       expect(tableExists(db, 'plugin_usage_events')).toBe(true);
+      expect(columnNames(db, 'plugin_usage_events')).toContain('entry_kind');
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='plugin_usage_events_pending_idx'").get()).toEqual({ name: 'plugin_usage_events_pending_idx' });
       expect(tableExists(db, 'orca_remote_opens')).toBe(true);
       if (shape !== 'missing') {
         expect(columnNames(db, 'orca_workers')).toEqual(expect.arrayContaining(['pending_remote_report', 'remote_stop_confirmed_at']));
         expect(db.prepare('SELECT id FROM orca_workers').all()).toEqual([{ id: 'worker-1' }]);
       }
+    } finally { cleanup(); }
+  });
+  it('keeps existing tool usage when upgrading the invocation ledger', () => {
+    const { db, cleanup } = createTempDb();
+    try {
+      db.exec('CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)');
+      db.exec(readFileSync(path.join(drizzleDir(), '0128_demonic_odin.sql'), 'utf-8'));
+      db.prepare('INSERT INTO plugin_usage_subjects (id,source_kind,ghost_id,display_name,recording_started_at) VALUES (?,?,?,?,?)')
+        .run('subject', 'manual', 'plugin', 'Plugin', 100);
+      db.prepare('INSERT INTO plugin_usage_events (call_id,subject_id,history_generation,occurred_at,tool_name) VALUES (?,?,?,?,?)')
+        .run('legacy-tool', 'subject', 0, 100, 'run');
+      runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 131 });
+      expect(db.prepare('SELECT call_id,subject_id,occurred_at,entry_kind FROM plugin_usage_events').all()).toEqual([
+        { call_id: 'legacy-tool', subject_id: 'subject', occurred_at: 100, entry_kind: 'tool' },
+      ]);
     } finally { cleanup(); }
   });
   it('adds nullable sessions.hidden_at to a populated database without touching existing tasks', () => {
@@ -224,7 +243,7 @@ describeMigrationReplay('migration replay', () => {
       const stagedDir = mkdtempSync(path.join(tmpdir(), 'cindy-scheduled-agent-location-'));
       try {
         db.exec('CREATE TABLE migration_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)');
-        const migration = listMigrations(drizzleDir()).find((item) => item.seq === 131)!;
+        const migration = listMigrations(drizzleDir()).find((item) => item.fileName.endsWith('_schedule_model_location.sql'))!;
         copyFileSync(migration.sqlPath, path.join(stagedDir, migration.fileName));
         mkdirSync(path.join(stagedDir, 'scripts'));
         copyFileSync(migration.tsScriptPath!, path.join(stagedDir, 'scripts', path.basename(migration.tsScriptPath!)));
@@ -233,7 +252,7 @@ describeMigrationReplay('migration replay', () => {
           if (state === 'existing column') db.exec("ALTER TABLE schedules ADD model_agent_device_id TEXT; UPDATE schedules SET model_agent_device_id = 'shared:owner';");
         }
         for (let replay = 0; replay < 2; replay += 1) {
-          runMigrationReplay(db, { drizzleDir: stagedDir, currentVersion: 129 });
+          runMigrationReplay(db, { drizzleDir: stagedDir, currentVersion: migration.seq - 1 });
           if (state === 'missing table') expect(tableExists(db, 'schedules')).toBe(false);
           else expect(db.prepare('SELECT * FROM schedules').all()).toEqual([{ id: 'old', prompt: 'keep this prompt',
             model_agent_device_id: state === 'existing column' ? 'shared:owner' : null }]);

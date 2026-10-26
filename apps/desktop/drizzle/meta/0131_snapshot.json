@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "529221ba-27ab-40b7-9f4d-c59e57abffdc",
+  "id": "b05d3986-bbff-4d57-bb16-d71d46d827bd",
   "prevId": "a9590771-933e-4d44-a046-c52e69437fb4",
   "tables": {
     "account_usage_snapshots": {
@@ -4717,13 +4717,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "model_agent_device_id": {
-          "name": "model_agent_device_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "model": {
           "name": "model",
           "type": "text",
@@ -5445,6 +5438,13 @@
         },
         "user_send_at": {
           "name": "user_send_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

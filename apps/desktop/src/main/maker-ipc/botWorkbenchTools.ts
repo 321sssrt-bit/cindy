@@ -20,6 +20,7 @@ import {
 } from '../appSessionState.js';
 import type { WorkbenchDelegationStatus, WorkbenchTranscriptItem } from '../../shared/botWorkbench.js';
 import { broadcastBotWorkbenchChanged } from './botWorkbenchService.js';
+import { broadcastBotRemoteResourceChanged } from './botRemoteResourceInvalidation.js';
 import { botLinkedProjectAccess } from './botLinkedProjects.js';
 import { boundTranscript, readSessionTranscript } from './botWorkbenchTranscripts.js';
 import { readTaskResponsibilities, responsibleSessionIds, setTaskResponsibility } from './botTaskResponsibility.js';
@@ -54,7 +55,13 @@ export async function resolveWorkbenchCaller(callerSessionId: string): Promise<W
     return { ok: false, errorCode: 'BOT_SESSION_INACTIVE', message: '伙伴或它的主任务已停用' };
   }
   if (row.role !== 'canonical' && row.role !== 'thread') {
-    return { ok: false, errorCode: 'BOT_MAIN_TASK_REQUIRED', message: '只有伙伴的主任务可以使用工作台' };
+    return {
+      ok: false,
+      errorCode: 'BOT_MAIN_TASK_REQUIRED',
+      message: '当前入口不是伙伴的私聊主任务或私聊话题，不能使用工作台、待办或项目关联工具。'
+        + '本次调用未读取或修改这些记录。请告知主人：在 Cindy 中打开这位伙伴的私聊主聊天（主任务），在那里提出本次请求；私聊话题也可用。'
+        + '不要在当前入口重试。',
+    };
   }
   if (row.remoteHostId) {
     return { ok: false, errorCode: 'REMOTE_WORKBENCH_UNAVAILABLE', message: '远端伙伴暂不支持工作台' };
@@ -203,6 +210,8 @@ export async function captureBotCreatedTaskResponsibility(callerSessionId?: stri
     assertCurrent();
     await setTaskResponsibility(root, botId, sessionId, true, assertCurrent);
     broadcastBotWorkbenchChanged(botId);
+    // Remote task rows draw the same mark from the teammate roster's links.
+    broadcastBotRemoteResourceChanged(botId);
   };
 }
 
@@ -217,6 +226,12 @@ export interface BotWorkbenchHostDeps {
   sendToRemoteSession: BotWorkbenchAccessDeps['sendToRemoteSession'];
   /** 另一台电脑上一件任务最近的用户 / 助手文字(按时间正序)。 */
   readRemoteMessages(deviceId: string, sessionId: string): Promise<{ ok: true; items: WorkbenchTranscriptItem[] } | Failure>;
+}
+
+/** Desktop sidebar marks re-read the scopes; remote task rows re-read the teammate roster links. */
+function broadcastResponsibilityChanged(botId: string): void {
+  broadcastBotWorkbenchChanged(botId);
+  broadcastBotRemoteResourceChanged(botId);
 }
 
 /**
@@ -237,7 +252,7 @@ function createDesktopBotWorkbenchAccess(host: BotWorkbenchHostDeps): BotWorkben
       const result = await host.readRemoteMessages(deviceId, sessionId);
       return result.ok ? { ok: true as const, transcript: boundTranscript(result.items) } : result;
     },
-    notifyChanged: broadcastBotWorkbenchChanged,
+    notifyChanged: broadcastResponsibilityChanged,
     listDelegations: listBotDelegationChildren,
     readResponsibleSessionIds: (botId) => readBotResponsibleSessionIds(userDataDir, botId),
     saveResponsibility: (botId, sessionId, responsible) => setTaskResponsibility(

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "800e7e36-3d19-47b3-9afd-ed78ece4aa48",
+  "id": "b05d3986-bbff-4d57-bb16-d71d46d827bd",
   "prevId": "a9590771-933e-4d44-a046-c52e69437fb4",
   "tables": {
     "account_usage_snapshots": {
@@ -5422,14 +5422,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "notifications_muted": {
-          "name": "notifications_muted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
         "summary": {
           "name": "summary",
           "type": "text",
@@ -5446,6 +5438,13 @@
         },
         "user_send_at": {
           "name": "user_send_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

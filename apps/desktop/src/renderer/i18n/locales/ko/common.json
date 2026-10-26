@@ -1051,6 +1051,15 @@
     "details": "오류 정보"
   },
   "localDbFatal": {
+    "schemaLease": {
+      "title": "아직 로컬 데이터를 열 수 없습니다",
+      "retry": "로컬 데이터 다시 열기",
+      "writer-active": "다른 Cindy 인스턴스가 로컬 데이터를 유지 관리하고 있습니다. 완료된 후 다시 여세요.",
+      "readers-active": "다른 Cindy 인스턴스가 이 로컬 데이터를 사용하고 있습니다. 해당 인스턴스를 종료한 후 다시 여세요.",
+      "lock-corrupt": "로컬 데이터 유지 관리 잠금 기록이 손상되어 사용 중인지 확인할 수 없습니다. 컴퓨터를 다시 시작한 후 Cindy를 여세요. 문제가 계속되면 지원팀에 문의하세요. 데이터베이스 파일을 삭제하지 마세요.",
+      "lock-unreadable": "로컬 데이터 유지 관리 잠금을 읽거나 저장할 수 없습니다. 데이터 폴더 접근 권한을 확인하고 접근이 복원되면 다시 여세요. 문제가 계속되면 지원팀에 문의하세요.",
+      "recovery-busy": "다른 Cindy 인스턴스가 로컬 데이터 유지 관리 잠금을 확인하고 있습니다. 잠시 후 다시 여세요."
+    },
     "databaseCleanup": {
       "interruptedTitle": "데이터베이스 정리가 중단되었습니다",
       "interruptedDescription": "데이터베이스 정리가 예기치 않게 중단되었습니다. Cindy를 다시 시작하면 저장된 유지 관리 상태를 바탕으로 안전하게 복구합니다.",
@@ -1321,6 +1330,8 @@
       "moreTasks_other": "작업 {{n}}개 더",
       "running": "진행 중",
       "openApp": "Cindy 열기",
+      "remoteControlTitle": "원격 제어 중",
+      "remoteControlBody": "다른 기기에서 이 컴퓨터의 Cindy에 접근하고 있어요.",
       "gateTitle": "로그인하면 남은 양을 볼 수 있어요",
       "gateBody": "Cindy에 로그인하거나 로그인 건너뛰기를 선택하면 여기에 구독 남은 양과 오늘 사용량이 표시돼요.",
       "settings": "관리",
@@ -8135,8 +8146,8 @@
       "coverage": "일별 집계는 {{date}}부터",
       "col": {
         "task": "세션",
-        "model": "모델",
-        "provider": "제공자",
+        "model": "현재 모델",
+        "provider": "현재 제공자",
         "tokens": "누적 토큰",
         "context": "컨텍스트 사용률",
         "lastActive": "마지막 활동"
@@ -12611,6 +12622,20 @@
     }
   },
   "ccAgent": {
+    "sessionEntry": {"missing":"이 세션을 찾을 수 없습니다. 삭제되었을 수 있습니다.","denied":"현재 계정 또는 컴퓨터에서 이 세션에 접근할 수 없습니다.","failed":"이 세션을 불러오지 못했습니다.","back":"세션 목록으로 돌아가기","retry":"세션 다시 불러오기"},
+    "contextWindowBudget": {
+      "menuTitle": "이 작업의 컨텍스트 창",
+      "triggerLabel": "작업 컨텍스트 창, 현재 {{window}}",
+      "menuHint": "이 작업에만 적용됩니다. 다음 메시지부터 적용됩니다.",
+      "optionDefault": "모델 기본값",
+      "optionPercent": "{{percent}}%",
+      "inputPrice": "입력 {{price}}/M",
+      "remoteUnsupported": "피제어 기기 버전에서는 이 작업의 컨텍스트 창을 변경할 수 없습니다",
+      "remoteTightenOnly": "피제어 기기 상한을 읽을 수 없어 축소 방향만 제공합니다.",
+      "readOnlyHint": "읽기 전용 작업입니다. 단계와 요금 구간은 볼 수 있지만 변경할 수는 없습니다.",
+      "shrinkWarning": "현재 {{used}} 사용 중 — 더 작은 창은 먼저 압축하거나 새 창으로 전환합니다.",
+      "saveFailed": "컨텍스트 창 저장에 실패했습니다"
+    },
     "agentStatus": {
       "readingMemory": "기억을 읽고 있어요…",
       "savingMemory": "기억을 저장하고 있어요…",
@@ -13166,11 +13191,11 @@
         "unarchiveAll": "모두 보관 해제",
         "openInExplorer": "파일 관리자에서 열기",
         "newInDirectory": "이 디렉터리에서 새 세션",
-        "copyDeepLink": "딥 링크 복사",
+        "copyDeepLink": "프로젝트 링크 복사",
         "search": "이 프로젝트에서 세션 검색"
       },
       "deepLink": {
-        "copied": "딥 링크가 복사되었습니다",
+        "copied": "링크를 복사했습니다",
         "copyFailed": "복사에 실패했습니다. 수동으로 복사해주세요",
         "projectNotFound": "해당 프로젝트를 찾을 수 없습니다. 보관되었거나 이 기기에 없을 수 있습니다"
       },

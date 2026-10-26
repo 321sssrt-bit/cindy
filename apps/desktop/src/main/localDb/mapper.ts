@@ -268,6 +268,7 @@ export function sessionToCamel(row: SessionRowWithCount): Session {
     hiddenAt: msToIso(row.hiddenAt),
     notificationsMuted: !!row.notificationsMuted,
     userSendAt: msToIso(row.userSendAt),
+    lastActivityAt: msToIso(row.lastActivityAt),
     agentKind: row.agentKind as AgentKind,
     source: normalizeSessionSource(row.source),
     orcaRole: row.orcaRole as OrcaRole | null,

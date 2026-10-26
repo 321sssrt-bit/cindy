@@ -46,11 +46,11 @@ export function useChatClient() {
         .finally(() => { discovering = undefined; });
       return discovering;
     };
-    const request: ChatRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' = 'GET', body?: unknown, actorId?: string) => {
+    const request: ChatRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' = 'GET', body?: unknown, actorId?: string, signal?: AbortSignal) => {
       check();
       const url = await endpoint(); check();
       const result = await deps.current.apiFetch<T>(`/v1${path}`, { baseUrl: url, method, cache: 'no-store', ...(body !== undefined ? { body } : {}),
-        ...(actorId ? { headers: { 'X-Chat-Actor': actorId } } : {}), assertCurrent: check });
+        ...(actorId ? { headers: { 'X-Chat-Actor': actorId } } : {}), ...(signal ? { signal } : {}), assertCurrent: check });
       check(); return result;
     };
     const client = createChatServerClient(request, listFor(owner));
@@ -298,7 +298,7 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
         : [...mentions.botIds];
       const root = threadRootId ? latest.page.messages.find(message => message.id === threadRootId) : undefined;
       if (root && joined.some(member => member.id === root.authorId && member.kind === 'bot')) recipients.push(root.authorId);
-      await api.client.send(groupId, { clientId: String(input.clientId), text: String(input.text), threadRootId,
+      await api.client.send(groupId, { ...(latest.page.snapshot.room.kind === 'direct' ? { conversationKind: 'direct' as const } : {}), clientId: String(input.clientId), text: String(input.text), threadRootId,
         ...(input.quote && typeof input.quote === 'object' && 'messageId' in input.quote
           ? { quote: { messageId: String(input.quote.messageId) } } : {}),
         mentions: { all: false, botIds: recipients.filter(id => id !== latest.self) } });
@@ -315,10 +315,10 @@ export function useChatServerGroup(groupId: string, enabled: boolean, threadRoot
       throw error;
     }
   };
-  const media = async (mediaId: string): Promise<BotGroupAttachment> => {
+  const media = async (mediaId: string, signal?: AbortSignal): Promise<BotGroupAttachment> => {
     const generation = accessGeneration.current;
     try {
-      const attachment = await api.client.media(groupId, mediaId);
+      const attachment = await api.client.media(groupId, mediaId, signal);
       if (!valid() || generation !== accessGeneration.current) throw new Error('OWNER_CHANGED');
       return attachment;
     } catch (error) {

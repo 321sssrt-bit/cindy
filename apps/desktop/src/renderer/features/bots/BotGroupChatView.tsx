@@ -1,4 +1,6 @@
+import { useSmoothMessageFollow } from '@/components/chat/useSmoothMessageFollow';
 import { RemoveChatFromListButton } from './RemoveChatFromListButton';
+import { useMessageEntrance } from '@/components/chat/useMessageEntrance';
 import { useThreadPanelResize } from './useThreadPanelResize';
 import { cn } from '@/lib/utils';
 /**
@@ -145,6 +147,8 @@ const QUOTE_HIGHLIGHT_MS = 2000;
 const STICK_TO_BOTTOM_PX = 48;
 /** Read marks follow scrolling at most this often (leading edge, plus one trailing mark). */
 const ACKNOWLEDGE_THROTTLE_MS = 150;
+/** Match the phone's direct-chat recovery without polling healthy timelines. */
+const TIMELINE_READ_RECOVERY_MS = 30_000;
 const NO_IDS: ReadonlySet<string> = new Set();
 
 /**
@@ -229,6 +233,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   const loadRef = useRef<(additionalSources?: string[], changedIds?: string[]) => void>(() => {});
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const followMessageBottom = useSmoothMessageFollow(scrollRef, contentRef, state.kind === 'ready');
   const stickToBottomRef = useRef(true);
   const [seenThrough, setSeenThrough] = useState<string | null>(null);
   const readOwner = useRef(getDataOwnerGeneration());
@@ -257,7 +262,24 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
     let version = 0;
     let inFlight = false;
     let queued: { sources: string[]; changed: string[] } | null = null;
+    // A queued read can finish before React commits the previous successful snapshot.
+    let hasTimeline = stateRef.current.kind === 'ready';
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearRetry = () => {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+    const retryRead = (owner: ReturnType<typeof getDataOwnerGeneration>, sources: string[], changed: string[]) => {
+      // A first read already has an explicit retry; keep the visible history on a failed refresh.
+      if (!hasTimeline) return;
+      clearRetry();
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        if (!cancelled && isDataOwnerGenerationCurrent(owner)) load(sources, changed);
+      }, TIMELINE_READ_RECOVERY_MS);
+    };
     const run = async (additionalSources: string[], changedIds: string[]) => {
+      clearRetry();
       inFlight = true;
       const current = ++version;
       const readToken = beginBotGroupTimelineRead();
@@ -283,6 +305,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           : await api.getBotGroup(groupId, direct ? { conversationKind: 'direct' } : undefined);
         if (!isApplicable()) return;
         if (result.ok) {
+          hasTimeline = true;
           readOwner.current = owner;
           const shown = stateRef.current;
           setState((previous) => {
@@ -317,14 +340,21 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
             }
           }
         } else if (result.errorCode === 'NOT_FOUND') {
+          hasTimeline = false;
           discardOutbox();
           setState({ kind: 'missing' });
         } else {
           // Keep a timeline that is already on screen; only a first read fails loudly.
           setState((previous) => (previous.kind === 'ready' ? previous : { kind: 'error' }));
+          if (['REQUEST_TIMEOUT', 'SERVICE_ERROR', 'CHAT_UNAVAILABLE', 'HOST_NOT_READY', 'INTERNAL'].includes(result.errorCode)) {
+            retryRead(owner, additionalSources, changedIds);
+          }
         }
       } catch {
-        if (isApplicable()) setState((previous) => (previous.kind === 'ready' ? previous : { kind: 'error' }));
+        if (isApplicable()) {
+          setState((previous) => (previous.kind === 'ready' ? previous : { kind: 'error' }));
+          retryRead(owner, additionalSources, changedIds);
+        }
       } finally {
         inFlight = false;
         if (queued && !cancelled) {
@@ -393,6 +423,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
         if (payload.change === 'deleted' || (payload.change === 'list' && payload.listState?.hidden)) {
           cancelled = true;
           queued = null;
+          clearRetry();
           // Unsent attachments go with the group (staged copies included).
           discardDraft(botGroupAttachmentScope(groupId));
           discardOutbox();
@@ -407,6 +438,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
     return () => {
       cancelled = true;
       queued = null;
+      clearRetry();
       version += 1;
       loadRef.current = () => {};
       unsubscribe();
@@ -489,10 +521,9 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   useEffect(() => { if (unreadReceipts) loadRef.current(); }, [unreadReceipts]);
   const messageByIdRef = useRef(new Map<string, BotGroupMessageView>());
   messageByIdRef.current = new Map(realMessages.map((message) => [message.id, message]));
-  const lastRealSequence = realMessages[realMessages.length - 1]?.sequence ?? 0;
-  /** Rows after this sequence arrived while the page was open: they fade in. */
-  const enterAfterRef = useRef<number | null>(null);
-  if (enterAfterRef.current === null && state.kind === 'ready') enterAfterRef.current = lastRealSequence;
+  const entranceSignature = rows.map(message => adoptedKeysRef.current.get(message.id) ?? message.id).join('\0');
+  const entranceKeys = useMemo(() => entranceSignature ? entranceSignature.split('\0') : [], [entranceSignature]);
+  const enterMessage = useMessageEntrance(entranceKeys, state.kind === 'ready' && !loadingOlder);
 
   // Quotes resolve against verified copies only; an unverified original falls back to the snapshot.
   const quoteSources = useMemo(
@@ -724,8 +755,8 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element || prependAnchorRef.current) return;
-    if (stickToBottomRef.current) element.scrollTop = element.scrollHeight;
-  }, [lastRowKey, speakingKey, rows.length, hasControlledBanner, controlledBannerCollapsed]);
+    if (stickToBottomRef.current) followMessageBottom();
+  }, [lastRowKey, speakingKey, rows.length, hasControlledBanner, controlledBannerCollapsed, followMessageBottom]);
 
   // Markdown, code blocks and avatars finish layout after the first paint, and the composer or
   // progress strip may grow: keep a reader who is at the bottom pinned there.
@@ -735,12 +766,12 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
     const content = contentRef.current;
     if (!ready || !scroller || !content || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (stickToBottomRef.current && !prependAnchorRef.current) scroller.scrollTop = scroller.scrollHeight;
+      if (stickToBottomRef.current && !prependAnchorRef.current) followMessageBottom();
     });
     observer.observe(content);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [ready]);
+  }, [ready, followMessageBottom]);
 
   /** Reads one older page; returns it so 引用 can keep paging toward the original. */
   const loadOlder = async (beforeSequence?: number): Promise<{ messages: BotGroupMessageView[]; hasMore: boolean } | null> => {
@@ -1117,7 +1148,6 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   const pendingFor = (planId: string | null) =>
     planId && planPending?.planId === planId ? planPending.action : null;
   const canQuote = !!group.serverBacked && !group.archived && !group.dissolvedAt;
-  const enterAfter = enterAfterRef.current;
 
   return (
     <div ref={threadLayoutRef} className={cn('flex h-full min-w-0 overflow-hidden', threadResize.isDragging && 'select-none [&_*]:cursor-col-resize')}>
@@ -1156,8 +1186,10 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < STICK_TO_BOTTOM_PX;
           if (stickToBottomRef.current) acknowledgeSoon();
         }}
-        className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-4"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-clip px-5 pb-4 pt-4"
       >
+        {/* Keep presentation movement out of the scroller's overflow range. */}
+        <div className="overflow-clip">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[760px] flex-col">
           {hasMoreBefore ? (
             <div className="mb-2 flex justify-center">
@@ -1222,7 +1254,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
                   onChanged={onChanged}
                   highlighted={highlightId === message.id}
                   focusable={jumpTarget === message.id || highlightId === message.id}
-                  entering={enterAfter !== null && (message.pending === true || message.sequence > enterAfter)}
+                  entranceRef={node => enterMessage(node, adoptedKeysRef.current.get(message.id) ?? message.id)}
                   canContinue={message.id === continueId}
                   continuing={continuing}
                   onContinue={onContinue}
@@ -1259,6 +1291,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
             // The progress strip carries a running step's status; only its confirmations stay here.
             ? <BotGroupSpeakerInteraction key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />
             : <BotGroupSpeakingLine key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />))}
+        </div>
         </div>
       </div>
       <div className="relative h-0 shrink-0" inert={newMessageCount <= 0}>

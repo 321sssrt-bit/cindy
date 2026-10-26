@@ -1002,18 +1002,24 @@ function canonicalReplyVisibility() {
     sql`(${messages.agentMeta} IS NULL OR json_extract(${messages.agentMeta}, '$.parent_tool_use_id') IS NULL)`,
     // A completed reply remains visible even when the same turn continues with tools.
     // Only unsealed pre-tool narration is hidden by the companion transcript.
-    // Bound the lookup to this user turn so a later task cannot hide an old reply.
+    // Only the nearest live tool matters: if a new user turn precedes it, every
+    // later tool is also outside this reply's turn. Stop the indexed tool scan at
+    // that first row, then bound the input scan by its time. Searching for the next
+    // input first would rescan the entire tail for each narration in a long turn.
     sql`(${canonicalReplyCompleted()} OR NOT EXISTS (
-      SELECT 1 FROM messages AS subsequent_tool
-      WHERE subsequent_tool.session_id = ${messages.sessionId}
-        AND subsequent_tool.created_at > ${messages.createdAt}
-        AND subsequent_tool.rewind_at IS NULL
-        AND subsequent_tool.role IN ('tool_use', 'tool_result', 'thinking')
-        AND NOT EXISTS (SELECT 1 FROM messages AS next_input
+      SELECT 1 FROM (
+        SELECT subsequent_tool.created_at FROM messages AS subsequent_tool
+        WHERE subsequent_tool.session_id = ${messages.sessionId}
+          AND subsequent_tool.created_at > ${messages.createdAt}
+          AND subsequent_tool.rewind_at IS NULL
+          AND subsequent_tool.role IN ('tool_use', 'tool_result', 'thinking')
+        ORDER BY subsequent_tool.created_at LIMIT 1
+      ) AS first_tool
+      WHERE NOT EXISTS (SELECT 1 FROM messages AS next_input
           WHERE next_input.session_id = ${messages.sessionId}
             AND next_input.role = 'user' AND next_input.rewind_at IS NULL
             AND next_input.created_at > ${messages.createdAt}
-            AND next_input.created_at < subsequent_tool.created_at
+            AND next_input.created_at < first_tool.created_at
             AND (next_input.agent_meta IS NULL OR json_extract(next_input.agent_meta, '$.autoResume') IS NOT 1)
             AND (next_input.agent_meta IS NULL OR json_extract(next_input.agent_meta, '$.delivery') IS NOT 'steer'))
     ))`,
@@ -1759,9 +1765,10 @@ export async function setBotProfileAvatar(botId: string, image: { buffer: Buffer
 
 /**
  * Trusted, main-only inputs of a companion restored from the cloud (cloud-companions.md §3.1):
- * the preset it was made from. Never reachable from a renderer or model body.
+ * the preset it was made from, and whether the cloud profile replaces a copy whose first meeting
+ * never finished. Never reachable from a renderer or model body.
  */
-export interface RestoredBotOrigin { templateId?: unknown }
+export interface RestoredBotOrigin { templateId?: unknown; replacesUnfinishedMeeting?: true }
 
 /** Main-owned creation path shared by the renderer and Bot runtime tools. */
 export async function createBotProfile(raw: unknown, restored?: RestoredBotOrigin) {
@@ -2018,7 +2025,9 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   const previous = parseJson(version?.capabilitiesJson ?? '{}');
   const preparation = botInvitationProgress(previous.invitation);
   const retryingPortrait = preparation?.stage === 'avatar' && current.canonicalSessionId;
-  if (preparation && preparation.stage !== 'ready' && !retryingPortrait && (body.name !== undefined || body.description !== undefined || body.identitySource !== undefined)) {
+  // A take-over replaces this copy with the cloud profile: its own meeting no longer means anything.
+  const droppingMeeting = restored?.replacesUnfinishedMeeting === true && !!preparation && preparation.stage !== 'ready';
+  if (preparation && preparation.stage !== 'ready' && !retryingPortrait && !droppingMeeting && (body.name !== undefined || body.description !== undefined || body.identitySource !== undefined)) {
     throwIpcError('PRECONDITION_FAILED', '伙伴正在准备见面，请完成准备后再编辑资料');
   }
   const nextConfig = mergeBotProfileCapabilities({
@@ -2039,8 +2048,9 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
       : inferBotTemplatePresetId(version?.identitySource ?? '');
   if (retainedTemplate) nextConfig.templateId = retainedTemplate;
   else delete nextConfig.templateId;
-  // Keep preparation checkpoints outside caller-editable capabilities.
-  if (previous.invitation) nextConfig.invitation = previous.invitation;
+  // Keep preparation checkpoints outside caller-editable capabilities. Dropping the record also
+  // stops a running or recovered invitation (it ends as INVITATION_REPLACED) from greeting again.
+  if (previous.invitation && !droppingMeeting) nextConfig.invitation = previous.invitation;
   else delete nextConfig.invitation;
   if (Object.prototype.hasOwnProperty.call(body, 'userContextSource')) {
     nextConfig.userContextSource = readText(body.userContextSource, 'userContextSource', 12000);

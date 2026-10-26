@@ -173,7 +173,6 @@ import {
 import { ConversationSearchFilterSheet } from '@/session/ConversationSearchFilterSheet';
 import {
   conversationSearchAllowsLocalWrites,
-  conversationSearchCompanionParams,
   conversationSearchOriginsFromDeviceModels,
   listConversationSearchProjects,
   shouldReplaceListWithSearchResults,
@@ -2385,7 +2384,6 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
         deviceName: session.deviceLinkDeviceName ?? deviceId,
         sessionId: session.id,
         ...(focusClientId ? { focusClientId } : {}),
-        ...conversationSearchCompanionParams(item),
       },
     } as const;
     rememberTask(href);
@@ -3969,7 +3967,7 @@ function ProjectRow({
     // fields here so registering a drag never copies all project task data.
     const { key: projectKey, sessionCount } = project;
     return Gesture.Pan()
-      .activateAfterLongPress(380)
+      .activateAfterLongPress(600)
       .activeOffsetY([-8, 8])
       .failOffsetX([-12, 12])
       .onStart((event) => {

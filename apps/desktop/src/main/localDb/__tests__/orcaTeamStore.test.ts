@@ -604,6 +604,7 @@ describe('orcaTeamStore', () => {
       notifications_muted INTEGER NOT NULL DEFAULT 0,
         summary TEXT,
         user_send_at INTEGER,
+        last_activity_at INTEGER,
         agent_kind TEXT NOT NULL DEFAULT 'codex',
         orca_role TEXT,
         parent_session_id TEXT,

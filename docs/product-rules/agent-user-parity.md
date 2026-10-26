@@ -155,3 +155,5 @@ Host 不因当前输入缺少主人标记再追加行动同意判定。只认运
 当前调用的委托、权限撤销和延迟交付检查继续保留；不恢复过期授权，不自动重发。
 实现见 `maker-ipc/taskActionAuthorization.ts`、`taskActionHost.ts` 与
 `mcp-integrations/codexHttpBridge.ts`；回归见各自授权及 HTTP 桥接测试。
+
+伙伴例行任务（2026-10-26）：桌面与 `routine_save` 共用每条规则的 `modelOverride`，可选引擎、来源、型号、执行位置、推理强度与 Fast；null 恢复跟随伙伴，省略保留选择。执行记录返回独立 `sessionId`。内置跟进／每天查待办也可选模型，指令与触发条件仍由宿主维护。跨电脑桌面设置通过 `routines.saveWithModel` 能力声明协商；手机仍按现有合同不提供例行任务管理。

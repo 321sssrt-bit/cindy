@@ -813,15 +813,20 @@ describe('routine check configuration', () => {
       expect((await f.engine.ensureBuiltin('bot', 'follow-up', input, id))?.revision).toBe(created?.revision);
       await expect(f.engine.remove('bot', id)).rejects.toThrow('BUILTIN_ROUTINE');
       await expect(f.engine.put('bot', { ...input, prompt: 'edited' }, id)).rejects.toThrow('BUILTIN_ROUTINE');
-      const paused = await f.engine.put('bot', { ...input, enabled: false }, id);
+      const modelOverride = { agentKind: 'codex' as const, model: 'budget-model', providerId: 'subscription', effort: 'medium' };
+      const paused = await f.engine.put('bot', { ...input, enabled: false, modelOverride }, id);
+      // Older clients and template refreshes preserve the explicit choice.
+      expect((await f.engine.put('bot', { ...input, enabled: false }, id)).modelOverride).toEqual(modelOverride);
       expect(paused).toMatchObject({ builtin: 'follow-up', enabled: false });
       expect(await f.engine.publish('github', event('while-paused'))).toEqual({ accepted: 0, duplicate: false });
       const realigned = await f.engine.ensureBuiltin('bot', 'follow-up', { ...input, prompt: 'v2' }, id, 1);
+      expect(realigned?.modelOverride).toEqual(modelOverride);
       expect(realigned).toMatchObject({ prompt: 'v2', enabled: false, builtin: 'follow-up', builtinVersion: 1 });
       // 模板版本递增：正文相同也重写并记下新版本；同版本再 ensure 不产生新 revision。主人暂停后的选择保留。
       const bumped = await f.engine.ensureBuiltin('bot', 'follow-up', { ...input, prompt: 'v2' }, id, 2);
       expect(bumped).toMatchObject({ builtinVersion: 2, enabled: false, revision: realigned!.revision + 1 });
       expect((await f.engine.ensureBuiltin('bot', 'follow-up', { ...input, prompt: 'v2' }, id, 2))?.revision).toBe(bumped?.revision);
+      expect((await f.engine.put('bot', { ...input, prompt: 'v2', enabled: false, modelOverride: null }, id)).modelOverride).toBeNull();
       await f.engine.setBotPaused('bot', true);
       expect(await f.engine.ensureBuiltin('bot', 'follow-up', input, id)).toBeNull();
     } finally { await f.engine.stop(); }

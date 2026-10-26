@@ -1176,7 +1176,7 @@ import {
 } from './scheduler-host/index.js';
 import { configureRoutineHost } from './routines/service.js';
 import { configureBotAutonomyHost, initBotAutonomy } from './bot-autonomy/service.js';
-import { getBotRemoteResourceSource } from './localDb/ipc/bots.js';
+import { getBotRemoteResourceSource, ensureBotRoutineLaneSession } from './localDb/ipc/bots.js';
 import {
   registerScheduleHandlers,
   attachSchedulerEventListeners,
@@ -1234,6 +1234,7 @@ async function waitForCurrentAccountProviderModelsReady(): Promise<void> {
 configureRoutineHost({
   assertImportedAutomationReady: ensureImportedAutomationReady, prepareImportedAutomation, finishImportedAutomation, recoverImports: recoverCompanionImports,
   getBot: getBotRemoteResourceSource,
+  ensureRoutineSession: ensureBotRoutineLaneSession,
   getScheduler: getSchedulerIfInitialized,
   getScheduleStorage,
 });

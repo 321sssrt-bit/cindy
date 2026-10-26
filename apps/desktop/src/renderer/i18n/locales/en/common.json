@@ -16256,6 +16256,7 @@
     "save": "Save Routine",
     "deleteConfirm": "Delete this routine and cancel its pending runs?",
     "keep": "Keep Routine",
+    "openTask": "Open Session",
     "history": "Run History",
     "noRuns": "This routine has not run yet.",
     "field": "Field",

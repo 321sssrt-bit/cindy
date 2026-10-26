@@ -1,3 +1,8 @@
+import { useBotProfiles } from './botStore';
+import type { BotModelRoute } from '../../../shared/botModelChain';
+import { useNavigate } from 'react-router-dom';
+import { standardSessionRoute } from '@/lib/orcaSessionIdentity';
+import { BotTaskModelEditor } from './BotTaskModelEditor';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Clock3, Check, ChevronRight, CircleAlert, Pause, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -39,8 +44,10 @@ export function BotRoutines({
   backRef,
   embedded = false,
   header,
+  inheritedRoute,
 }: {
   embedded?: boolean;
+  inheritedRoute?: BotModelRoute;
   /** Settings shown above the list (not inside the editor), e.g. the teammate's follow-up switches. */
   header?: ReactNode;
   botId: string;
@@ -50,7 +57,12 @@ export function BotRoutines({
 }) {
   const { confirm } = useConfirmDialog();
   const settingsTarget = useBotSettingsTarget();
+  const localBots = useBotProfiles();
+  const primaryRoute = inheritedRoute ?? (settingsTarget.kind === 'local'
+    ? localBots.find((bot) => bot.id === botId)?.capabilities.modelChain[0] : undefined);
   const routinesApi = settingsTarget.routines;
+  const navigate = useNavigate();
+  const supportsModels = settingsTarget.kind === 'local' || settingsTarget.routineModels === true;
   const inFlight = useRef(false);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
@@ -139,6 +151,7 @@ export function BotRoutines({
       triggers: value.triggers,
       silentWhenIdle: value.silentWhenIdle ?? true,
       preRunHook: value.preRunHook ?? null,
+      modelOverride: value.modelOverride ?? null,
     });
   const saved = routines.find((item) => item.id === selected);
   const dirty =
@@ -298,6 +311,10 @@ export function BotRoutines({
               key={routine.id}
               routine={routine}
               disabled={busy}
+              onOpen={supportsModels && routine.builtin !== 'nightly-learning' ? () => {
+                setSelected(routine.id);
+                setDraft(structuredClone(routine));
+              } : undefined}
               hint={routine.builtin === 'nightly-learning' && nightly.view?.frequency === 'weekly'
                 ? t('routines.builtinNightlyLearning.hintWeekly') : undefined}
               extra={routine.builtin === 'nightly-learning' && nightlyLocal
@@ -381,6 +398,7 @@ export function BotRoutines({
           <label className="block space-y-2">
             <span className="text-[var(--text-secondary)]">{t('routines.name')}</span>
             <Input
+              disabled={!!saved?.builtin}
               autoFocus={selected === 'new'}
               value={draft.name}
               onChange={(name) => setDraft({ ...draft, name })}
@@ -389,11 +407,27 @@ export function BotRoutines({
           <label className="block space-y-2">
             <span className="text-[var(--text-secondary)]">{t('routines.instructions')}</span>
             <Textarea
+              disabled={!!saved?.builtin}
               rows={8}
               value={draft.prompt}
               onChange={(prompt) => setDraft({ ...draft, prompt })}
             />
           </label>
+          {supportsModels && <BotTaskModelEditor inheritedRoute={primaryRoute} inheritanceHint={t('bots.model.inheritPrimary')}
+            value={draft.modelOverride ? {
+              harness: draft.modelOverride.agentKind === 'claude-code' ? 'claude' : draft.modelOverride.agentKind,
+              model: draft.modelOverride.model, providerId: draft.modelOverride.providerId ?? null,
+              effort: draft.modelOverride.effort ?? '', fastMode: draft.modelOverride.fastMode ?? false,
+              agentDeviceId: draft.modelOverride.agentDeviceId ?? null,
+            } : null}
+            disabled={busy} deviceId={settingsTarget.deviceId}
+            onChange={(route) => setDraft({ ...draft, modelOverride: route ? {
+              agentKind: route.harness === 'claude' ? 'claude-code' : route.harness,
+              model: route.model, providerId: route.providerId, effort: route.effort,
+              fastMode: route.fastMode, agentDeviceId: route.agentDeviceId ?? null,
+            } : null })}
+          />}
+          <fieldset disabled={!!saved?.builtin} className="min-w-0 space-y-5">
           <details className="space-y-3">
             <summary className="min-h-8 cursor-pointer rounded-full py-2 focus-visible:outline focus-visible:outline-[var(--focus-ring)]">{t('routines.advancedSettings')}</summary>
             <label className="flex min-h-8 items-center gap-2">
@@ -523,8 +557,9 @@ export function BotRoutines({
               </DropdownMenu>
             </div>
           </div>
+          </fieldset>
           <div className="flex flex-wrap justify-end gap-2">
-            {selected !== 'new' && (
+            {selected !== 'new' && !saved?.builtin && (
               <Button variant="secondary" disabled={busy} onClick={() => setDeletePending(true)}>
                 {t('routines.delete')}
               </Button>
@@ -597,6 +632,9 @@ export function BotRoutines({
                     {t(`routines.status.${run.status}`)}
                   </span>
                 </summary>
+                {run.sessionId && <Button variant="secondary" size="sm" onClick={() => navigate(standardSessionRoute(run.sessionId!, settingsTarget.deviceId))}>
+                  {t('routines.openTask')}
+                </Button>}
                 {run.resultText && (
                   <p className="whitespace-pre-wrap break-words text-[var(--text-secondary)]">
                     {run.resultText}
@@ -896,11 +934,12 @@ function routineInput(routine: Routine): RoutineInput {
     triggers: routine.triggers,
     ...(routine.silentWhenIdle !== undefined ? { silentWhenIdle: routine.silentWhenIdle } : {}),
     ...(routine.preRunHook !== undefined ? { preRunHook: routine.preRunHook } : {}),
+    ...(routine.modelOverride !== undefined ? { modelOverride: routine.modelOverride } : {}),
   };
 }
 
 /**
- * 宿主内置的「跟进」：指令与触发条件由宿主维护，这里不进编辑器、不能删，只能暂停或恢复。
+ * 宿主内置规则保留指令与触发条件；普通 Agent 规则允许暂停或单独配置模型。
  */
 /** 内置例行任务（跟进、每天查待办、夜间学习）的文案键；名称与说明随界面语言，不用宿主存的名字。 */
 const BUILTIN_COPY = {
@@ -968,12 +1007,14 @@ function BuiltinRoutineRow({
   routine,
   disabled,
   onEnabledChange,
+  onOpen,
   hint,
   extra,
 }: {
   routine: Routine;
   disabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
+  onOpen?: () => void;
   hint?: string;
   extra?: ReactNode;
 }) {
@@ -983,7 +1024,10 @@ function BuiltinRoutineRow({
   return (
     <div className="flex w-full items-start gap-3 border-b border-[var(--border-default)] py-4 last:border-b-0">
       <div className="min-w-0 flex-1">
-        <p className="break-words text-13 font-medium leading-5">{name}</p>
+        {onOpen ? <button type="button" disabled={disabled} onClick={onOpen}
+          className="flex min-h-6 items-start gap-2 rounded-lg text-left text-13 font-medium leading-5 outline-none hover:text-[var(--text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+          <span className="break-words">{name}</span><ChevronRight size={14} className="mt-1 shrink-0" aria-hidden="true" />
+        </button> : <p className="break-words text-13 font-medium leading-5">{name}</p>}
         <RoutineState routine={routine} />
         <p className="mt-1 text-12 leading-5 text-[var(--text-secondary)]">{hint ?? t(`${copy}.hint`)}</p>
         {extra}

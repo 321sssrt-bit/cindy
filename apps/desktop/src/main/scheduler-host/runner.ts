@@ -1328,7 +1328,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     }
     let reconciledEffort = resolvedSelection
       ? (resolvedSelection.effort ?? undefined)
-      : this.reconcileEffortForModel(effectiveAgentKind, model, schedule.effort, schedule.id);
+      : this.reconcileEffortForModel(effectiveAgentKind, model, schedule.effort || heartbeatEffort, schedule.id);
     // 隐式改道后的来源级 reconcile(PR #744 review 第二十七轮):上面的 clamp 用的是
     // merged capability,分辨不出来源差异 —— 改道后的落地拷贝 effort 支持可能更窄、
     // 可能不支持 Fast,原样透传会被上游拒。按 (verdict.providerId, model) 的拷贝重查:

@@ -661,7 +661,7 @@ import { registerBotLifecycleHandlers } from './botLifecycleService.js';
 import { isSessionPermissionMode, persistPermissionModeWithoutRuntime } from './sessionPermissionPersistence.js';
 import { withSessionPermissionChange } from './sessionPermissionChange.js';
 import { withBotPermissionChange } from './botPermissionDispatch.js';
-import { updateBotRoutineLifecycle } from '../routines/service.js';
+import { updateBotRoutineLifecycle, readRoutineLaneModel } from '../routines/service.js';
 import {
   createBotCompactRuntimeRefreshCoordinator,
   prepareBotCapabilityEpochBeforeSend,
@@ -9197,7 +9197,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         row.source !== 'bot' ||
         row.status !== 'active' ||
         (row.role !== 'canonical' && row.role !== 'delegation' && row.role !== 'group'
-          && row.role !== 'channel' && row.role !== 'thread')
+          && row.role !== 'channel' && row.role !== 'thread' && row.role !== 'routine')
       ) {
         return 'not-bot';
       }
@@ -11401,7 +11401,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         status: sessions.status, botId: botProfiles.id, profileVersion: botProfiles.currentVersion,
       }).from(sessions)
         .leftJoin(botSessionLinks, and(eq(botSessionLinks.sessionId, sessions.id),
-          isNull(botSessionLinks.archivedAt), inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread'])))
+          isNull(botSessionLinks.archivedAt), inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread', 'routine'])))
         .leftJoin(botProfiles, eq(botProfiles.id, botSessionLinks.botId))
         .where(eq(sessions.id, sessionId)).limit(1);
       return row?.status === 'active' ? { baseline: row.baseline,
@@ -16586,6 +16586,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     read: async (sessionId, purpose) => {
       const [row] = await getDbClient().drizzle.select({
         capabilitiesJson: botProfileVersions.capabilitiesJson,
+        botId: botSessionLinks.botId,
+        role: botSessionLinks.role,
+        routeKey: botSessionLinks.routeKey,
         agentKind: sessions.agentKind,
         agentDeviceId: sessions.agentDeviceId,
         model: sessions.model,
@@ -16603,7 +16606,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         .where(and(
           eq(botSessionLinks.sessionId, sessionId),
           // Group / IM channel lanes and private-chat topics follow the Bot's current model chain exactly like its canonical Chat.
-          inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread']),
+          inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread', 'routine']),
           isNull(botSessionLinks.archivedAt),
           // Paused settings may preview grants; sending still requires an active Bot.
           purpose === 'preview'
@@ -16614,6 +16617,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         )).limit(1);
       if (!row) return null;
       const selection = await readEffectiveBotModelSelection(JSON.parse(row.capabilitiesJson));
+      const routineModel = row.role === 'routine'
+        ? await readRoutineLaneModel(row.botId, row.routeKey) : null;
+      if (routineModel) {
+        selection.chain = [{ harness: routineModel.agentKind === 'claude-code' ? 'claude' : routineModel.agentKind,
+          model: routineModel.model, providerId: routineModel.providerId ?? null,
+          agentDeviceId: routineModel.agentDeviceId ?? null,
+          effort: routineModel.effort ?? '', fastMode: routineModel.fastMode ?? false }];
+        selection.followsCindyDefault = false;
+      }
       const control = getSessionRuntimeControlSnapshot(sessionId);
       const intent = agentSwitchPending.get(sessionId);
       const live = maker.getSession(sessionId);
@@ -16630,7 +16642,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           effort: (live ? getSessionEffort(sessionId) : row.effort) ?? null,
           fastMode: live ? getSessionFastMode(sessionId) : (row.fastMode ?? false),
         },
-        hasRuntimeOverride: control.effectiveOverride !== null || control.pending !== null || !!intent,
+        hasRuntimeOverride: row.role !== 'routine' && (control.effectiveOverride !== null || control.pending !== null || !!intent),
         next: intent ? { agentDeviceId: intent.targetAgentDeviceId === undefined ? row.agentDeviceId : intent.targetAgentDeviceId, agentKind: intent.targetAgentKind, model: intent.model,
           providerId: intent.providerId ?? null, effort: intent.effort ?? null, fastMode: intent.fastMode ?? false }
           : control.pending?.profile ?? control.effectiveOverride ?? undefined,
@@ -16748,6 +16760,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const [row] = await getDbClient()
       .drizzle.select({
         capabilitiesJson: botProfileVersions.capabilitiesJson,
+        botId: botSessionLinks.botId,
+        role: botSessionLinks.role,
+        routeKey: botSessionLinks.routeKey,
         remoteHostId: sessions.remoteHostId,
       })
       .from(botSessionLinks)
@@ -16763,7 +16778,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         and(
           eq(botSessionLinks.sessionId, sessionId),
           isNull(botSessionLinks.archivedAt),
-          inArray(botSessionLinks.role, ['canonical', 'delegation', 'group', 'channel', 'thread']),
+          inArray(botSessionLinks.role, ['canonical', 'delegation', 'group', 'channel', 'thread', 'routine']),
         ),
       )
       .limit(1);
@@ -16777,6 +16792,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     } catch {
       return { isBot: true, candidate: null };
     }
+    const routineModel = row.role === 'routine'
+      ? await readRoutineLaneModel(row.botId, row.routeKey) : null;
+    // An explicit routine choice never falls back to its companion's expensive primary model.
+    if (routineModel) return { isBot: true, candidate: null };
     const chain = await readEffectiveBotModelChain(config);
     const toAgentKind = (harness: string): AgentKind =>
       harness === 'codex' ? 'codex' : harness === 'pi' ? 'pi' : 'claude-code';
@@ -18293,7 +18312,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         throwIpcError('PRECONDITION_FAILED', SHADOWED_COMPANION_INPUT_MESSAGE);
       }
       if (args[2] && typeof args[2] === 'object') {
-        if (botInput?.source === 'bot' && ['canonical', 'delegation', 'group', 'channel', 'thread'].includes(botInput.role ?? '')) {
+        if (botInput?.source === 'bot' && ['canonical', 'delegation', 'group', 'channel', 'thread', 'routine'].includes(botInput.role ?? '')) {
           botFallbackInputs.add(args[2]);
         } else {
           botFallbackInputs.delete(args[2]);

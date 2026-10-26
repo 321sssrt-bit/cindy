@@ -286,6 +286,71 @@ describe('sessionReferenceResolver', () => {
       .toBeLessThanOrEqual(MAX_REFERENCE_TOKENS - 128);
   });
 
+  it('trims the anchor instead of throwing when only a single-character neighbor remains', async () => {
+    // The escaped anchor alone exceeds the final payload budget, and the only
+    // neighbor cannot shed content: the fit must fall back to the anchor
+    // instead of dropping the whole quote.
+    remoteInvoke
+      .mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: [{
+          id: 'anchor-id',
+          clientId: 'anchor',
+          sessionId: 's-1',
+          role: 'assistant',
+          content: '"'.repeat(30_000),
+          createdAt: 100,
+        }],
+      })
+      .mockResolvedValueOnce(historyPage([]))
+      .mockResolvedValueOnce(historyPage([
+        { id: 'after-id', sessionId: 's-1', role: 'user', content: 'x', createdAt: 101 },
+      ]));
+
+    const [context] = await resolveSessionReferences(
+      [{ sessionId: 's-1', deviceId: 'dev-1', messageClientId: 'anchor' }],
+    );
+
+    expect(context.truncated).toBe(true);
+    expect(context.messages[0]?.content.startsWith('…')).toBe(true);
+    expect(context.messages[1]?.content).toBe('x');
+    expect(estimateReferenceTokens(serializeSessionReferencePayload([context])))
+      .toBeLessThanOrEqual(MAX_REFERENCE_TOKENS - 128);
+  });
+
+  it('trims the anchor after a two-character neighbor can no longer shrink', async () => {
+    // The neighbor sheds down to one character and then stalls the loop; the
+    // anchor fallback must still bring the payload under budget.
+    remoteInvoke
+      .mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: [{
+          id: 'anchor-id',
+          clientId: 'anchor',
+          sessionId: 's-1',
+          role: 'assistant',
+          content: '"'.repeat(30_000),
+          createdAt: 100,
+        }],
+      })
+      .mockResolvedValueOnce(historyPage([]))
+      .mockResolvedValueOnce(historyPage([
+        { id: 'after-id', sessionId: 's-1', role: 'user', content: 'ab', createdAt: 101 },
+      ]));
+
+    const [context] = await resolveSessionReferences(
+      [{ sessionId: 's-1', deviceId: 'dev-1', messageClientId: 'anchor' }],
+    );
+
+    expect(context.truncated).toBe(true);
+    expect(context.messages[0]?.content.startsWith('…')).toBe(true);
+    expect(context.messages[1]?.content.length).toBeLessThanOrEqual(1);
+    expect(estimateReferenceTokens(serializeSessionReferencePayload([context])))
+      .toBeLessThanOrEqual(MAX_REFERENCE_TOKENS - 128);
+  });
+
   it('keeps the anchor when a long following message exhausts the token budget', async () => {
     remoteInvoke
       .mockResolvedValueOnce({ ok: true, result: { id: 's-1' } })

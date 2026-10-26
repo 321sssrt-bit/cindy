@@ -387,6 +387,9 @@ function fitSerializedPayloadBudget(
       for (let messageIndex = 0; messageIndex < context.messages.length; messageIndex += 1) {
         if (messageIndex === anchorPosition) continue;
         const message = context.messages[messageIndex];
+        // A one-character body cannot shed more content; picking it would stall
+        // the loop and mask the anchor fallback below.
+        if (message.content.length <= 1) continue;
         if (!targetMessage || message.content.length > targetMessage.content.length) {
           targetContext = context;
           targetMessage = message;
@@ -394,9 +397,11 @@ function fitSerializedPayloadBudget(
       }
     }
     if (!targetMessage) {
-      // Only anchors are left; the payload cap still has to hold.
+      // No neighbor can shrink any further; trim the anchor rather than
+      // dropping the whole quote.
       for (const context of contexts) {
         for (const message of context.messages) {
+          if (message.content.length <= 1) continue;
           if (!targetMessage || message.content.length > targetMessage.content.length) {
             targetContext = context;
             targetMessage = message;
@@ -404,7 +409,7 @@ function fitSerializedPayloadBudget(
         }
       }
     }
-    if (targetMessage && targetMessage.content.length > 1) {
+    if (targetMessage) {
       const excess = tokens - FINAL_REFERENCE_PAYLOAD_TOKENS;
       const drop = Math.min(targetMessage.content.length - 1, Math.max(1, excess));
       targetMessage.content = `…${targetMessage.content.slice(drop + 1)}`;

@@ -594,6 +594,65 @@ describe('resolveMobileSessionReferences', () => {
       .toBeLessThanOrEqual(8_000 - 128);
   });
 
+  it('trims the anchor instead of throwing when only a single-character neighbor remains', async () => {
+    // The escaped anchor alone exceeds the final payload budget, and the only
+    // neighbor cannot shed content: the fit must fall back to the anchor
+    // instead of dropping the whole quote.
+    const invoke = asInvoke(async (_deviceId, channel, args) => {
+      if (channel === 'local-db:sessions:get') return { id: args[0] };
+      if (channel === 'local-db:messages:around-client-id') {
+        return [message('s1', '5', 'anchor', '"'.repeat(30_000), 'assistant', 5_000)];
+      }
+      if (channel === DL_HISTORY_MESSAGES_CHANNEL) {
+        const request = args[0] as { order: string };
+        return request.order === 'desc'
+          ? { items: [], hasMore: false }
+          : { items: [message('s1', '6', 'c6', 'x', 'user', 6_000)], hasMore: false };
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+
+    const [context] = await resolveMobileSessionReferences(
+      [{ sessionId: 's1', messageClientId: 'anchor', deviceId: 'dev-b' }],
+      invoke,
+    );
+
+    expect(context.truncated).toBe(true);
+    expect(context.messages[0]?.content.startsWith('…')).toBe(true);
+    expect(context.messages[1]?.content).toBe('x');
+    expect(estimateMobileReferenceTokens(serializeMobileSessionReferencePayload([context])))
+      .toBeLessThanOrEqual(8_000 - 128);
+  });
+
+  it('trims the anchor after a two-character neighbor can no longer shrink', async () => {
+    // The neighbor sheds down to one character and then stalls the loop; the
+    // anchor fallback must still bring the payload under budget.
+    const invoke = asInvoke(async (_deviceId, channel, args) => {
+      if (channel === 'local-db:sessions:get') return { id: args[0] };
+      if (channel === 'local-db:messages:around-client-id') {
+        return [message('s1', '5', 'anchor', '"'.repeat(30_000), 'assistant', 5_000)];
+      }
+      if (channel === DL_HISTORY_MESSAGES_CHANNEL) {
+        const request = args[0] as { order: string };
+        return request.order === 'desc'
+          ? { items: [], hasMore: false }
+          : { items: [message('s1', '6', 'c6', 'ab', 'user', 6_000)], hasMore: false };
+      }
+      throw new Error(`unexpected channel ${channel}`);
+    });
+
+    const [context] = await resolveMobileSessionReferences(
+      [{ sessionId: 's1', messageClientId: 'anchor', deviceId: 'dev-b' }],
+      invoke,
+    );
+
+    expect(context.truncated).toBe(true);
+    expect(context.messages[0]?.content.startsWith('…')).toBe(true);
+    expect(context.messages[1]?.content.length).toBeLessThanOrEqual(1);
+    expect(estimateMobileReferenceTokens(serializeMobileSessionReferencePayload([context])))
+      .toBeLessThanOrEqual(8_000 - 128);
+  });
+
   it('marks an anchored neighbor as truncated when it is partially kept', async () => {
     const invoke = asInvoke(async (_deviceId, channel, args) => {
       if (channel === 'local-db:sessions:get') return { id: args[0] };

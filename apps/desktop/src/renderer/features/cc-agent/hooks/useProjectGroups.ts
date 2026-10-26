@@ -7,6 +7,7 @@
  */
 
 import { useMemo, useSyncExternalStore } from 'react';
+import { useStableTranslation } from '@/hooks/useStableTranslation';
 import { createProjectGroupsSelector } from '../lib/projectGroupsSelector';
 import { useProvisionalDraftProjectTaskId } from './useProvisionalDraftProjectTaskId';
 
@@ -35,6 +36,8 @@ export function useProjectGroups(
   equivalentResult?: ProjectGroupsResult,
   projectAliasMembers?: readonly Session[],
 ): ProjectGroupsResult {
+  const { i18n } = useStableTranslation();
+  const language = i18n.resolvedLanguage ?? i18n.language;
   const sshHosts = useRemoteSshHosts();
   const hostProjectAliases = useSyncExternalStore(remoteProjectAliases.subscribe, remoteProjectAliases.getSnapshot);
   const selectGroups = useMemo(() => createProjectGroupsSelector(), []);
@@ -76,11 +79,11 @@ export function useProjectGroups(
     [groups.projects],
   );
   const ambiguityKey = JSON.stringify(projectDevices);
-  // Weak keys keep only live grouping nodes. Registry/collision changes must
+  // Weak keys keep only live grouping nodes. Registry/collision/language changes must
   // re-enrich even unchanged nodes so remote labels never retain stale names.
   const enrichedProjects = useMemo(
     () => new WeakMap<ProjectNode, ProjectNode>(),
-    [sshHosts, ambiguityKey],
+    [sshHosts, ambiguityKey, language],
   );
   return useMemo(() => {
     if (equivalentResult) return equivalentResult;
@@ -99,5 +102,5 @@ export function useProjectGroups(
         return enriched;
       }),
     };
-  }, [groups, equivalentResult, enrichedProjects, sshHosts, projectDevices]);
+  }, [groups, equivalentResult, enrichedProjects, sshHosts, projectDevices, language]);
 }

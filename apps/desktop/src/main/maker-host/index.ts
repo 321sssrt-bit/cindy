@@ -205,7 +205,7 @@ import {
   resolveVerifiedContextWindow,
   resolveModelDefaultContextWindow,
 } from './catalog-to-descriptors.js';
-import { readModelContextLimit } from './model-context-limit-store.js';
+import { readModelContextLimit, resolveModelCompactionPct } from './model-context-limit-store.js';
 import { resolveDesktopModelContextProviderId, resolveDesktopModelEfforts, readStoredSessionContextWindowBudget, resolveConfiguredContextWindow, applySessionContextWindowBudgetToCreateOpts } from './model-context-settings.js';
 import {
   prepareCodexCustomContextCatalog,
@@ -1453,6 +1453,10 @@ export function getMaker(): Maker {
         return source ? readModelContextLimit('claude-code', source, modelId)
           ?? resolveModelDefaultContextWindow(catalog, 'claude-code', source, modelId) : null;
       },
+      resolveModelCompactionPct: (providerId, modelId) => {
+        const source = resolveDesktopModelContextProviderId(getDesktopSelectableCatalog(), 'claude-code', providerId, modelId);
+        return resolveModelCompactionPct(getDesktopSelectableCatalog(), 'claude-code', source, modelId);
+      },
       resolveVerifiedContextWindow: (providerId, modelId) =>
         resolveVerifiedContextWindow(getDesktopSelectableCatalog(), 'claude-code',
           resolveDesktopModelContextProviderId(getDesktopSelectableCatalog(), 'claude-code', providerId, modelId), modelId),
@@ -1798,6 +1802,10 @@ export function getMaker(): Maker {
         const source = resolveDesktopModelContextProviderId(getDesktopSelectableCatalog(), 'codex', providerId, modelId);
         return source ? readModelContextLimit('codex', source, modelId) : null;
       },
+      resolveModelCompactionPct: (providerId, modelId) => {
+        const source = resolveDesktopModelContextProviderId(getDesktopSelectableCatalog(), 'codex', providerId, modelId);
+        return resolveModelCompactionPct(getDesktopSelectableCatalog(), 'codex', source, modelId);
+      },
       resolveVerifiedContextWindow: (providerId, modelId) =>
         resolveVerifiedContextWindow(getDesktopSelectableCatalog(), 'codex',
           resolveDesktopModelContextProviderId(getDesktopSelectableCatalog(), 'codex', providerId, modelId), modelId),
@@ -2111,6 +2119,7 @@ export function getMaker(): Maker {
               modelId,
               contextWindow,
               modelIds: catalog.providers.find(provider => provider.id === source)?.models.codex?.map(model => model.id),
+              resolveCompactionPct: (id) => resolveModelCompactionPct(getDesktopSelectableCatalog(), 'codex', source, id),
               resolveContextWindow: (nativeModelId) => {
                 return (source ? readModelContextLimit('codex', source, nativeModelId) : null)
                   ?? resolveModelDefaultContextWindow(catalog, 'codex', source, nativeModelId);

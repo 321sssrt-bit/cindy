@@ -3574,6 +3574,12 @@
           "contextLimitHint": "이 모델의 모든 사용 가능한 엔진에 적용됩니다. 정수 K 단위로 편집합니다(1 K = 1,000 tokens). 수정하지 않은 값은 정밀도를 유지합니다. 저장한 변경 사항은 이후 실행에 적용되며 생성 중인 응답을 중단하지 않습니다. 실제로 사용할 수 있는 길이는 모델 서비스의 제한을 따릅니다.",
           "contextLimitLocalMillionHint": "기본 256K(262,144 tokens)에서 1M(1,000,000) 확장을 선택할 수 있습니다. 서비스가 실행 중이면 ‘서비스 관리’에서 다시 시작해야 변경 사항이 적용되며, 중지된 상태라면 다음 사용 시 적용됩니다. 긴 입력은 더 많은 메모리와 처리 시간이 필요합니다.",
           "contextLimitAria": "컨텍스트 상한(천 tokens)",
+          "compaction": {
+            "title": "자동 압축",
+            "hint": "사용량이 선택한 비율에 도달하면 컨텍스트를 정리합니다. 값이 낮을수록 더 일찍 압축하며 엔진 제한이 적용됩니다.",
+            "default": "{{pct}}% (기본값)",
+            "timing": "이 공급 경로의 모델에서 사용 가능한 모든 엔진에 적용됩니다. 이후 실행부터 반영되며 생성 중인 응답은 중단하지 않습니다."
+          },
           "contextLimitRoute": "현재 {{tokens}} tokens · 1 K = 1,000 tokens",
           "contextLimitOverWindow": "공급업체가 명시한 한도를 초과하여 요청이 실패할 수 있습니다.",
           "restoreDefault": "기본값 복원",
@@ -12740,6 +12746,29 @@
   },
   "ccAgent": {
     "sessionEntry": {"missing":"이 세션을 찾을 수 없습니다. 삭제되었을 수 있습니다.","denied":"현재 계정 또는 컴퓨터에서 이 세션에 접근할 수 없습니다.","failed":"이 세션을 불러오지 못했습니다.","back":"세션 목록으로 돌아가기","retry":"세션 다시 불러오기"},
+    "contextRingPanel": {
+      "title": "컨텍스트",
+      "meaning": "이번 턴에 AI가 참고할 수 있는 대화, 지시 및 도구 결과입니다.",
+      "used": "사용됨",
+      "available": "공간 충분",
+      "elevated": "사용량 높음",
+      "nearLimit": "한도에 근접",
+      "unknown": "데이터 없음",
+      "continueHint": "계속 대화하세요. 아직 조정할 필요가 없습니다.",
+      "unknownHint": "모델이 사용량을 보고하면 현재 사용량이 표시됩니다.",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "컨텍스트 압축",
+      "compactHelp": "이전 내용을 요약해 공간을 확보합니다. 일부 세부 내용은 생략될 수 있습니다.",
+      "adjust": "창 조정",
+      "taskScope": "이 작업",
+      "modelSettings": "모델 기본 설정",
+      "modelSettingsHint": "이 모델의 기본 창과 한도를 변경합니다. 다른 작업에도 영향을 줍니다.",
+      "remoteModelSettings": "계속 적용하려면 이 작업을 실행하는 컴퓨터에서 모델 설정을 변경하세요.",
+      "costHint": "큰 창은 더 많은 내용을 담지만 비용이 늘어날 수 있습니다.",
+      "technical": "상세 정보",
+      "auto": "자동 압축",
+      "autoHelp": "Codex는 압축 임계값에 가까워지면 컨텍스트를 자동으로 정리합니다."
+    },
     "contextWindowBudget": {
       "menuTitle": "이 작업의 컨텍스트 창",
       "triggerLabel": "작업 컨텍스트 창, 현재 {{window}}",

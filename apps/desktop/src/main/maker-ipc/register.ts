@@ -9301,7 +9301,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         });
         return [];
       });
-      if (extraDirs.length > 0) createOpts.extraDirs = extraDirs;
+      Object.assign(createOpts, directoryGrantsForRuntime(extraDirs));
 
       const workDirReady = await checkWorkDirExists(
         expectedSession.id,
@@ -9424,7 +9424,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         });
         await synthesizeOrcaVendorOptionsFromDb(live.id, createOpts);
         const extraDirs = await readSessionExtraDirsFromDb(live.id).catch(() => []);
-        if (extraDirs.length > 0) createOpts.extraDirs = extraDirs;
+        Object.assign(createOpts, directoryGrantsForRuntime(extraDirs));
         const snapshot = await preflightBotRuntimeResources(
           createOpts as MakerSessionCreateOpts,
         );
@@ -11010,7 +11010,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     prepareCreateOpts: async (sessionId, createOpts) => {
       await synthesizeOrcaVendorOptionsFromDb(sessionId, createOpts);
       const extraDirs = await readSessionExtraDirsFromDb(sessionId);
-      if (extraDirs.length > 0) createOpts.extraDirs = extraDirs;
+      Object.assign(createOpts, directoryGrantsForRuntime(extraDirs));
     },
     bootstrapSession: (createOpts) => bootstrapSession(createOpts),
   });

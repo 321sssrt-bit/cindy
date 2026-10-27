@@ -147,6 +147,36 @@ export function readModelCompactionPct(providerId: string, modelId: string): num
   return readPrefs().compactionPcts?.[JSON.stringify([providerId, modelId])] ?? null;
 }
 
+/** Participate in the existing provider deletion transaction, including rollback. */
+export function stageProviderModelCompactionClear(providerId: string): () => boolean {
+  const filePath = ownerScopedUserDataPath('model-context-limit-prefs.json');
+  const ownerStore = createStore(() => filePath);
+  const previous = ownerStore.read().compactionPcts ?? {};
+  // Match the serialized provider element exactly, including escaped characters.
+  const prefix = `[${JSON.stringify(providerId)},`;
+  const removed = Object.fromEntries(Object.entries(previous).filter(([key]) => key.startsWith(prefix)));
+  if (Object.keys(removed).length === 0) return () => true;
+  ownerStore.writePatch({
+    compactionPcts: Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(prefix))),
+  });
+  return () => {
+    try {
+      ownerStore.invalidateIfChanged();
+      const current = { ...ownerStore.read().compactionPcts };
+      // Restore only removed entries; do not overwrite a newer external edit.
+      for (const [key, value] of Object.entries(removed)) current[key] ??= value;
+      ownerStore.writePatch({ compactionPcts: current });
+      return true;
+    } catch (error) {
+      log.warn('restore provider model compaction failed', {
+        providerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  };
+}
+
 /** All desktop harnesses use the same supplier/model policy, never the retired global sliders. */
 export function resolveModelCompactionPct(
   catalog: Pick<Catalog, 'providers'>,

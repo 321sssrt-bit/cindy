@@ -485,6 +485,7 @@ export interface ProviderHandlerDeps {
   writeModelContextLimit?(targets: readonly ModelPriceOverrideTarget[], limit: number | null): void | Promise<void>;
   readModelCompaction?(target: ModelPriceOverrideTarget): { pct: number; isCustomized: boolean };
   writeModelCompaction?(targets: readonly ModelPriceOverrideTarget[], pct: number | null): Promise<void>;
+  stageClearProviderModelCompaction?(providerId: string): () => boolean;
 }
 
 /** 上下文上限的读回视图(与写入返回同形，UI 一次拿齐当前值与是否自定义)。 */
@@ -2320,6 +2321,7 @@ export function registerProviderHandlers(
           let restoreOAuthCredentials: (() => boolean) | null = null;
           let restoreDisableOverrides: (() => boolean) | null = null;
           let restorePriceOverrides: (() => boolean) | null = null;
+          let restoreCompactionOverrides: (() => boolean) | null = null;
           // 整个删除事务(清 override → 删凭证 → 删配置 → 刷目录)在 disable 写队列**内**
           // 执行,持队列直到 afterChange 刷完 active-catalog:只把清理入队的话,清理落盘
           // 后队列即释放,「删除完成前」的窗口里并发 MODEL_DISABLE_SET 仍能从未刷新的
@@ -2351,6 +2353,8 @@ export function registerProviderHandlers(
                 deps.stageClearProviderDisableOverrides?.(runtimeProviderId) ?? null;
               restorePriceOverrides =
                 deps.stageClearProviderModelPriceOverrides?.(runtimeProviderId) ?? null;
+              restoreCompactionOverrides =
+                deps.stageClearProviderModelCompaction?.(runtimeProviderId) ?? null;
               assertProviderMutationOwner(ownerAtIngress);
               restoreOAuthCredentials = deps.removeOAuthCredentials(providerId);
               if (!restoreOAuthCredentials) {
@@ -2363,9 +2367,10 @@ export function registerProviderHandlers(
               assertProviderMutationOwner(ownerAtIngress);
               const overridesRestored = !restoreDisableOverrides || restoreDisableOverrides();
               const pricesRestored = !restorePriceOverrides || restorePriceOverrides();
+              const compactionRestored = !restoreCompactionOverrides || restoreCompactionOverrides();
               const oauthRestored = !restoreOAuthCredentials || restoreOAuthCredentials();
               const credentialsRestored = restoreProviderCredentials(providerId, credentialSnapshots);
-              if (!oauthRestored || !credentialsRestored || !overridesRestored || !pricesRestored) {
+              if (!oauthRestored || !credentialsRestored || !overridesRestored || !pricesRestored || !compactionRestored) {
                 commitRouteMutation();
                 throwIpcError(
                   'INTERNAL',

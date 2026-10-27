@@ -309,6 +309,23 @@ describe('ContextWindowBudgetChip', () => {
     });
   });
 
+  // PR #7460: replace the obsolete session-view source regex with observable
+  // colors from the extracted production ring (DESIGN.md §2/§10, unit tier).
+  // At 70/71/90/91%, both threshold boundaries must retain their semantic tokens.
+  it.each([
+    [70, 'msg-tool-card-chevron'], [71, 'warning-fg'],
+    [90, 'warning-fg'], [91, 'error-flat'],
+  ] as const)('renders the context ring at %s%% using %s', (pct, token) => {
+    const { container } = render(<ContextCapacityRing
+      contextTokens={pct * 10_000}
+      sdkContextWindow={1_000_000}
+      model="grok-4.6"
+      vendorKey="cc"
+    />);
+    expect(container.querySelectorAll('circle')[1]?.getAttribute('stroke')).toBe(`var(--${token})`);
+    expect(container.querySelector('span')?.textContent).toBe(`${pct}%`);
+  });
+
   it('keeps budget choices inside the ring details and compacts only on explicit action', async () => {
     // User decision 2026-10-27: one ring entry, with budget controls inside its details.
     // Existing tests only covered the standalone chip; this exercises the merged surface.

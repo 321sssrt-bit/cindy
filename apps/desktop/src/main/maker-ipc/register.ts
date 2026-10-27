@@ -1205,6 +1205,7 @@ import {
   isModelContextLimitCustomized,
   readModelContextLimit,
   readModelCompactionPct,
+  stageProviderModelCompactionClear,
   resolveModelCompactionPct,
   writeModelCompactionWithRefresh,
   writeModelContextLimitsWithRefresh,
@@ -7622,6 +7623,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       setModelPriceOverride(target, desired, getActiveCatalog().modelRegistry),
     clearModelPriceOverride,
     stageClearProviderModelPriceOverrides: stageProviderModelPriceOverridesClear,
+    stageClearProviderModelCompaction: stageProviderModelCompactionClear,
     broadcastPricingChanged: broadcastReferenceModelPricing,
     // Keep the catalog specification unchanged. Persist the override and refresh only
     // matching Codex tasks at a turn boundary; the editor reads back the effective value.

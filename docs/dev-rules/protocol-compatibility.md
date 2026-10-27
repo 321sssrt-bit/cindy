@@ -1,5 +1,123 @@
 # 跨端协议兼容
 
+## 接受已保存的伙伴模型
+
+既有 `local-db:bots:update` 可选接收 `acceptSavedModelSelectionVersion`（读取到的正整数
+Profile 版本）。它是显式接受模型的意图；宿主重新校验模型可用性、版本及账号，在同一保存
+事务中推进版本并为跟随专线登记 `pendingBotProfileVersion`。旧版无标记 baseline 不因普通
+重试、能力修改或来源不可用而被删除；路由切换尚未就绪时保留恢复记录。
+
+不新增 channel 或权限。旧调用方省略字段保持原有行为；旧宿主不支持该恢复意图，不能将
+返回成功视为完成恢复，必须读回版本及发送结果。现有 `update_teammate_profile` 显式提交
+`modelChain` 时走同一接受入口，包括重复选择当前值；省略模型字段不改变恢复状态。
+
+## 任务链接保留所属电脑
+
+任务查询返回可选 `sessionUrl`，沿用 `cindy://session/<id>?device=<deviceId>`。
+桌面外部打开与冷启动缓存的 session payload 新增可选 `deviceId`，Main、preload 和
+Renderer 均保留它。导航先与本机设备 ID 比较；远端链接先登记现有会话 origin，
+再通过原传输层读取，不把相同 ID 的本机伙伴任务当作目标。设备判断沿用入口导航器的
+最新点击判据，迟到结果不覆盖后续点击。没有设备参数的旧链接保持原导航流程。
+设备比较与链接生成均使用 auth 注册的本机标识，包含隔离开发实例的覆盖值。
+外部入口与正文链接按设备和任务 ID 一起挑选远端镜像；显式 origin 优先于其它设备
+的同 ID 分片，快照刷新不会将后续读取改到另一台电脑。
+不增加 IPC channel、远程授权、重试或连接恢复；离线目标仍由现有传输层报告。
+回滚后新增查询字段可忽略，但旧 Desktop 从外部打开远程链接仍有丢失设备参数的限制。
+回归入口：`deepLink.test.ts`、`deepLinkIslandEntryBridge.test.ts`、
+`botSessionOwners.test.ts`、`orcaSessionIdentity.test.ts`。
+
+## 失败自动任务的人工续跑依据
+
+既有输入队列投影增量携带可选 `errorCanContinue: true`：只由宿主确认当前错误属于
+已落库且已释放恢复记录的自动任务输入。新控制端不再从历史用户消息推断，旧宿主缺省
+该字段时不提供此 fallback；原有 retry token 与历史错误卡仍沿用旧路径。
+旧控制端忽略新增字段。标记仅随当前错误存在，清错、下一轮输入和控制操作失败都会清除，
+不落盘、不保留旧 run，不新增 channel、权限、服务端或原生指纹变更。
+
+## 手机经电脑确认群消息已读
+
+群 Remote Resource 投影新增可选 `supportsReadReceipts`，仅云端群声明。
+新手机通过现有 `maker:remote-resources:invoke` 的 `read` action 提交实际可见的
+`messageId`；宿主复核群可见性及账号代次，再复用 `chatServer.manage` 的读位确认，
+不信任客户端提供的序号、不读取或确认尚未显示的新消息。旧宿主没有能力标记时，
+手机保留原本地未读缓存行为；旧手机忽略新字段。`send.quote` 转交既有发送验证与水合入口。
+不增加 IPC 白名单、身份权限或原生依赖，不重置连接、不重放发送操作；单群读位失败
+留待该群下次可见或重连刷新，不影响其它设备连接。
+
+## 设备模拟器官方 ID 更新
+
+市场请求携带 `x-cindy-plugin-migrations: simulator-id-v1` 表示客户端支持这一次官方
+`baguette-simulator` → `cindy-simulator` 安装身份迁移，不是权限或发布者凭证。
+Server 保留原市场资源 ID 和不可变旧 Release；无能力声明的客户端继续获取旧 ID 包。
+有声明的客户端获取新 ID 包，列表、详情、下载的 ghostId 必须与选中包的 manifest.id 一致。
+新客户端访问旧 Server 时仍按旧 ID 运行。只有 Server 全量升级且客户端支持已发布后，
+才可审核上架新包；不能只靠引用改名宣称旧安装已迁移。
+回滚 Server 前须通过既有版本选择恢复旧 Release；不可在新包仍为 current 时回滚到不识别迁移的 Server。
+迁移过的客户端保留新安装和原数据键，不会自动降级成旧 ID 或再装一个旧副本。
+事务失败回滚是恢复尚未提交的旧安装，不是支持任意降级客户端二进制。迁移后不得退回不认识
+该 receipt 字段的客户端并重建注册表；回退应保留这段兼容读取能力，避免重新派生数据键。
+
+## 手动对齐 worktree 源分支
+
+`worktree:list-branches` 的 IPC 响应可选追加 `remoteDefaultBranch`
+（完整的 `refs/remotes/origin/*` 引用）；仅 UI 查询补充，失败不影响本地分支列表，
+创建使用的 `listBranches()` 保持原样。列表仍按原有约定懒加载。
+本地支持刷新；控制端查询 `worktree:branch-sync-status`，旧被控端返回
+`DEVICE_LINK_CHANNEL_NOT_ALLOWED` 时隐藏刷新按钮，缺少可选字段时不显示远程分组，
+本地分支选择与创建保持原行为。新被控端继续接受旧请求。
+状态查询只读本地 Git；缺本地 tracking ref 不代表远程分支不存在，仍允许拉取。
+仅拉取确认远程分支不存在后，在本次胶囊选择内置灰；换分支或重新挂载即重新判断。
+同步仅由用户点击触发，按配置的 tracking remote/ref（否则 origin 同名分支）拉取一个显式
+refspec，再按需快进本地分支。
+设备互联对单次同步预留 90 秒（网络 Git 30 秒及清理、本地探测），失败不重放写请求、
+不重置 peer 或 relay；创建和发送不等待同步，不改用其它源引用。手机本轮不提供入口。
+实现见 `apps/desktop/src/main/worktree/branchSync.ts`；真实 Git 回归在
+`branchSync.git-integration.test.ts`。
+
+## IM 状态表情由客户端声明
+
+官方 Slack / Telegram 的 `hello` 新增可选 `statusReactions`：`queued`、`error` 为
+1–64 字符且不含空白的平台原生表情名称；`processing` 为 1–16 个名称，
+`expressiveError` 为可选的 1–64 个名称。两仓 `slack-hook-protocol` 的类型、校验和
+有效/无效 fixture 同步维护。客户端 `hook-control/statusReactions.ts` 生成平台配置，
+Telegram 复用个人 bot 的变体池；X 不发送该声明。
+
+服务端在已认证 hello 的同步段按设备登记，早于 welcome/派发；后续 hello 整体替换，
+省略字段清除旧声明。任务使用原路由设备的配置，断线保留最近声明供收口；进程重启后
+由重连恢复，在此之前使用兼容默认值。服务端继续负责状态生命周期、实际表情清理与
+平台 API 拒绝时的一次标准回落，成功和取消不新增表情。样式不能改变权限或消息归属。
+
+新客户端连旧 server：旧校验器忽略可选字段，照常使用旧样式；旧客户端连新 server：
+使用兼容默认值。无需新消息类型或协议版本，无数据库、环境变量、Mobile 原生配置变化，
+两仓可独立发布/回滚。完整效果要求两端支持，之后换肤色或表情池只需改客户端。
+本次声明仅包含状态表情；进度和终稿文案继续复用已有客户端渲染，服务端命令文案未迁移。
+
+## 手机读取项目别名（#6916）
+
+同账号 device-link 只读白名单增加 `local-db:project-aliases:list`，返回宿主现有的
+`{ projectKey, alias, updatedAt }[]`；远程响应只包含宿主 `local:` / `remote:` 项，
+控制端 `device:` 覆盖名保留在本机。本机 Renderer 的列表结构和范围不变。
+`local-db:project-aliases:changed` 作为无数据的失效通知
+加入 `sessions` topic；写入完成后带捕获的账号代次转发，手机收到后重读宿主。
+不开放远程 `set/delete`，不改变路径、项目分组键或任务归属，不涉及服务端及数据库迁移。
+
+手机只采用响应中 `local:` 项，并用来源 deviceId 和规范化路径隔离；不把宿主的 SSH／
+另一台电脑的查看端别名套到本机项目。该平面投影继续兼容既有最近工作区入口；
+首页、详情和项目筛选采用文末的主机平台/账号快照，同时保留此处的别名搜索能力。
+共享展示函数兼容两种只读投影；完整项目成员含不同本地/SSH 身份时保持目录名，
+不能因搜索、状态或置顶筛选借用剩余一条的别名。
+订阅完成、前台恢复、链路重连及设备恢复可达时重读；旧账号／旧连接的迟到回复丢弃。
+恢复只影响单台设备的元数据读请求，不重置共享连接、不重放写操作；瞬时失败保留本次
+挂载内的快照并最多重试两次。清除别名回到目录名。
+
+远程任务搜索在宿主的完整可见候选集合中匹配本机项目别名，再排序和截断结果，避免
+手机首页 200 条缓存漏掉旧任务。沿用既有搜索请求与响应，项目／状态等筛选不变；
+别名命中不生成任务标题高亮，不将本机别名套到 SSH 项目。旧宿主／离线仍可补充缓存命中，
+但完整别名搜索需要宿主升级；不要求手机加载全量任务。
+
+新手机连接旧宿主遇到通道不支持时显示目录名；旧手机忽略新增通知，仍可读取既有结构的搜索结果。
+完整同步需要两端都有此改动。没有 Mobile 原生依赖／配置变更。
+
 ## Device Link 局域网优先直连
 
 可靠链路的 `link-open/link-accept` 增加可选能力 `direct-link-v1`。双方均支持且已完成
@@ -35,6 +153,14 @@ worktree 资源等待后复核。控制端先按既有工作区／自动化预�
 请求，不重放。原生 helper 的完成动作追加同一标识，缺失时不执行。无需服务端、Mobile
 原生配置或数据库 migration 更新。回归见 `agentIslandRemoteSessions.test.ts`、
 `agent-island/__tests__/service.test.ts` 和 `localDb/ipc/__tests__/sessionsUpdate.test.ts`。
+
+## 灵动岛群消息展示
+
+Desktop Main 向随包分发的原生灵动岛 helper 追加可选 `groupChat` 展示字段（成员头像与本地化 @ 标记），缺省时沿用原卡片。
+群卡使用独立 UI 标识，点击仍走现有群消息深链；不签发任务 `completionToken`，不进入任务活动广播或 device-link relay。
+服务端已读／关注／静音判据与系统通知共用，未新增服务端接口、数据库、Mobile 原生配置或远程 IPC。
+旧 helper 忽略可选字段后仍可显示标题和摘要、点击进入群消息；旧 Main 配合新 helper 保持原样。
+回归见 `agent-island/__tests__/{state,service,deviceSessions}.test.ts` 与 `maker-ipc/__tests__/chatServer.test.ts`。
 
 ## 限额恢复时间查询
 
@@ -279,6 +405,20 @@ fragment 只允许一个闭集 `app` 提示，不允许额外 `#` / `?` 段；�
 sgp-prod 都部署该页面后，才把 `createInvite` 生成的链接切换为 https。旧客户端点击 https 链接
 经页面转到 `cindy://` 仍可用，但粘贴 https 链接需要新版客户端。Chat Server API 不变。
 
+## 聊天持久投影的历史修正（2026-10-26）
+
+`BotGroupDetail` 可选追加 `historyRevision?: string` 与 `messageUpdates?: BotGroupMessageView[]`。
+前者是不透明的本地投影重建代次，不是服务器房间 revision；新版 UI 发现它变化时丢弃已加载旧页，
+再按需补历史。后者返回现有 `sourceMessageIds` 所列已展示消息的当前授权投影，包含删除 tombstone；
+不把这些消息追加到最新页，按稳定 id 替换已有旧页。旧客户端忽略附加字段，新客户端连接旧 Host
+时沿用原刷新行为。无新 IPC channel、无新的执行权限或服务端必需 capability。
+
+HTTP 继续使用现有 snapshot、messages 与 `/changes`；游标为十进制字符串，计算使用 BigInt。
+Desktop 推送帧串行提交本地事务后 ACK；Mobile 活动群先通过 changes 补齐并落盘，再 ACK 通知。
+未加载范围不因推进 cursor 被标成已下载。收到 RESET_REQUIRED、成员历史边界变化或明确撤权后，
+清除／重建旧覆盖，不能只换最新 100 条而保留未校验旧正文。无 hydrated message 的旧服务端事件
+降级为重建投影；新增字段缺省时保留旧端行为。发送与执行上下文仍由现有服务端权限判断。
+
 ## 群消息附件的结构化投影
 
 Chat Server 群消息投影（Desktop IPC 与 `bot-group-chat` 远程资源共用 `BotGroupMessageView`）的
@@ -347,6 +487,14 @@ schema、数据库或 Mobile 原生指纹。完整管理需要两端客户端更
 沿用原 usage 计数路径，旧客户端忽略新增字段。主机检测到挂起或时钟异常时，本轮后续帧不再携带该字段并标记
 `generationReliable: false`，客户端据此丢弃已保留的速度。无需服务端更新、新通道、权限或
 数据库 migration。
+
+Codex 的速度累计独立于计费桶：同一产品轮次中的原生接续保留已配对的输出与时长，
+用户新消息同时清零；原生 turn 的测速源计数从零开始。计时未增加但输出增加的区间不进入
+速度分子或分母，暂时发 `generationReliable: false`，下一个有效区间恢复；费用仍完整记账。
+旧客户端使用的 `outputTokens` / `generationDurationMs` 与速度快照同源，不能用计费桶
+补速度分子。若某个原生 turn 丢失过配对区间，其结束用量不附完整输出的生成时长。
+`tokenSpeed.peak` 是新增可选字段，保存产品轮次内已测最近速度的峰值；新端跨重连读取，
+曲线裁剪不再丢峰值。旧主机没有它时使用客户端已观察到的峰值，旧客户端忽略此字段。
 
 ## 任务列表提前同步聊天正文
 
@@ -584,6 +732,13 @@ Claude Code 终态 error 事件可带 `usageResetAt`（unix ms）。服务端无
   - 先发被控端：卡片上的 `liveView` 由执行代输入的那台电脑给出，它本身就是新版。
 
 ## Agent 跨设备历史发现与搜索
+
+历史查询的可选 `teammate_id`、`source` 由源端在召回、排名、分页前过滤，仍与原调用方权限
+及远程可见范围取交集。`list_sessions` 的 `time_field=activity` 同时控制时间窗、排序和游标，
+活动时间取创建、更新、用户发送时间的最大值；省略时保持创建时间语义。新增输出
+`lastActivityAt`、`companion`（持久伙伴关联及可证明的渠道），搜索元数据补充 `source`。
+跨设备转发不丢筛选字段；旧端若拒绝新参数，保留失败设备组与 `partial`，不能重试成无归属
+筛选的查询，也不能把失败当作无聊天。没有这些参数的旧调用保持兼容。
 
 `cindy_helper` 的 `list_history_devices` 使用现有同账号设备目录；`list_sessions` 和
 `search_chat_history` 新增 `device` 参数，默认 `local` 保留原行为，`all` 查询本机和在线且
@@ -1666,6 +1821,23 @@ Codex 原生图片恢复（#6412）在既有 `maker:remote-agent:v1` 上追加�
     回归见 `remote-agent/__tests__/connectionPool.test.ts`、`execServerProjection.e2e.test.ts`(中继忙闲)，以及真实 Claude Code / Codex / Pi 的
     `claudeHosted` / `codexHosted` / `piHosted.e2e.test.ts`(共用 `poolHarness.ts`)。
 
+## 伙伴设置动作 `management:settings`（Remote Resource，2026-10-22）
+
+桌面控制另一台电脑上的伙伴时，设置页的读写经现有 `maker:remote-resources:invoke`，不新增 device-link 通道，也不改 allowlist。契约正本是
+`apps/desktop/src/shared/botRemoteSettings.ts`，字段只追加：
+
+- **声明**：主机在 `teammates` 集合描述里增加集合动作 `{ id: "management:settings" }`（手机只检查 `open-create`，不显示该动作）。
+- **请求**：`collectionId: "teammates"`、`actionId: "management:settings"`、`input: { v: 1, op, args? }`；需要伙伴的操作带
+  `resourceRef: { collectionId: "teammates", kind: "bot", id }`，主机级操作（`caps`、`models.default`、`autonomy.*`、`routines.sources`、
+  `voice.models`、`voice.voices`、`channels.im.listAdoptable`）不带。`input` 受 64 KiB 上限约束，控制端把超长文本补丁拆成多次请求。
+- **响应**：`{ effects: [], result: { ok: true, value } | { ok: false, code, message } }`。失败以数据返回（`PRECONDITION_FAILED`、
+  `INVALID_PARAMS`、`NOT_FOUND`、`ALREADY_EXISTS`、`UNSUPPORTED_CAPABILITY`），因为注册表适配层会把其它异常折叠成泛化 `INTERNAL`，
+  会让页面看不到 revision 冲突；`message` 去掉 `[CODE] ` 前缀，非白名单异常仍抛 `INTERNAL`，不带原文。
+- **能力协商**：`caps` 返回 `{ version, ops[] }`；控制端按操作决定显示哪些页（缺操作的页不出现），主机没有声明动作时整页回退到
+  通用表单页。新增操作只追加到 `BOT_SETTINGS_OPS`，旧控制端不识别的操作不会被调用。
+- **安全边界**：主机检查「允许同账号设备控制本机」、撤权、共享任务 / 供应商分享对端与伙伴可见性，并在返回前复核账号 owner；
+  凭证、本机路径、运行时快照、最近消息预览不出现在任何结果里；`profile.update` 白名单字段且拒绝 `permissions`；消息平台操作只触达该伙伴自己的连接。
+
 ## 协同远端 Worker：Worker 在另一台电脑运行
 
 `maker:input:get-projection` 的既有输入投影可选增加 `turnInProgress`，由输入协调器按
@@ -1752,6 +1924,13 @@ B 上的 Worker 是一条普通任务，`sessions.orca_remote_lead`(migration 01
   任务头标注「来自 X 的协同」，结束后显示「协同已结束」。
 
 ## 供应商组：同账号直连(P2a)
+
+跨区组员恢复（2026-10-26）：控制端 Main 仅在同账号 `provider-group:remote` 的有效 `view` / `pick`
+回包或 `manage-group` 组视图引用分享时，恢复本机缺失的区域标记并通过既有 `/provider-shares/x/session` 核验成员关系。
+不新增 wire 字段、channel 或权限，兼容旧组所在电脑；手机仍由任务所在电脑执行。旧控制端保留原行为。
+本机已加载的分享直接使用；尚在恢复或请求失败时不按已移除处理。Renderer 收藏和任意分享 ID 不能触发
+跨区激活。凭证只留内存、区域标记格式不变，降级后已恢复的分享沿原连接路径继续使用。
+回归：`device-link/__tests__/providerShareCrossRegion.test.ts`、`provider-group/__tests__/ipc.test.ts`。
 
 产品规则见 [`provider-groups.md`](../product-rules/provider-groups.md) §4、§5、§6.1、§10。组所在电脑 O 把某个供应商建成组后，
 同账号另一台电脑 C 上选了 O 的这个供应商的新任务：C 问 O 该用哪台，再自己直接连到选中的组内电脑运行。
@@ -2472,6 +2651,24 @@ X 快照有请求正文时，按原始 triggerMessageId 排除引用列表中的
 - Cindy Skill Hub 客户端与服务端在首次对外发布前同步收紧以上契约，不为未发布过的中间
   协议增加 fallback；已经发布的旧客户端仍使用原有 XD Skill Hub endpoint，不受此契约影响。
 
+### 项目显示名的跨设备镜像
+
+`sidebar-settings:get-project-aliases` 是只读的主机别名快照；返回主机平台、账号代次和
+`local:` / `remote:` 项目身份对应的别名，不传播主机作为控制端保存的 `device:` 覆盖名。
+`local-db:project-aliases:changed` 使用 `{}` 失效通知和账号标记，沿既有 `sessions` topic
+转发。控制端首次订阅、重连及既有列表刷新时补拉；在途读取期间收到变更时丢弃旧结果并补拉。
+完整空快照表示别名已清除，临时读取失败保留最后有效名称。退出账号、移除或撤销设备时清理镜像，
+迟到响应不得恢复已清理的数据。
+
+新主机与旧控制端保持原行为；新控制端连接不支持该读取通道的旧主机时使用目录名。
+只新增读取与通知准入，不开放远程别名写入，不改数据库或 relay 格式。
+名字按物理来源设备和完整主机项目身份匹配；Windows 本地路径按主机平台比较，SSH 身份和
+POSIX 大小写保留。既有分组若包含不同主机项目身份，仍显示原目录名，不能任取一条别名覆盖整组。
+桌面控制端已有的本地 `device:` 覆盖名继续优先。分组键、任务标题、工作目录和路由均不随别名改变。
+
+实现与回归见 `packages/maker-shared/src/projectAliasSync.ts`、`projectAliasSync.test.ts` 和
+`projectAliasPresentation.test.ts`；移动端首页、设备详情、抽屉与搜索筛选共用同一份镜像。
+
 ## 2. 插件来源
 
 - 客户端不包含内建插件种子，不在安装包中预置插件，启动期也没有播种
@@ -3103,6 +3300,24 @@ Restored inactive tabs and a hidden sidebar must not mark mail read merely by mo
 Mark only the successfully resolved, visibly opened message, never the whole thread or drafts. A failed
 mark must retain the body and return `markReadFailed:true` for a non-blocking notice.
 It returns `MailMessage` (maker-shared/mail-message).
+Optional `participantPhotos:[{email,url}]` supplies exact normalized-email contact
+photos (at most 64, credential-free HTTPS URLs). Invalid photo entries are discarded
+without dropping the message. Old providers omit this field; old clients ignore it.
+It travels in the existing message response/resource with no new IPC or permission.
+Desktop uses it before Gravatar (SHA-256 normalized email), a fixed DuckDuckGo domain
+favicon endpoint for non-public mailbox domains, and initials. External avatars use
+no referrer and bounded load fallbacks; they do not enable remote images in the body.
+Desktop loads avatar sources for at most the first 12 participant positions per
+message, shared across from/to/cc/bcc; duplicates also consume a position. Remaining
+participants use initials and retain their complete addresses, without photo or hash lookups.
+Domain icons are presentation, not authenticated sender identity. Other clients may
+continue displaying addresses alone. Provider contact enrichment must remain optional
+when new contact scopes are missing; Gmail bounds its lookup budget and account cache.
+Desktop activates only HTTP(S) body links through the chat opening policy and keeps
+their underline visible despite sender CSS. Unsupported targets, including mailto,
+stay inert without an href or explicit link role in the reader, so they are not
+keyboard/screen-reader links. Reader paint and authored link attributes are restored
+before editing or serializing a draft; the system shell protocol allowlist is unchanged.
 Credentials and MIME parsing remain with the provider. Cindy validates the data
 and reuses its inert HTML/CID/recipient renderers for delivered mail. Multiple
 matching providers/accounts cannot silently select the first. Host setup metadata
@@ -3314,6 +3529,22 @@ namespace + id 下同一插件的有界 JSON 请求；`deviceSync: true` 是独�
 不改变已装批准、凭证、KV、版本或原生指纹。实现与时序验证见
 [原配置页协议](../remote-plugin-oauth.md#手机原配置页授权的增量能力)。
 
+## 公共插件分享（未发布首版）
+
+`shareBaseUrl` 是端点清单的可选字段；缺失/空值关闭分享素材准备，不猜测域名。旧客户端忽略字段，既有市场和安装协议不变。公开 DTO `PublicPluginPresentation` v1 由两仓的 `packages/plugin-protocol` 同步维护，不含包或安装批准。
+
+`plugin-market:prepare-share` 接受可选 `ShareOptions {includeAttribution:boolean}`，省略时匿名。Main 向构建区域固定 Share Server `POST /api/shares`，请求 `{kind:'plugin',reference,includeAttribution,region,lang,authRealm?}`。CN/Dev 是 cn/zh-CN，Global 是 global/en；Auth 权威区域随当前身份冻结，可以与构建区域不同。只有署名创建携带当前用户 Access Token，固定账号代次；仅遇到明确的 TOKEN_EXPIRED 时复用登录续期并重试一次，续期前后及请求前复核原身份，不降为匿名。匿名请求无凭证。Renderer 不持有 token、不指定用户或上游服务。
+
+Share Server 以独立 PostgreSQL 库唯一保存分享关系；返回既有素材字段及 `shareId`、`includeAttribution`。Main 校验随机分享编号、固定同源且无查询参数的 `/s/:shareId` 与署名方式。区域语言仍由创建请求明确携带并存入记录。转发同一编号保留原署名；开关或重新分享选择另一条绑定，不修改既有记录。链接不含 source、内部身份、版本、包或批准；请求结果在切账号/资源后丢弃。
+
+落地页、二维码和图片使用同一无参 `/s/:shareId`，资源、署名、区域和默认语言以服务器记录为准；页面显式切换语言时，合法 `lang` 仅覆盖当前页面、JSON、SVG 的展示语言，向插件服务透传，不改写原记录或创建新编号。每次检查当前公开上架及可交付资格，显示当前公开版本；作者原文保留。当前昵称头像通过 Auth 实时读取，不可用则隐藏，不把已署名绑定降为匿名。生成时身份验证失败返回错误，可重试或另选匿名分享；资料查询不可用时隐藏署名展示，不改变原署名绑定，不复用错误身份。
+
+Share Server 在创建时保存已验签的分享者 `membershipId` 与身份权威。Auth 只读现有账号资料，不增加分享字段、记录、索引或 migration；公开资料接口使用 shareId，在固定 Share Server 回查有效分享与身份绑定后读取当前资料。分享服务端已独立提供该能力，客户端沿用现有认证与固定分享入口，不引入额外 Auth 写入或凭证存储。公开资料新增可选的内嵌栅格 `icon` 字段，两仓协议同步；缺失或无效时使用默认图标，旧服务与旧客户端均兼容。
+
+方形 SVG 为 1080×1080，Desktop PNG 为 2160×2160，接收界限 1 MiB。素材用于人工复制/保存；网页只展示与承接，不提供发送面板工具。`cindy://plugin/:pluginId` 仍只导航，拒绝 query/fragment/安装参数，沿冷启动、登录恢复、兼容包选择和原安装批准。通用市场详情入口接受服务端解析后的当前区域 ID，再与当前可见目录核对身份及发布；新旧 ID 映射仍归 Plugin Server，分享层不新增转换。已有目录 ID 的请求仍严格绑定原条目，不能借规范化跳到其他插件。不扩 device-link 或 Mobile 能力，没有“我的分享”、移除已发署名、分享统计、转发链、平台 SDK 或资料快照。
+
+
+本版分享接收限于插件页选择本机且目录正常的情况；不承接远程电脑的分享导航或断线恢复，不自动切换所选电脑。组织目录不可用时继续遵守未下发条目不读取详情的既有限制；历史或跨区域公开编号的解析也可能被该限制拒绝，本版不新增解析入口或放宽访问边界。
 
 ## 伙伴关联项目
 
@@ -3345,3 +3576,22 @@ namespace + id 下同一插件的有界 JSON 请求；`deviceSync: true` 是独�
 分享的刷新通知复用已有 `maker:provider:changed` 空载荷，只发给当前被授权的接收方，并核对
 对应 host。自定义 API 不进入这套策略与新增刷新规则。详细范围及验证见
 [订阅 Fast 控制交接说明](../subscription-fast-policy.md)。
+
+
+### 聊天通知内容与私聊落点（#7046）
+
+聊天推送增量携带 `conversationKind`，新原生端以此区分私聊/群通讯样式，旧端继续使用原通知。手机 `Accept-Language` 只控制服务端固定提示词，真实原文不翻译；云注册到两个服务都保留显式 preview 选择，旧请求缺省 true。完整任务通知预览关闭需要服务端先支持新列/字段；不添加隐私确认或更改默认预览。
+
+Desktop 在通知点击事件携带可选 `conversationKind: direct`，落入现有时间线的明确私聊模式。`getBotGroup` options、`sendBotGroupMessage` input 与 `manage` 的 read action 的同名可选字段仅用于此模式，主进程读取实际 kind 后确认；普通群入口仍拒绝 direct/channel。私聊不提供群设置、邀请、分工或群话题操作，已读通过既有 read action、发送保留原幂等/引用/附件路径。手机由实际 snapshot.kind 决定私聊标题和单人头像；内部 groups 路径保持旧通知链接兼容，不改变服务器成员权限。此入口补齐通知的阅读/回应，不改伙伴主任务/接管编排。
+
+## 伙伴名册的跟进任务链接
+
+`teammates` 伙伴行的 `links` 在原 `conversation` 链接之后追加 rel `following`，`target` 为
+`{ kind: 'session', sessionId }`，表示该伙伴在跟进的本机任务（伙伴发起的委派子任务与明确接手，
+扣除解除记录；来源与桌面侧栏「在跟进」相同）。只列在用伙伴、未归档、本机、普通来源且非 Orca
+worker 的任务，按最近更新取前 200 条；伙伴行 `revision` 追加这组 ID 的摘要，变化时照常失效重读。
+责任记录、委派创建／状态变化都会广播伙伴远程资源变化。
+
+旧控制端按未知 rel 忽略，`conversation` 仍是第一条链接，打开聊天不变；新控制端连接旧 Host
+时没有该链接，任务行不显示标记。Mobile 读取的链接上限由 64 放宽到 256 以容纳这组链接。
+不增加 IPC channel、请求参数、数据库字段、push 类型或 Mobile 原生配置。

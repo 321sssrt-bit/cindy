@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/lib/deviceName';
 import {
   useCallback,
   useEffect,
@@ -41,7 +42,7 @@ import {
   ComposerListItem,
   ComposerOrderedList,
   handleStructuredListBackspace,
-  handleStructuredListBreak,
+  handleComposerListEnter,
   hasTrailingPlainListParagraph,
   isTopLevelBlockSelection,
   isTrailingEmptyTopLevelParagraph,
@@ -299,7 +300,7 @@ import {
   type ComposerSuggestionEntry,
 } from '@/lib/composerSuggestion';
 import { countUserExtraDirs, MAX_EXTRA_DIRS, pickAndAddExtraDir } from './extraDirsActions';
-import { applyListBackspace, applyListContinuation } from '@/lib/composerListContinuation';
+import { applyListBackspace } from '@/lib/composerListContinuation';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 import { getAppShortcutCombos } from '@/lib/appShortcutStore';
 import { getNextPermissionMode } from '@/lib/permissionModeCycle';
@@ -804,6 +805,11 @@ interface ChatInputProps {
    */
   focusOnStorageKeyChange?: boolean;
   /**
+   * Each new non-null value (after mount) brings the caret back into the editor, e.g. picking
+   * 「回复」 on a companion message puts its quote above this composer, ready to type the reply.
+   */
+  focusRequest?: unknown;
+  /**
    * Whether this composer should consume hardware send / voice / text commands.
    * Split panes keep every ChatInput mounted; only the focused owner may act.
    */
@@ -1302,6 +1308,7 @@ export function ChatInput({
   draftKey,
   disableAutofocus = false,
   focusOnStorageKeyChange = false,
+  focusRequest,
   ownsHardwareComposerActions = true,
   extraDirs,
   writableDirs,
@@ -2838,21 +2845,11 @@ export function ChatInput({
           return true;
         }
 
-        // Shift/Alt+Enter — split or exit a structured item. The plain-text
-        // fallback remains for old drafts and pasted Markdown that has not
-        // gone through an input rule.
-        if (
-          event.key === 'Enter' &&
-          (event.shiftKey || event.altKey) &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.isComposing
-        ) {
-          if (handleStructuredListBreak(view) || applyListContinuation(view)) {
-            event.preventDefault();
-            return true;
-          }
-          return false;
+        // Newline keys follow the send preference for both structured lists
+        // and plain Markdown restored from old drafts or pasted text.
+        if (handleComposerListEnter(view, event, getComposerSendShortcutPreference())) {
+          event.preventDefault();
+          return true;
         }
 
         // Resolve the configurable send shortcut after structured list handling.
@@ -3460,6 +3457,7 @@ export function ChatInput({
   const voiceShortcutRef = useRef(voiceInputSettings.shortcut);
   const voiceInputStateRef = useRef(voiceInput.state);
   const voiceInputGetStateRef = useRef(voiceInput.getState);
+  const voiceInputPrepareRef = useRef(voiceInput.prepare);
   const voiceInputStopRef = useRef(handleVoiceInputStopWithRefinement);
   voiceInputBusyRef.current = voiceInput.isBusy;
   voiceDraftTextRef.current = voiceInput.draftText;
@@ -3506,6 +3504,7 @@ export function ChatInput({
   useEffect(() => {
     voiceInputStateRef.current = voiceInput.state;
     voiceInputGetStateRef.current = voiceInput.getState;
+    voiceInputPrepareRef.current = voiceInput.prepare;
     voiceInputStopRef.current = handleVoiceInputStopWithRefinement;
     voiceInputCancelRef.current = voiceInput.cancel;
     handleVoiceInputStartRef.current = handleVoiceInputStart;
@@ -3520,6 +3519,7 @@ export function ChatInput({
     handleVoiceInputStopWithRefinement,
     voiceInput.cancel,
     voiceInput.getState,
+    voiceInput.prepare,
     voiceInput.state,
   ]);
 
@@ -3717,11 +3717,21 @@ export function ChatInput({
     };
   }, []);
 
-  // 长按输入框语音输入(语音设置里打开,默认关闭):输入框不加任何提示,按住鼠标
+  // 长按输入框语音输入默认开启，手动配置可关闭。按住鼠标
   // 左键不动片刻即开始录音,松开结束。按下由输入框的 onMouseDown 接入(要读
   // detail 才能排除双击);移动/松开挂在 window 上。真正开始录音后再指针捕获,
   // 拖出窗口松开也能停;等待期间不捕获,免得打断选字。
   const composerLongPressVoiceInputEnabled = voiceInputSettings.composerLongPressEnabled;
+  const [composerVoiceHovered, setComposerVoiceHovered] = useState(false);
+  const [composerVoiceHoverHintReady, setComposerVoiceHoverHintReady] = useState(false);
+  useEffect(() => {
+    setComposerVoiceHoverHintReady(false);
+    if (!composerVoiceHovered) return;
+    const timer = setTimeout(() => setComposerVoiceHoverHintReady(true), 500);
+    return () => clearTimeout(timer);
+  }, [composerVoiceHovered]);
+  const [composerVoiceHolding, setComposerVoiceHolding] = useState(false);
+  const [voiceButtonHolding, setVoiceButtonHolding] = useState(false);
   const composerLongPressGestureRef = useRef<ComposerLongPressVoiceGesture | null>(null);
   const armComposerLongPressCaptureRef = useRef<((pointerId: number, target: Element) => void) | null>(
     null,
@@ -3729,6 +3739,26 @@ export function ChatInput({
   useEffect(() => {
     if (!composerLongPressVoiceInputEnabled) return;
     let capture: { pointerId: number; target: Element } | null = null;
+    let selectionLockTarget: HTMLElement | null = null;
+    const clearSelectionLock = () => {
+      selectionLockTarget?.removeAttribute('data-voice-holding');
+      selectionLockTarget = null;
+    };
+    // pointerup is followed by mouseup/click and asynchronous selectionchange.
+    // Keep protecting this gesture until the next user input, not a timeout
+    // that could expire before Chromium finishes dispatching those events.
+    const handleNextInput = () => {
+      if (!gesture.isHolding()) clearSelectionLock();
+    };
+    const preventReleaseClick = (event: MouseEvent) => {
+      if (!selectionLockTarget || gesture.isHolding()) return;
+      if (event.detail === 0) {
+        clearSelectionLock();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    };
 
     const handleLostPointerCapture = (event: Event) => {
       if (!(event instanceof PointerEvent)) return;
@@ -3752,9 +3782,13 @@ export function ChatInput({
 
     const gesture = createComposerLongPressVoiceGesture({
       getState: () => voiceInputGetStateRef.current(),
+      prepare: () => voiceInputPrepareRef.current?.(),
       start: () => handleVoiceInputStartRef.current(),
       stop: () => voiceInputStopRef.current(),
       onHoldStart: () => {
+        setComposerVoiceHolding(true);
+        selectionLockTarget = editorRef.current?.view.dom ?? null;
+        selectionLockTarget?.setAttribute('data-voice-holding', 'true');
         if (!capture) return;
         try {
           capture.target.setPointerCapture(capture.pointerId);
@@ -3763,7 +3797,13 @@ export function ChatInput({
           capture = null;
         }
       },
-      onHoldEnd: releaseCapture,
+      onHoldEnd: () => {
+        setComposerVoiceHolding(false);
+        // Restore hit-testing for the next press immediately; only the
+        // selectionchange/click guard needs to outlive this release.
+        selectionLockTarget?.removeAttribute('data-voice-holding');
+        releaseCapture();
+      },
     });
     composerLongPressGestureRef.current = gesture;
     armComposerLongPressCaptureRef.current = (pointerId, target) => {
@@ -3781,6 +3821,7 @@ export function ChatInput({
     };
     const handleLeftButtonRelease = (event: PointerEvent | MouseEvent) => {
       if (event.button !== 0) return;
+      if (selectionLockTarget) event.preventDefault();
       gesture.release();
       // 没到时长就松开时不会走 onHoldEnd，但仍要清掉按下时记下的 pointerId。
       releaseCapture();
@@ -3788,13 +3829,50 @@ export function ChatInput({
     const handleAbort = () => {
       gesture.release();
       releaseCapture();
+      clearSelectionLock();
+    };
+    // pointermove.preventDefault() does not suppress Chromium's compatibility
+    // mouse events or native selection/drag defaults after mousedown.
+    const preventHeldSelection = (event: Event) => {
+      if (selectionLockTarget) event.preventDefault();
+    };
+    // mousedown has already started Chromium's selection gesture before the
+    // hold timer fires. Cancelling later move/selectstart events alone cannot
+    // guarantee it stops. Keep the DOM selection at the editor's current
+    // insertion range before ProseMirror observes native selection changes.
+    // Read the current state each time so streamed dictation can move it.
+    const preserveHeldSelection = (event: Event) => {
+      if (!selectionLockTarget) return;
+      const current = editorRef.current;
+      if (!current || current.isDestroyed) return;
+      const selection = current.view.dom.ownerDocument.getSelection();
+      if (!selection?.anchorNode || !current.view.dom.contains(selection.anchorNode)) return;
+      const anchor = current.view.domAtPos(current.state.selection.anchor);
+      const head = current.view.domAtPos(current.state.selection.head);
+      if (
+        selection.anchorNode === anchor.node && selection.anchorOffset === anchor.offset &&
+        selection.focusNode === head.node && selection.focusOffset === head.offset
+      ) return;
+      event.stopImmediatePropagation();
+      selection.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
+    };
+    const handleDragStart = (event: Event) => {
+      if (gesture.isHolding()) event.preventDefault();
+      else handleAbort();
     };
     window.addEventListener('pointermove', handlePointerMove, true);
+    window.addEventListener('pointerdown', handleNextInput, true);
+    window.addEventListener('mousedown', handleNextInput, true);
+    window.addEventListener('keydown', handleNextInput, true);
+    window.addEventListener('click', preventReleaseClick, true);
+    window.addEventListener('mousemove', preventHeldSelection, true);
+    window.addEventListener('selectstart', preventHeldSelection, true);
+    document.addEventListener('selectionchange', preserveHeldSelection, true);
     window.addEventListener('pointerup', handleLeftButtonRelease, true);
     window.addEventListener('mouseup', handleLeftButtonRelease, true);
     window.addEventListener('pointercancel', handleAbort, true);
     // 按在已选中的文字上会进入原生拖拽,之后不再有 move / up。
-    window.addEventListener('dragstart', handleAbort, true);
+    window.addEventListener('dragstart', handleDragStart, true);
     window.addEventListener('blur', handleAbort);
     return () => {
       armComposerLongPressCaptureRef.current = null;
@@ -3803,17 +3881,31 @@ export function ChatInput({
       }
       gesture.dispose();
       releaseCapture();
+      clearSelectionLock();
       window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerdown', handleNextInput, true);
+      window.removeEventListener('mousedown', handleNextInput, true);
+      window.removeEventListener('keydown', handleNextInput, true);
+      window.removeEventListener('click', preventReleaseClick, true);
+      window.removeEventListener('mousemove', preventHeldSelection, true);
+      window.removeEventListener('selectstart', preventHeldSelection, true);
+      document.removeEventListener('selectionchange', preserveHeldSelection, true);
       window.removeEventListener('pointerup', handleLeftButtonRelease, true);
       window.removeEventListener('mouseup', handleLeftButtonRelease, true);
       window.removeEventListener('pointercancel', handleAbort, true);
-      window.removeEventListener('dragstart', handleAbort, true);
+      window.removeEventListener('dragstart', handleDragStart, true);
       window.removeEventListener('blur', handleAbort);
     };
-  }, [composerLongPressVoiceInputEnabled]);
+  }, [composerLongPressVoiceInputEnabled, storageKey]);
 
   const handleComposerLongPressPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    const current = editorRef.current;
+    if (!current || current.isDestroyed || !(event.target instanceof Element)) return;
+    if (
+      !current.view.dom.contains(event.target) &&
+      !isComposerBlankPointerTarget(event.target, event.currentTarget, current.view.dom, event)
+    ) return;
     armComposerLongPressCaptureRef.current?.(event.pointerId, event.currentTarget);
   }, []);
 
@@ -3828,7 +3920,11 @@ export function ChatInput({
     if (!editorInstance || editorInstance.isDestroyed) return;
     const editorElement = editorInstance.view.dom;
     const target = event.target;
-    if (!(target instanceof Element) || !editorElement.contains(target)) return;
+    if (!(target instanceof Element)) return;
+    if (
+      !editorElement.contains(target) &&
+      !isComposerBlankPointerTarget(target, event.currentTarget, editorElement, event)
+    ) return;
     // 提及 / 粘贴文本 / 引用这类 chip 自带点击与拖拽行为,不在上面起手。
     const atom = target.closest('[contenteditable="false"]');
     if (atom && atom !== editorElement && editorElement.contains(atom)) return;
@@ -4208,6 +4304,16 @@ export function ChatInput({
       })();
     }
   }, [editor, storageKey]);
+
+  // A focus request from the owner (see the `focusRequest` prop). The caret goes back to where
+  // it was; an editor that already has focus (mid IME composition included) is left alone.
+  const focusRequestRef = useRef(focusRequest);
+  useEffect(() => {
+    if (focusRequestRef.current === focusRequest) return;
+    focusRequestRef.current = focusRequest;
+    if (focusRequest == null || !editor || editor.isDestroyed || !editor.isEditable || editor.isFocused) return;
+    editor.commands.focus();
+  }, [editor, focusRequest]);
 
   // ── External draft writes for the CURRENT session (e.g. rewind / fork
   // pre-fill called saveComposerDraft from outside) ──
@@ -7541,7 +7647,7 @@ export function ChatInput({
             ? t('newChat.chatInput.agentRelocation.titleOther', { device: target.name })
             : deviceLinkDeviceId
               ? t('newChat.chatInput.agentRelocation.titleOther', {
-                  device: deviceLinkDeviceName || deviceLinkDeviceId,
+                  device: deviceDisplayName(deviceLinkDeviceId, deviceLinkDeviceName),
                 })
               : t('newChat.chatInput.agentRelocation.titleLocal'),
           description: t('newChat.chatInput.agentRelocation.description'),
@@ -8912,6 +9018,25 @@ export function ChatInput({
   if (!previewPrompt && dismissedPreviewPrompt !== null) setDismissedPreviewPrompt(null);
   const showPromptPreview =
     !!previewPrompt && previewPrompt !== dismissedPreviewPrompt && !composerMutationLocked;
+  const voiceHintEmpty =
+    !!editor && !editor.isDestroyed && composerDocIsEmpty(editor.state.doc) && !hasVoiceDraftText;
+  // 已有推荐或建议预览优先于语音入门提示；实际录音仍由输入框锁定状态切换为录音指引。
+  const voiceHint = voiceHintEmpty
+    ? voiceBusyOnCurrentComposer && voiceInput.state === 'listening'
+      ? t(
+          composerVoiceHolding || voiceButtonHolding
+            ? 'newChat.chatInput.voiceInput.speakRelease'
+            : 'newChat.chatInput.voiceInput.speakPressAgain',
+        )
+      : !showRecommendationOverlay &&
+          !showPromptPreview &&
+          composerVoiceHovered &&
+          composerVoiceHoverHintReady &&
+          composerLongPressVoiceInputEnabled &&
+          !composerTypingLocked
+        ? t('newChat.chatInput.voiceInput.holdComposer')
+        : null
+    : null;
   promptPreviewInputGuardRef.current = () => {
     if (!showPromptPreview) return false;
     setDismissedPreviewPrompt(previewPrompt ?? null);
@@ -9176,12 +9301,22 @@ export function ChatInput({
                   ],
             )}
             data-split-group-composer-drop-target
+            onPointerDown={handleComposerLongPressPointerDown}
+            onPointerOver={(event) => {
+              const editorDom = editor && !editor.isDestroyed ? editor.view.dom : null;
+              setComposerVoiceHovered(
+                (event.target instanceof Element && !!editorDom?.contains(event.target)) ||
+                isComposerBlankPointerTarget(event.target, event.currentTarget, editorDom, event),
+              );
+            }}
+            onPointerLeave={() => setComposerVoiceHovered(false)}
             // 卡片里的空白(文字行下方的空隙、工具栏两组按钮之间的空档、四周
             // padding)没有元素承接点击:浏览器默认会把焦点从 contenteditable 撤到
             // <body>,正在输入的光标凭空消失;而点空白又该能进入输入态。所以先
             // preventDefault 掉这次默认的焦点转移,再按需补一次不带坐标的 focus ——
             // 「进入输入态」归空白区,「定位插入点」只归点击文字那一行。
             onMouseDown={(event) => {
+              handleComposerLongPressMouseDown(event);
               if (event.button !== 0) return;
               if (
                 !isComposerBlankPointerTarget(
@@ -9435,10 +9570,9 @@ export function ChatInput({
                 className="relative w-full"
                 // 推荐词生效时由 CSS 关掉原生 placeholder,避免两行字叠在一起。
                 data-recommendation-active={showRecommendationOverlay ? 'true' : undefined}
+                data-voice-hint-active={voiceHint ? 'true' : undefined}
                 // 建议预览生效时由 CSS 隐去编辑器正文。
                 data-prompt-preview-active={showPromptPreview ? 'true' : undefined}
-                onPointerDown={handleComposerLongPressPointerDown}
-                onMouseDown={handleComposerLongPressMouseDown}
               >
                 <EditorContent
                   editor={editor}
@@ -9452,6 +9586,14 @@ export function ChatInput({
                     voiceBusyOnCurrentComposer && voiceInput.draftText ? 'true' : undefined
                   }
                 />
+                {voiceHint && (
+                  <div
+                    data-testid="composer-voice-hint"
+                    className="pointer-events-none absolute inset-x-0 top-0 py-[3px] pr-[11px] text-15 leading-[1.467] font-normal text-[var(--chat-input-placeholder-subtle)]"
+                  >
+                    {voiceHint}
+                  </div>
+                )}
                 {/* 建议预览:排版与原生 placeholder 对齐,py-[3px] 同下方推荐词 overlay 的说明。 */}
                 {showPromptPreview && (
                   <div
@@ -9927,6 +10069,8 @@ export function ChatInput({
                       }
                       shortcutLabel={voiceInputShortcutLabel}
                       onStart={handleVoiceInputStart}
+                      onHoldChange={setVoiceButtonHolding}
+                      emptyComposer={voiceHintEmpty}
                       onStop={handleVoiceInputPlainStop}
                       onStopAndSend={handleClickSend}
                       sendTargetRef={sendButtonRef}
@@ -10169,6 +10313,8 @@ export function ChatInput({
 
 function VoiceInputButton({
   state,
+  onHoldChange,
+  emptyComposer,
   disabled,
   shortcutLabel,
   onStart,
@@ -10181,6 +10327,8 @@ function VoiceInputButton({
   className,
 }: {
   state: import('@cindy/voice-input-core').VoiceInputState;
+  onHoldChange: (holding: boolean) => void;
+  emptyComposer: boolean;
   disabled: boolean;
   shortcutLabel: string;
   onStart: () => boolean | Promise<boolean | void>;
@@ -10195,6 +10343,10 @@ function VoiceInputButton({
 }) {
   const { t } = useTranslation();
   const [longPressActive, setLongPressActive] = useState(false);
+  useEffect(() => {
+    onHoldChange(longPressActive);
+    return () => onHoldChange(false);
+  }, [longPressActive, onHoldChange]);
   const timerRef = useRef<number | null>(null);
   const pointerIdRef = useRef<number | null>(null);
   const lastPointerPointRef = useRef<{ clientX: number; clientY: number } | null>(null);
@@ -10259,8 +10411,16 @@ function VoiceInputButton({
   } else if (activeRecording) {
     label = t('newChat.chatInput.voiceInput.stop');
   }
+  const hintLabel =
+    emptyComposer && activeRecording
+      ? t(
+          longPressActive
+            ? 'newChat.chatInput.voiceInput.speakRelease'
+            : 'newChat.chatInput.voiceInput.speakPressAgain',
+        )
+      : label;
   const tooltipText =
-    shortcutLabel && !longPressActive && !busy ? `${label} · ${shortcutLabel}` : label;
+    shortcutLabel && !activeRecording && !busy ? `${hintLabel} · ${shortcutLabel}` : hintLabel;
   const controlledTooltipOpen = busy
     ? showProcessing
     : longPressActive
@@ -10388,6 +10548,9 @@ function VoiceInputButton({
         aria-pressed={activeRecording}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
+          // A fresh press is never the synthetic click from the previous hold.
+          // Chromium may omit that click when the recording pill changes size.
+          clearSuppressNextClick();
           event.preventDefault();
           event.currentTarget.blur();
           if (disabledOrBusy || listening) return;

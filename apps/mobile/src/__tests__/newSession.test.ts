@@ -1678,7 +1678,7 @@ describe('new session model', () => {
 
     expect(parseNewSessionDeviceOptions(encoded)).toEqual([
       { deviceId: 'pc', name: 'PC' },
-      { deviceId: 'mac', name: 'mac' },
+      { deviceId: 'mac', name: '另一台电脑' },
     ]);
   });
 
@@ -1687,7 +1687,7 @@ describe('new session model', () => {
       { deviceId: 'pc', name: 'PC' },
     ]);
     expect(parseNewSessionDeviceOptions('not-json', { deviceId: 'pc', name: '' })).toEqual([
-      { deviceId: 'pc', name: 'pc' },
+      { deviceId: 'pc', name: '另一台电脑' },
     ]);
     expect(parseNewSessionDeviceOptions('')).toEqual([]);
   });
@@ -1808,6 +1808,29 @@ describe('new session model', () => {
         lastActivityAt: '2026-01-01T00:01:00.000Z',
       },
     ]);
+  });
+
+  // #6916, unit: the production picker must display host metadata without changing its path.
+  it('uses the selected host alias for recent workspace quick picks', () => {
+    const sessions = [remoteSession('app', { workingDir: '/repo/app', deviceLinkDeviceId: 'mac-a' })];
+    const aliases = new Map([
+      ['device:mac-a:/repo/app', 'Customer Portal'],
+      ['device:mac-b:/repo/app', 'Other Portal'],
+    ]);
+    expect(buildRecentWorkspaceOptions(sessions, 'mac-a', 6, aliases)[0]).toMatchObject({
+      title: 'Customer Portal', workingDir: '/repo/app',
+    });
+    expect(buildRecentWorkspaceOptions(sessions, 'mac-a', 6, new Map())[0].title).toBe('app');
+  });
+
+  it('keeps mixed local/SSH recent-workspace names independent of row order', () => {
+    const aliases = new Map([['device:mac-a:/repo/app', 'Local name']]);
+    const local = remoteSession('local', { workingDir: '/repo/app', deviceLinkDeviceId: 'mac-a' });
+    const ssh = remoteSession('ssh', { workingDir: '/repo/app', deviceLinkDeviceId: 'mac-a', remoteHostId: 'ssh-a' });
+    for (const rows of [[local, ssh], [ssh, local]]) {
+      expect(buildRecentWorkspaceOptions(rows, 'mac-a', 6, aliases)[0]).toMatchObject({ title: 'app', sessionCount: 2 });
+    }
+    expect(buildRecentWorkspaceOptions([ssh], 'mac-a', 6, aliases)[0].title).toBe('app');
   });
 
   // Remote path strings deliberately model the host OS, not the test runner's filesystem.

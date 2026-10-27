@@ -787,6 +787,8 @@ interface CCAgentPermissionRequestPayload {
   description?: string;
   suggestions?: unknown[];
   autoReviewUnavailable?: boolean;
+  /** Auto-review's reason for asking; shown as the card's "why". */
+  autoReviewReason?: string;
 }
 
 interface CCAgentPermissionResult {
@@ -1663,6 +1665,7 @@ interface ElectronAPI {
   pluginMarket: {
     snapshot: () => Promise<import('../shared/pluginMarket').PluginMarketSnapshot>;
     detail: (pluginId: string) => Promise<import('../shared/pluginMarket').PluginMarketDetail>;
+    prepareShare: (pluginId: string, options?: import('../shared/share').ShareOptions) => Promise<import('../shared/share').ShareContent>;
     localIcons: (
       requests: import('../shared/pluginMarket').PluginMarketLocalIconRequest[],
     ) => Promise<import('../shared/pluginMarket').PluginMarketLocalIconResult[]>;
@@ -2118,6 +2121,8 @@ interface ElectronAPI {
   };
 
   agentIsland: {
+    setCompanionChats: (snapshot: import('../shared/agentIsland').AgentIslandCompanionChatsInput) => Promise<{ ok: true }>;
+    onCompanionChatRead: (cb: (chat: import('../shared/agentIsland').AgentIslandCompanionChatRead, stamp: import('../shared/dataOwnerPush').DataOwnerPushStamp) => void) => () => void;
     setVisibleSession: (sessionId: string | string[] | null) => Promise<{ ok: true }>;
     setEnabled: (enabled: boolean) => Promise<{ ok: true }>;
     consumeEntryAlert: (sessionId: string, islandEntryId: string) => Promise<{ ok: true; consumed: boolean }>;
@@ -2298,6 +2303,7 @@ interface ElectronAPI {
 
   // ── Discord Bot (Settings → IM Bot tab) ──
   discordBot: {
+    reconnect: () => Promise<{ status: DiscordBotTransportStatus; ownerUserId: string | null }>;
     getStatus: () => Promise<{
       status: DiscordBotTransportStatus;
       ownerUserId: string | null;
@@ -2397,6 +2403,10 @@ interface ElectronAPI {
      * 连接的任务 → NOT_FOUND(LANE_NOT_FOUND); 重启失败 → PRECONDITION_FAILED。
      */
     resetLane: (payload: {
+      id: string;
+      sessionId: string;
+    }) => Promise<import('../shared/botImConnection').BotImConnectionLanesPayload>;
+    archiveLane?: (payload: {
       id: string;
       sessionId: string;
     }) => Promise<import('../shared/botImConnection').BotImConnectionLanesPayload>;
@@ -2649,6 +2659,8 @@ interface ElectronAPI {
       relPath?: string;
       hideMetaFiles?: boolean;
       docMode?: boolean;
+      /** 「显示被忽略的目录」——列出依赖 / 构建产物 / 缓存目录。默认 false。 */
+      showIgnoredDirs?: boolean;
     }) => Promise<
       Array<{
         name: string;
@@ -2748,6 +2760,8 @@ interface ElectronAPI {
       remoteHostId?: string | null;
       workdir: string;
       hideMetaFiles?: boolean;
+      /** 与 listDir 同源:开关变了要带新 matcher 重建 watcher。 */
+      showIgnoredDirs?: boolean;
     }) => Promise<{ ok: boolean }>;
     stopWatch: (params: {
       remoteHostId?: string | null;
@@ -3049,7 +3063,8 @@ interface ElectronAPI {
   onDeepLinkNavigate: (
     callback: (
       payload:
-        | { type: 'session'; id: string; messageClientId?: string; islandEntryId?: string }
+        | { type: 'session'; id: string; deviceId?: string; messageClientId?: string; islandEntryId?: string }
+        | { type: 'chat-message'; groupId: string; messageId: string; threadRootId?: string; conversationKind?: 'direct' }
         | { type: 'project'; workingDir: string }
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
@@ -3058,7 +3073,8 @@ interface ElectronAPI {
         | { type: 'chat-invite'; token: string }
         | { type: 'chat-invite-malformed' }
         | { type: 'provider-share-join'; link: string }
-        | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing'; connect?: string; intent?: 'topup' },
+        | { type: 'plugin'; pluginId: string }
+        | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' },
     ) => void,
   ) => () => void;
 
@@ -3069,7 +3085,8 @@ interface ElectronAPI {
    * Feishu OAuth 后能继续消费当时的"点击意图"。
    */
   takePendingDeepLink: () => Promise<
-    | { type: 'session'; id: string; messageClientId?: string; islandEntryId?: string }
+    | { type: 'session'; id: string; deviceId?: string; messageClientId?: string; islandEntryId?: string }
+        | { type: 'chat-message'; groupId: string; messageId: string; threadRootId?: string; conversationKind?: 'direct' }
     | { type: 'project'; workingDir: string }
     | { type: 'new-session'; workingDir: string }
     | { type: 'share-import'; filePath: string }
@@ -3078,7 +3095,8 @@ interface ElectronAPI {
     | { type: 'chat-invite'; token: string }
     | { type: 'chat-invite-malformed' }
     | { type: 'provider-share-join'; link: string }
-    | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing'; connect?: string; intent?: 'topup' }
+    | { type: 'plugin'; pluginId: string }
+    | { type: 'settings'; tab: 'voice-input' | 'providers' | 'billing' | 'remote-control'; connect?: string; intent?: 'topup' }
     | null
   >;
 
@@ -4403,6 +4421,8 @@ interface ElectronAPI {
   worktreeSuggestName: (req: {
     baseRepo: string;
   }) => Promise<import('@/lib/worktree.types').SuggestNameResp>;
+  worktreeBranchSyncStatus: (req: import('../shared/worktreeBranchSync').BranchSyncRequest) => Promise<import('../shared/worktreeBranchSync').BranchSyncStatus>;
+  worktreeSyncBranch: (req: import('../shared/worktreeBranchSync').BranchSyncRequest) => Promise<import('../shared/worktreeBranchSync').BranchSyncResult>;
   worktreeListBranches: (req: {
     baseRepo: string;
   }) => Promise<import('@/lib/worktree.types').ListBranchesResp>;
@@ -4775,7 +4795,7 @@ interface ElectronAPI {
       | {
           ready: false;
           error: {
-            code: 'DB_INIT_FAILED' | 'DB_CORRUPT_NO_BACKUP' | 'MIGRATE_FAILED';
+            code: 'DB_INIT_FAILED' | 'DB_CORRUPT_NO_BACKUP' | 'MIGRATE_FAILED' | 'DB_SCHEMA_LOCKED';
             message: string;
           };
         }
@@ -5553,6 +5573,8 @@ interface ElectronAPI {
     sendBotGroupMessage: (
       input: import('../shared/botGroupChat').BotGroupSendInput,
     ) => Promise<import('../shared/botGroupChat').BotGroupSendResult>;
+    chatDisplayCache: (request: import('../shared/chatDisplayCache').ChatDisplayCacheRequest) => Promise<unknown>;
+    botGroupOutbox: (input: import('../shared/botGroupOutboxStorage').BotGroupOutboxStorageRequest) => Promise<import('../shared/botGroupOutboxStorage').BotGroupOutboxStoredEntry[]>;
     continueBotGroupRound: (groupId: string) => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
     stopBotGroupRound: (groupId: string, scope?: 'all') => Promise<import('../shared/botGroupChat').BotGroupMutationResult>;
     startBotGroupPlan: (
@@ -5584,6 +5606,7 @@ interface ElectronAPI {
     listCindyCopies: () => Promise<import('../shared/companionCloud').CompanionCindyCopy[]>;
     mergeCindy: (keepBotId: string, fromBotIds: string[]) => Promise<import('../shared/companionCloud').CompanionMergeResult>;
     getCompanionAttachment: (botId: string, mediaId: string) => Promise<import('../shared/botGroupChat').BotGroupAttachment>;
+    dismissCompanionArrivalNotices: (botId: string) => Promise<void>;
     resolveCompanionAvatar: (request: { avatar: string; deviceId?: string | null; fetch?: boolean }) => Promise<string | null>;
     onCompanionCloudChanged: (
       cb: (
@@ -5724,6 +5747,13 @@ interface ElectronAPI {
     testProviderConnection: (
       input: import('../shared/providerConnectionTest').ProviderConnectionTestRequest,
     ) => Promise<import('../shared/providerConnectionTest').ProviderConnectionTestResult>;
+    /** 供应商账户余额查询（API Key 计费连接的余额卡，查询型结构化结果，快照不含密钥材料）。 */
+    fetchProviderAccountUsage: (input: {
+      providerId: string;
+      forceRefresh?: boolean;
+    }) => Promise<
+      import('../shared/providerAccountUsage').ProviderAccountUsageResult
+    >;
     /** 供应商「获取模型列表」—— 表单值透传，结构化结果（code 走 providerError.* i18n）。 */
     detectProvider?: (input: ({ requestId: string; cancel: true } | {
       requestId: string; agent: 'claude-code' | 'codex' | 'pi'; baseUrl: string;
@@ -5934,6 +5964,12 @@ interface ElectronAPI {
     getModelContextLimit: (
       target: import('../shared/modelContextLimit').ModelContextLimitTarget,
     ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    /** 任务窗口档位表的权威边界（与 device-link 的 maker:get-context-window-bounds 同一 handler）。 */
+    getSessionContextWindowBounds: (
+      sessionId: string,
+      // 界面上正在显示的路由：延迟切换期间会话行还是旧路由，带上它才能按显示路由回答。
+      route?: import('../shared/sessionContextWindowBounds').SessionContextWindowBoundsRoute,
+    ) => Promise<import('../shared/sessionContextWindowBounds').SessionContextWindowBounds | null>;
     setModelContextLimit: (
       target: import('../shared/modelContextLimit').ModelContextLimitTarget,
       limit: number | null,
@@ -6520,6 +6556,8 @@ interface ElectronAPI {
     setThinkingEnabled: (sessionId: string, enabled: boolean) => Promise<void>;
     /** 计划模式一级开关(与 permissionMode 正交); DB 持久化由调用方另调 sessionService.update({ planModeEnabled }) */
     setPlanMode: (sessionId: string, enabled: boolean) => Promise<void>;
+    /** 任务级工作上下文窗口档位（tokens；null = 跟随模型默认） */
+    setContextWindowBudget: (sessionId: string, budget: number | null) => Promise<void>;
     /** 会话导出 HTML(pi 原生); 主进程弹保存对话框 + 导出 + 在文件管理器显示; 返回路径或 null(取消/不支持) */
     exportSessionHtml: (sessionId: string) => Promise<string | null>;
     /** 手动压缩会话上下文(pi 原生, 可带聚焦指令); 返回压缩前后 token 数 / {noop} / null(会话不在/不支持) */

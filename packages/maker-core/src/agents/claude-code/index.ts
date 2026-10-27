@@ -45,6 +45,8 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { discoverSubagentDefinitions } from './subagent-definitions.js';
 import { spawnObservedClaudeProcess } from './local-process-spawn.js';
+import { buildClaudeHarnessHooks } from './harness-hooks.js';
+import { createHarnessHookBridge } from '../shared/harness-hooks.js';
 import { claudeMcpServerToolsReport, type ClaudeMcpServerStatusEntry } from './mcp-server-tools.js';
 import {
   reportSubagentModelDiagnostics,
@@ -154,7 +156,7 @@ import {
 } from './capability-routing.js';
 import { normalizeBuiltinToolForAutoReview } from './auto-review-policy.js';
 import {
-  annotatePermissionRequestForUnavailableReview,
+  annotatePermissionRequestForAutoReview,
   composeAutoReviewIntentWithApprovedPlan,
   composeAutoReviewIntentWithClarification,
   createAutoReviewConfirmUndeliveredNotice,
@@ -1436,6 +1438,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     const remoteRoute =
       opts.remoteHostId && this.deps.resolveRemoteClaudeRoute
         ? await this.deps.resolveRemoteClaudeRoute({
+            sessionId: opts.sessionId,
             providerId: opts.providerId,
             model: opts.model,
           })
@@ -1485,6 +1488,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     const getAuthEnv = this.deps.auth.getAuthEnv.bind(this.deps.auth);
     const sdkModel = sdkModelFor(opts.model);
     const initialSdkEffort = this.sdkEffortForModel(opts.model, opts.effort ?? 'high', opts.providerId);
+    // 任务级工作上下文预算（tokens）：host 已按目录上限与模型级上限收敛。
+    // 本任务热切模型时 host 会随 setModel 下新值；缺席保持当前值。
+    // 必须早于下面的 configuredWindows （窗口表在 buildQuery 之前就要用它，
+    // 否则会撞 TDZ）。
+    let mutableContextWindowBudget: number | null = opts.contextWindowBudget ?? null;
     const binaryPath = this.deps.binaryPath;
     const providerRoutedModels = this.capabilities.availableModels.filter((model) =>
       isProviderRoutedModel(model.id),
@@ -1514,7 +1522,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     })();
     const configuredWindows = [...new Set([...this.capabilities.availableModels.map((model) => model.id), opts.model])]
       .flatMap((model) => {
-        const limit = this.deps.resolveModelContextLimit?.(opts.providerId, model);
+        // 任务级预算优先于模型级上限：本任务的窗口就是预算（host 已收敛），
+        // 其余模型条目保持目录/上限口径。
+        const limit = model === opts.model && mutableContextWindowBudget !== null
+          ? mutableContextWindowBudget
+          : this.deps.resolveModelContextLimit?.(opts.providerId, model);
         return typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0
           ? [{ id: sdkModelFor(model), contextWindow: limit, mirrorOneMillionSuffix: false as const }]
           : [];
@@ -2198,7 +2210,34 @@ export class ClaudeCodeAgent extends BaseAgent {
         })],
       }],
     };
-    const localClaudeHooks = reviewMode
+    // Native Claude Auto skips canUseTool. Hand back only the calls Cindy itself must decide;
+    // everything else stays with the native classifier so no call is reviewed twice.
+    const nativeAutoPolicyHook: HookCallback = async (input) => {
+      if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+      if (
+        mutablePermissionMode !== 'auto' || mutablePlanMode || planTurnActive
+        || !usesNativeClaudeAutoReview()
+      ) return { continue: true };
+      const pre = input as PreToolUseHookInput;
+      const toolName = pre.tool_name;
+      const decide = (permissionDecision: 'allow' | 'ask', reason: string) => ({
+        continue: true,
+        hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision, permissionDecisionReason: reason },
+      });
+      const isMcp = resolveMcpToolTarget(toolName, registeredMcpServerNames) !== null;
+      const mcpPolicy = isMcp ? classifyMcpApprovalPolicy(toolName, pre.tool_input) : null;
+      // Requester authority (owner / group guest) and forceConfirmToolCall are only known to
+      // Cindy, and a channel policy outranks trusted-MCP approval: route every call to canUseTool.
+      if (activeTurnPermissionPolicy) return decide('ask', 'Cindy reviews tool calls in channel turns.');
+      // Trusted MCP still goes through canUseTool: the Host shortcut allows it without a model call,
+      // but a plugin-delegated task must be re-checked against its live delegation scope first.
+      if (mcpPolicy === 'auto-approve') return decide('ask', 'Trusted Cindy tool: Host shortcut and delegation check.');
+      if (mcpPolicy === 'prompt-each-time') return decide('ask', 'This tool requires Cindy confirmation.');
+      return { continue: true };
+    };
+    const harnessHookBridge = createHarnessHookBridge();
+    const harnessHooksEnabled = !reviewMode && !hosted && !opts.remoteHostId;
+    const baseLocalClaudeHooks = reviewMode
       ? mergeClaudeHookSets(
           { PreToolUse: [{ hooks: [reviewReadOnlyHook] }] },
           nativeCliAuth ? workspaceSettingsConfigChangeHooks : undefined,
@@ -2238,7 +2277,11 @@ export class ClaudeCodeAgent extends BaseAgent {
           buildClaudeAskUserQuestionCallerProvenanceHooks(),
           nativeCliAuth ? workspaceSettingsConfigChangeHooks : undefined,
           this.deps.claudeHooks,
+          // Last: earlier guards may deny; this only routes what remains.
+          { PreToolUse: [{ hooks: [nativeAutoPolicyHook] }] },
         );
+    const localClaudeHooks = mergeClaudeHookSets(baseLocalClaudeHooks,
+      harnessHooksEnabled ? buildClaudeHarnessHooks(request => harnessHookBridge.run(request)) : undefined);
     const deniedCapabilityRoute = (toolName: string) => {
       const route = findClaudeMcpCapabilityRoute(
         this.deps.capabilityRouting,
@@ -2577,6 +2620,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       const mcpApprovalPolicy = classifyMcpApprovalPolicy(toolName, input);
       let forcePrompt = mutablePermissionMode !== 'auto' && turnPolicyForcePrompt;
       let unavailableHandoff = false;
+      let autoReviewAskReason: string | undefined;
       let reviewedWritePath: string | null | undefined;
       let executionInput = input;
       const normalizedAction = normalizeBuiltinToolForAutoReview(toolName, input);
@@ -2658,6 +2702,8 @@ export class ClaudeCodeAgent extends BaseAgent {
           if (autoDecision.unavailable) {
             autoReviewUnavailableNotice.notify();
             unavailableHandoff = true;
+          } else {
+            autoReviewAskReason = autoDecision.reason;
           }
           forcePrompt = true;
         }
@@ -2685,9 +2731,10 @@ export class ClaudeCodeAgent extends BaseAgent {
         },
       };
       const decision = await dispatchInteraction(
-        unavailableHandoff
-          ? annotatePermissionRequestForUnavailableReview(permissionRequest)
-          : permissionRequest,
+        annotatePermissionRequestForAutoReview(permissionRequest, {
+          unavailable: unavailableHandoff,
+          reason: autoReviewAskReason,
+        }),
         { directorySensitive: directorySensitivePermission },
       );
       notifyIfAutoReviewConfirmUndelivered(unavailableHandoff, decision);
@@ -2825,6 +2872,10 @@ export class ClaudeCodeAgent extends BaseAgent {
       ]),
     ];
     const resolveModelContextWindow = (model: string, providerId = mutableProviderId): number | undefined => {
+      // 任务级预算优先：本任务的工作窗口由用户显式选定，host 已收敛到目录上限内。
+      if (mutableContextWindowBudget !== null && Number.isFinite(mutableContextWindowBudget) && mutableContextWindowBudget > 0) {
+        return mutableContextWindowBudget;
+      }
       const configured = this.deps.resolveModelContextLimit?.(providerId, model);
       if (configured && Number.isFinite(configured) && configured > 0) return configured;
 
@@ -2944,16 +2995,17 @@ export class ClaudeCodeAgent extends BaseAgent {
     let currentAutoReviewAuthority: ReturnType<typeof autoReviewContext>;
     const priorAutoReviewIntent = () => !autoReviewIntentInitialized ? undefined : JSON.stringify(currentAutoReviewAuthority ?? null) === JSON.stringify(autoReviewContext() ?? null) ? currentAutoReviewIntent : '';
     const autoReviewDecisionCache = new Map<string, Promise<AutoReviewDecision>>();
-    // Claude's native OAuth Auto classifier bypasses canUseTool entirely. Once a host MCP
-    // is registered, that would also bypass Cindy's trusted-server and prompt policies,
-    // leaving permission requests with no Cindy interaction surface. Keep native Auto for
-    // MCP-free sessions, but route host-MCP sessions through SDK default so canUseTool owns
-    // the decision.
+    // Claude's native OAuth Auto classifier bypasses canUseTool. Local sessions keep it with
+    // host MCPs attached: nativeAutoPolicyHook (PreToolUse) still runs for every call and
+    // hands Cindy-owned decisions (trusted servers, prompt-each-time, IM turn policies) back
+    // to canUseTool, so each call is reviewed once. Remote and device-hosted sessions cannot
+    // run that local hook and stay on SDK default whenever an MCP is registered.
     const hasRegisteredMcpServers = (): boolean => registeredMcpServerNames.size > 0;
     const usesNativeClaudeAutoReview = (): boolean =>
       !nativeAutoReviewUnavailable
       && mutableAutoReviewCredentialMode === 'oauth-bearer'
-      && !hasRegisteredMcpServers()
+      && !hosted
+      && (!opts.remoteHostId || !hasRegisteredMcpServers())
       // Claude native Auto sees additionalDirectories as one undifferentiated scope and
       // bypasses canUseTool. Use the scope frozen into the active Query: after revoke,
       // that Query still carries its broader directory allowlist.
@@ -3271,6 +3323,18 @@ export class ClaudeCodeAgent extends BaseAgent {
     // SSE idle watchdog 触发时也会主动清, 防止 SDK drain 期间又起 timer。
     // rewind preview/commit 业务层用 isTurnRunning() 前置守卫, 不在 turn 跑时操作 SDK。
     let turnInFlight = false;
+    let harnessCompaction: {
+      boundary: boolean;
+      result: boolean;
+      failed: boolean;
+      resolve: (value: { noop?: boolean }) => void;
+      reject: (error: Error) => void;
+    } | undefined;
+    function failHarnessCompaction(): void {
+      const pending = harnessCompaction;
+      harnessCompaction = undefined;
+      pending?.reject(new Error('Claude compaction did not finish on the current query'));
+    }
     // send() 处于 beginNewTurn→userInputAccepted 之间时置 true。
     // abort() 在此期间跳过 turnInFlight 清除:并发 send 负责在错误路径上
     // (finishSendBeforeUserInput) 自行清 turnInFlight 并 emit boundary,
@@ -4045,6 +4109,7 @@ export class ClaudeCodeAgent extends BaseAgent {
             const remoteMcpPolicy = classifyMcpApprovalPolicy(remoteToolName, params.input ?? {});
             let remoteForcePrompt = mutablePermissionMode !== 'auto' && remoteTurnPolicyForcePrompt;
             let remoteUnavailableHandoff = false;
+            let remoteAutoReviewAskReason: string | undefined;
             const reviewPermissionMode = mutablePermissionMode;
             if (reviewPermissionMode === 'auto' || (remoteMcpPolicy === 'auto-approve' && !remoteTurnPolicyForcePrompt)) {
               const normalizedAction = normalizeBuiltinToolForAutoReview(remoteToolName, params.input ?? {});
@@ -4090,6 +4155,8 @@ export class ClaudeCodeAgent extends BaseAgent {
               if (autoDecision.unavailable) {
                 autoReviewUnavailableNotice.notify();
                 remoteUnavailableHandoff = true;
+              } else {
+                remoteAutoReviewAskReason = autoDecision.reason;
               }
               remoteForcePrompt = true;
             } else {
@@ -4112,9 +4179,10 @@ export class ClaudeCodeAgent extends BaseAgent {
             let decision: InteractionDecision;
             try {
               decision = await dispatchWithTimeout(
-                remoteUnavailableHandoff
-                  ? annotatePermissionRequestForUnavailableReview(remotePermissionRequest)
-                  : remotePermissionRequest,
+                annotatePermissionRequestForAutoReview(remotePermissionRequest, {
+                  unavailable: remoteUnavailableHandoff,
+                  reason: remoteAutoReviewAskReason,
+                }),
               );
             } catch {
               if (remoteUnavailableHandoff) autoReviewConfirmUndeliveredNotice.notify();
@@ -4549,6 +4617,8 @@ export class ClaudeCodeAgent extends BaseAgent {
     // closed=true 后 finally 的 eventQueue.end() 收尾 → Session 自动 close → 下次 send
     // 走 IPC lazy create-session 重建 handle。
     function teardownDeadHandle(logLabel: string): void {
+      harnessHookBridge.close();
+      failHarnessCompaction();
       // Provider death is not a successful user cancellation. Session status
       // and the queued terminal error/done must decide observer settlement.
       resetClaudeGenerationTiming(runtimeState.generation);
@@ -4696,7 +4766,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       pendingBoundaryEvents: number;
       /** A later natural/synthetic done has closed the product turn. */
       settled: boolean;
-      /** A submitted async answer already accepted by the SDK input queue. */
+      /** An async answer or waiting-turn steer accepted by the SDK input queue. */
       asyncAnswer?: boolean;
     };
     // Claims are created synchronously when the provider enqueues a `done`.
@@ -4753,6 +4823,11 @@ export class ClaudeCodeAgent extends BaseAgent {
       activeContinuationId === null
         ? null
         : continuationClaims.get(activeContinuationId) ?? null;
+    // A foreground result can leave the same product waiting on background work.
+    // Its live SDK input queue still accepts corrections during that interval.
+    const hasSteerableTurn = (): boolean =>
+      !closed && !turnState.interruptRequested && continuationCancellationGeneration === null &&
+      (turnInFlight || activeContinuationClaim()?.state === 'awaiting');
     const releaseSettledContinuationClaim = (claim: ContinuationClaim): void => {
       if (!claim.settled || claim.pendingBoundaryEvents > 0) return;
       continuationClaims.delete(claim.id);
@@ -5273,6 +5348,19 @@ export class ClaudeCodeAgent extends BaseAgent {
       // consumer sees an unclaimed idle event and finalizes the product turn
       // before the continuation starts.
       push(e: AgentEvent) {
+        if (harnessCompaction) {
+          if (e.type === 'compact_boundary') harnessCompaction.boundary = true;
+          if (e.type === 'error' && isTerminalAgentErrorEvent(e)) harnessCompaction.failed = true;
+          if (e.type === 'done') {
+            harnessCompaction.result = true;
+            const result = e.data as { is_error?: boolean } | undefined;
+            if (result?.is_error) harnessCompaction.failed = true;
+            return true;
+          }
+          // A control operation must not finish the previous product turn or
+          // publish command response text as a new assistant answer.
+          if (e.type === 'status' || e.type === 'text' || e.type === 'error') return true;
+        }
         if (deferResumeFailureBoundary) {
           deferredResumeFailureEvents.push(e);
           return true;
@@ -5441,6 +5529,13 @@ export class ClaudeCodeAgent extends BaseAgent {
       }
       turnInFlight = false;
       clearUpstreamResponseIdle();
+      if (harnessCompaction) {
+        const pending = harnessCompaction;
+        harnessCompaction = undefined;
+        if (pending.failed || !pending.result) pending.reject(new Error('Claude compaction failed or was cancelled'));
+        else pending.resolve(pending.boundary ? {} : { noop: true });
+        return;
+      }
       // 本轮已经是静默 /compact。瞬时失败由 onCompactCanceled 打开重试，等下一轮用户
       // turn 结束再压；这里立刻再注入会把 401/过载打成紧循环。
       if (!endingHostAutoCompact) triggerAutoCompactIfNeeded();
@@ -5567,7 +5662,7 @@ export class ClaudeCodeAgent extends BaseAgent {
                 && !mutablePlanMode
                 && !planTurnActive
                 && mutableAutoReviewCredentialMode === 'oauth-bearer'
-                && hasRegisteredMcpServers()
+                && !usesNativeClaudeAutoReview()
                 && nativeAutoQueries.has(currentQ)
               ) {
                 try {
@@ -6359,8 +6454,43 @@ export class ClaudeCodeAgent extends BaseAgent {
       });
     };
     const handle: AgentSessionHandle = {
+      harnessHooks: harnessHooksEnabled ? ['tool.before', 'compaction.before'] : [],
+      setHarnessHookHandler: handler => harnessHookBridge.setHandler(handler),
+      ...(harnessHooksEnabled ? {
+        requestHarnessCompaction: () => {
+          if (closed || turnInFlight || harnessCompaction || pendingRewindTo ||
+              idleResumeRebuildGate || cancellationRebuildGate || runningBackgroundTasks.size > 0) {
+            return Promise.reject(new Error('SESSION_RUNNING: Claude is not idle for compaction'));
+          }
+          return new Promise<{ noop?: boolean }>((resolve, reject) => {
+            harnessCompaction = { boundary: false, result: false, failed: false, resolve, reject };
+            // Reserve the existing query lane synchronously. Both host automatic
+            // compaction and all user sends honor turnInFlight; Claude owns the
+            // command, native PreCompact hooks, transcript and context adoption.
+            turnInFlight = true;
+            let dispatched = false;
+            try {
+              beginNewTurn(mutableFastMode ? 'priority' : 'standard');
+              resetToolLoopGuards();
+              dispatched = inputQueue.push({ type: 'user', message: { role: 'user', content: '/compact' }, parent_tool_use_id: null });
+              if (!dispatched) throw new Error('Claude compaction input queue is closed');
+              armUpstreamResponseIdle();
+            } catch (error) {
+              // Only a rejected dispatch can release the lane without a native
+              // terminal. Once queued, a lost acknowledgement is not replayable.
+              if (!dispatched) {
+                harnessCompaction = undefined;
+                turnInFlight = false;
+                clearUpstreamResponseIdle();
+              }
+              reject(error instanceof Error ? error : new Error('Claude compaction dispatch failed'));
+            }
+          });
+        },
+      } : {}),
       disabledSkillPaths: disabledSkillSnapshot,
-      getAutoReviewOwner: () => usesNativeClaudeAutoReview() ? 'native' : 'cindy',
+      // IM turn policies carry requester authority the native classifier cannot see.
+      getAutoReviewOwner: () => usesNativeClaudeAutoReview() && !activeTurnPermissionPolicy ? 'native' : 'cindy',
       reviewAutoPermissionAction: async (action) => {
         const decision = await reviewAutoAction(
           action,
@@ -6814,7 +6944,7 @@ export class ClaudeCodeAgent extends BaseAgent {
           throw new Error('Claude steer cancelled before acceptance');
         }
         if (sendOpts?.logTitle !== undefined) lastSendTitle = sendOpts.logTitle;
-        if (!turnInFlight) {
+        if (!hasSteerableTurn()) {
           throw new Error('No active Claude turn to steer');
         }
         log.debug('steer ▶ user message', {
@@ -6841,7 +6971,7 @@ export class ClaudeCodeAgent extends BaseAgent {
         if (sendOpts?.signal?.aborted) {
           throw new Error('Claude steer cancelled before acceptance');
         }
-        if (!turnInFlight) {
+        if (!hasSteerableTurn()) {
           // Image resizing can take long enough for a fast turn to finish. Do not
           // silently route a stale "插话" into the next send path; the renderer
           // keeps the original queue/composer content and lets the user retry.
@@ -6866,7 +6996,12 @@ export class ClaudeCodeAgent extends BaseAgent {
           // received it.
           throw new Error('No active Claude turn to steer: input queue is closed');
         }
-        if (sendOpts?.[ASYNC_QUESTION_ANSWER]) queuedAsyncAnswer = true;
+        const awaitingClaim = activeContinuationClaim();
+        if (awaitingClaim?.state === 'awaiting') {
+          // This input belongs to the already claimed next segment, not another
+          // successor. Stopping its last background task must not discard it.
+          awaitingClaim.asyncAnswer = true;
+        } else if (sendOpts?.[ASYNC_QUESTION_ANSWER]) queuedAsyncAnswer = true;
         appendActiveCapabilitySelectionText(
           userMessageTextForCapabilityRouting(message.content),
         );
@@ -7224,6 +7359,8 @@ export class ClaudeCodeAgent extends BaseAgent {
 
       async close() {
         if (closed) return;
+        harnessHookBridge.close();
+        failHarnessCompaction();
         // Closing/dead sessions settle through Session status (or their queued
         // terminal event), never through the successful task-stop path.
         resetClaudeGenerationTiming(runtimeState.generation);
@@ -7345,8 +7482,18 @@ export class ClaudeCodeAgent extends BaseAgent {
         return expected !== liveEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
       },
 
-      async setModel(newModel: string, setModelOpts?: { providerId?: string | null; effort?: Effort }) {
+      async setModel(
+        newModel: string,
+        setModelOpts?: {
+          providerId?: string | null;
+          effort?: Effort;
+          contextWindowBudget?: number | null;
+        },
+      ) {
         if (reviewMode) return;
+        if (setModelOpts?.contextWindowBudget !== undefined) {
+          mutableContextWindowBudget = setModelOpts.contextWindowBudget;
+        }
         const targetProviderId = setModelOpts?.providerId !== undefined
           ? setModelOpts.providerId
           : mutableProviderId;
@@ -7357,6 +7504,7 @@ export class ClaudeCodeAgent extends BaseAgent {
         // providerId 用调用方给的目标来源(可能正在切 provider),缺省回落会话启动值。
         if (opts.remoteHostId && resolveRemoteClaudeRoute) {
           const nextRoute = await resolveRemoteClaudeRoute({
+            sessionId: opts.sessionId,
             providerId: targetProviderId,
             model: newModel,
           });

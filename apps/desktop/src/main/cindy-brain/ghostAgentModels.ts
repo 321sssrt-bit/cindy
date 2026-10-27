@@ -7,6 +7,7 @@ import {
 import type { GhostAgentModelsResult } from '../../shared/ghost.js';
 
 export const GHOST_AGENT_MODELS_CACHE_MS = 60_000;
+export const GHOST_AGENT_MODELS_CACHE_MAX_CATALOGS = 64;
 export const GHOST_REMOTE_AGENT_MODELS = ['codex', 'claude-code', 'pi'] as const;
 export type GhostAgentLocation = { agentDeviceId: string; name: string };
 export type GhostAgentLocationsReadResult =
@@ -47,6 +48,22 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
   const locationReads = new Map<string, Promise<GhostAgentLocation[] | undefined>>();
   const catalogs = new Map<string, { at: number; value: GhostAgentModelsOk }>();
   const catalogReads = new Map<string, Promise<GhostAgentModelsResult>>();
+  const pruneExpiredCatalogs = (at: number) => {
+    for (const [key, entry] of catalogs) {
+      if (at - entry.at >= ttlMs) catalogs.delete(key);
+    }
+  };
+  const storeCatalog = (key: string, value: GhostAgentModelsOk) => {
+    const at = now();
+    pruneExpiredCatalogs(at);
+    catalogs.delete(key);
+    while (catalogs.size >= GHOST_AGENT_MODELS_CACHE_MAX_CATALOGS) {
+      const oldestKey = catalogs.keys().next().value;
+      if (oldestKey === undefined) break;
+      catalogs.delete(oldestKey);
+    }
+    catalogs.set(key, { at, value });
+  };
 
   return {
     locations(
@@ -81,8 +98,14 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
       read: () => Promise<ProviderView[]>,
     ): Promise<GhostAgentModelsResult> {
       const key = `${owner}\0${agentDeviceId}`;
+      const requestedAt = now();
+      pruneExpiredCatalogs(requestedAt);
       const hit = catalogs.get(key);
-      if (hit && now() - hit.at < ttlMs) return Promise.resolve(hit.value);
+      if (hit) {
+        catalogs.delete(key);
+        catalogs.set(key, hit);
+        return Promise.resolve(hit.value);
+      }
       const inFlight = catalogReads.get(key);
       if (inFlight) return inFlight;
 
@@ -93,7 +116,7 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
           const projected = projectGhostAgentModels(views, GHOST_REMOTE_AGENT_MODELS);
           if (!projected.ok) return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
           const value = { ...projected, agentDeviceId };
-          catalogs.set(key, { at: now(), value });
+          storeCatalog(key, value);
           return value;
         })
         .catch((): GhostAgentModelsResult => ({

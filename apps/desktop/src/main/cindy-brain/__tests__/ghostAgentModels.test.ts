@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers';
-import { createGhostAgentModelsCache, projectGhostAgentModels } from '../ghostAgentModels.js';
+import {
+  createGhostAgentModelsCache,
+  GHOST_AGENT_MODELS_CACHE_MAX_CATALOGS,
+  projectGhostAgentModels,
+} from '../ghostAgentModels.js';
 
 const provider = (id: string, efforts: string[]) =>
   ({
@@ -177,16 +181,19 @@ describe('plugin model projection', () => {
    * - 生产入口与可观察结果：插件目录缓存命中仍有效的目录，过期或被容量淘汰的目录重新读取。
    * - Bug／规则依据：makecindy/cindy#7472 Greptile「旧目录一直占内存」。
    * - 现有覆盖缺口：现有用例没有验证 TTL 过期回收，也没有跨 owner 的总目录条数上限。
-   * - 最小失败输入：63 个过期目录、1 个新鲜目录与第 65 个目录；再读新鲜项及最早插入项。
+   * - 最小失败输入：达到 64 项后保留 1 个新鲜目录，其余过期；写入超限目录后重读新鲜项与最早项。
    * - tier：unit。
-   * - 实测耗时：0.59 s（红测单文件运行，macOS arm64）。
+   * - 实测耗时：0.57 s（修复后单文件运行，macOS arm64）。
    */
   it('evicts expired catalogs before enforcing a bounded cache size', async () => {
     let now = 0;
     const cache = createGhostAgentModelsCache({ now: () => now, ttlMs: 60_000 });
     const readFor = (id: string) => vi.fn<() => Promise<ProviderView[]>>()
       .mockResolvedValue([provider(id, ['high'])]);
-    const expiredReads = Array.from({ length: 63 }, (_, index) => readFor(`expired-${index}`));
+    const expiredReads = Array.from(
+      { length: GHOST_AGENT_MODELS_CACHE_MAX_CATALOGS - 1 },
+      (_, index) => readFor(`expired-${index}`),
+    );
 
     for (const [index, read] of expiredReads.entries()) {
       await cache.catalog(`expired-owner-${index}`, `expired-device-${index}`, read);
@@ -207,7 +214,10 @@ describe('plugin model projection', () => {
     expect(freshRead).toHaveBeenCalledTimes(1);
 
     const bounded = createGhostAgentModelsCache({ now: () => 0, ttlMs: 60_000 });
-    const capacityReads = Array.from({ length: 65 }, (_, index) => readFor(`capacity-${index}`));
+    const capacityReads = Array.from(
+      { length: GHOST_AGENT_MODELS_CACHE_MAX_CATALOGS + 1 },
+      (_, index) => readFor(`capacity-${index}`),
+    );
     for (const [index, read] of capacityReads.entries()) {
       await bounded.catalog(`capacity-owner-${index}`, `capacity-device-${index}`, read);
     }

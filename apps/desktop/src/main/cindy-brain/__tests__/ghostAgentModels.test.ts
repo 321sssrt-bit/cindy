@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers';
 import { createGhostAgentModelsCache, projectGhostAgentModels } from '../ghostAgentModels.js';
 
@@ -137,5 +137,38 @@ describe('plugin model projection', () => {
         },
       ],
     });
+  });
+
+  /**
+   * 测试价值
+   * - 生产入口与可观察结果：插件目录缓存同 owner+device 的并发读取只请求一次；失败结果不缓存，下一次读取返回目录。
+   * - Bug／规则依据：makecindy/cindy#7472 Greptile「同时读取会重复发请求」。
+   * - 现有覆盖缺口：既有用例只覆盖已完成的目录结果，没有覆盖空缓存下的并发读取或失败清理。
+   * - 最小失败输入：同一 owner 和 device 两次并发读取，首次拒绝、重试返回一个可见模型。
+   * - tier：unit。
+   * - 实测耗时：0.62 s（红测单文件运行，macOS arm64）。
+   */
+  it('shares an in-flight catalog read for the same owner and device, then retries after failure', async () => {
+    const cache = createGhostAgentModelsCache();
+    const read = vi.fn<() => Promise<ProviderView[]>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([provider('recovered', ['high'])]);
+
+    const [first, second] = await Promise.all([
+      cache.catalog('owner', 'device', read),
+      cache.catalog('owner', 'device', read),
+    ]);
+
+    const unavailable = { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
+    expect(first).toEqual(unavailable);
+    expect(second).toEqual(unavailable);
+    expect(read).toHaveBeenCalledTimes(1);
+
+    await expect(cache.catalog('owner', 'device', read)).resolves.toMatchObject({
+      ok: true,
+      agentDeviceId: 'device',
+      models: [{ providerId: 'recovered' }],
+    });
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

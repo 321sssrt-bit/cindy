@@ -9571,6 +9571,8 @@
         "viewProcess": "経過を見る",
         "hideProcess": "経過を閉じる",
         "stop": "停止",
+        "stopping": "停止中…",
+        "queued": "開始待ち…",
         "stopMine": "自分の依頼を停止",
         "stopAll": "すべて停止",
         "stopAllHint": "他の人の依頼も含みます"

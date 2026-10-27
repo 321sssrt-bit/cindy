@@ -9605,6 +9605,8 @@
         "viewProcess": "Show work",
         "hideProcess": "Hide work",
         "stop": "Stop",
+        "stopping": "Stopping…",
+        "queued": "Waiting to start…",
         "stopMine": "Stop Mine",
         "stopAll": "Stop All",
         "stopAllHint": "Includes other people’s requests"

@@ -9571,6 +9571,8 @@
         "viewProcess": "과정 보기",
         "hideProcess": "과정 접기",
         "stop": "중지",
+        "stopping": "중지 중…",
+        "queued": "시작 대기 중…",
         "stopMine": "내 요청 중지",
         "stopAll": "모두 중지",
         "stopAllHint": "다른 사람의 요청도 포함"

@@ -9571,6 +9571,8 @@
         "viewProcess": "看過程",
         "hideProcess": "收起過程",
         "stop": "停止",
+        "stopping": "正在停止…",
+        "queued": "等待開始…",
         "stopMine": "停止我發起的",
         "stopAll": "全部停止",
         "stopAllHint": "包括其他人發起的"

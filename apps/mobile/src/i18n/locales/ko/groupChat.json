@@ -141,6 +141,7 @@
     "allDone": "모두 완료"
   },
   "speaking": {
+    "stopping": "중지 중…",
     "planning": "역할을 나누는 중…",
     "step": "작업 중…"
   },

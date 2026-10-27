@@ -141,6 +141,7 @@
     "allDone": "All done"
   },
   "speaking": {
+    "stopping": "Stopping…",
     "planning": "Splitting the work…",
     "step": "Working on it…"
   },

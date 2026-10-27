@@ -1322,3 +1322,18 @@ it('does not resurrect teammate task discovery after its device snapshot is inva
   expect(await refresh).toBe('superseded');
   expect(remoteProjectsStore.getDeviceSessions(device)).toEqual([]);
 });
+
+// Unit / review4390134794: a blocked optional history read must not hide the
+// already successful ordinary snapshot; existing tests only observe completion.
+it('publishes ordinary tasks before legacy teammate discovery finishes', async () => {
+  const device = did();
+  const pending = deferred<{ ok: boolean; sessions: Session[]; hasMore: boolean }>();
+  invoke.mockResolvedValue([session('ready')]);
+  historyInvoke.mockReturnValue(pending.promise);
+  const refresh = refreshRemoteDeviceSessions(device);
+  await Promise.resolve(); await Promise.resolve();
+  const earlyIds = remoteProjectsStore.getDeviceSessions(device).map(row => row.id);
+  pending.resolve({ ok: true, sessions: [], hasMore: false });
+  await expect(refresh).resolves.toBe('ok');
+  expect(earlyIds).toContain('ready');
+});

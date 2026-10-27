@@ -161,6 +161,18 @@ export function persistCreators(value: FilterCreators, ownerId: string | null): 
   writeSidebarOwnerStorage(CREATORS_KEY, ownerId, JSON.stringify(value));
 }
 
+/** Canonicalize both per-device and older cloud-companion selections after discovery. */
+export function normalizeTaskCreators(
+  selected: FilterCreators,
+  options: readonly { filterKey?: string; filterMemberKeys?: readonly string[] }[],
+): FilterCreators {
+  if (selected === 'all') return selected;
+  const aliases = new Map(options.flatMap(bot => bot.filterKey
+    ? (bot.filterMemberKeys ?? []).map(member => [member, bot.filterKey!] as const) : []));
+  const next = [...new Set(selected.map(key => aliases.get(key) ?? key))];
+  return next.length === selected.length && next.every((key, i) => key === selected[i]) ? selected : next;
+}
+
 export function nextCreatorsAfterToggle(previous: FilterCreators, key: string): FilterCreators {
   if (previous === 'all') return [key];
   const next = previous.includes(key) ? previous.filter(value => value !== key) : [...previous, key];

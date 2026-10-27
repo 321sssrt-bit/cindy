@@ -79,3 +79,21 @@ describe('mobile teammate task list', () => {
     expect(taskTeammateOptions(rows, cloud, 'en', cindyIds)[0].key).toBe(JSON.stringify(['teammate', 'cindy']));
   });
 });
+
+// Unit / review4390134794: one ordinary task + a cached channel + a pending
+// history response. The production callback must publish without awaiting it.
+it('publishes ordinary rows and cached lane ownership before optional history completes', async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const lane = task('lane', { deviceLinkDeviceId: 'mac', source: 'bot', companion: { id: 'cindy-default', role: 'channel' } });
+  const owned = task('ordinary', { deviceLinkDeviceId: 'mac', taskTeammate: { id: 'cindy-default', name: 'Cindy' } });
+  const publishInitial = vi.fn();
+  const invoke = vi.fn(async (_device: string, api: string) => api === 'local-db:history:query'
+    ? pending : { collectionId: 'teammates', items: [] });
+  const reading = readTeammateTasks({ ...input, invoke: invoke as RemoteInvoke, sessions: [task('ordinary')], previous: [owned, lane], publishInitial });
+  const initial = publishInitial.mock.calls[0]?.[0];
+  finish({ ok: true, sessions: [] });
+  await reading;
+  expect(initial?.map((row: RemoteSession) => row.id)).toEqual(['ordinary', 'lane']);
+  expect(initial?.[0].taskTeammate?.id).toBe('cindy-default');
+});

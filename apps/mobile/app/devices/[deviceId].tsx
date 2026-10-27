@@ -349,6 +349,11 @@ function DeviceDetailScreenContent() {
         return readTeammateTasks({ invoke, deviceId, deviceName, scope: JSON.stringify([owner, deviceId, listQueryScope]),
           sessions: Array.isArray(sessions) ? sessions : [], previous: remoteSessionStore.getHomeSessions(),
           status: requestedListFilter, limit: LIST_LIMIT, current: isCurrentQuery,
+          publishInitial: rows => {
+            if (isCurrentQuery() && remoteSessionStore.isDeviceSessionListMutationEpochCurrent(deviceId, mutationEpoch)) {
+              remoteSessionStore.setDeviceSessions(deviceId, deviceName, rows);
+            }
+          },
         });
       });
       if (!isCurrentQuery()) return;

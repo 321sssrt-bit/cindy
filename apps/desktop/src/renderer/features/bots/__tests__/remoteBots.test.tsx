@@ -21,7 +21,7 @@ vi.mock('@/features/device-link/useDeviceLinkDeviceList', () => ({
   useDeviceLinkDeviceList: () => h.devices,
 }));
 vi.mock('@/lib/remoteDataOwnerPushFence', () => ({ isDeviceLinkRemotePushCurrent: () => true }));
-import { useRemoteBotSync, useRemoteBots, markRemoteBotRead } from '../useRemoteBots';
+import { useRemoteBotSync, useRemoteBots, useRemoteCindyIds, markRemoteBotRead } from '../useRemoteBots';
 import { parseRemoteCollectionListRequest, REMOTE_RESOURCE_LIST_CHANNEL, REMOTE_RESOURCE_CHANGED_CHANNEL } from '@cindy/device-link';
 import { parseRemoteBots, remoteBotKey, isRemoteBotUnread } from '../remoteBotRoster';
 const host = (deviceId: string, online = true) => ({
@@ -266,4 +266,22 @@ it('applies cloud Cindy identity regardless of roster arrival order and rejects 
   rerender();
   await act(async () => oldFinish([{ botId: 'same-bot' }]));
   expect(result.current.every(bot => bot.templateId === undefined)).toBe(true);
+});
+
+// Unit / review4390134785: identity must be available without any roster rows;
+// previous arrival-order coverage only read templateId on already listed rows.
+it('exposes known Cindy IDs before an offline home provides its roster and clears on owner switch', async () => {
+  h.devices = [];
+  h.cloudEnabled = true;
+  h.copies.mockResolvedValue([{ botId: 'same-bot' }]);
+  const { result, rerender } = renderHook(() => {
+    useRemoteBotSync();
+    return { rows: useRemoteBots(), ids: useRemoteCindyIds() };
+  });
+  await waitFor(() => expect(result.current.ids.has('same-bot')).toBe(true));
+  expect(result.current.rows).toEqual([]);
+  h.owner = 'new-empty-owner';
+  h.cloudEnabled = false;
+  rerender();
+  expect(result.current.ids.size).toBe(0);
 });

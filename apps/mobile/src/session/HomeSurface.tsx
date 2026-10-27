@@ -984,6 +984,12 @@ function HomeScreenContent({ active = true, width, newSessionInSystemBar = false
               scope: JSON.stringify([expectedAccountGeneration, expectedHomeSyncGeneration, device.deviceId]),
               sessions: Array.isArray(list) ? list : [], previous: remoteSessionStore.getHomeSessions(),
               status: requestedListFilter, limit: LIST_LIMIT,
+              publishInitial: rows => {
+                assertCurrentScope();
+                if (remoteSessionStore.isDeviceSessionListMutationEpochCurrent(device.deviceId, epoch)) {
+                  remoteSessionStore.setDeviceSessions(device.deviceId, device.name, rows);
+                }
+              },
               current: () => homeAccountGenerationRef.current === expectedAccountGeneration
                 && isCurrentHomeSyncTarget(device.deviceId, expectedHomeSyncGeneration),
             });

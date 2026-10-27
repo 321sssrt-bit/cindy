@@ -45,6 +45,14 @@ export function useRemoteBots(): readonly RemoteBot[] {
   return isAuthenticated && owner === dataOwnerId ? rows : empty;
 }
 
+/** Identity discovery is independent of a home computer's roster being online. */
+export function useRemoteCindyIds(): ReadonlySet<string> {
+  const { dataOwnerId, isAuthenticated } = useAuth();
+  const ids = useSyncExternalStore(subscribe, () => cindyIds);
+  return isAuthenticated && owner === dataOwnerId ? ids : EMPTY_CINDY_IDS;
+}
+const EMPTY_CINDY_IDS: ReadonlySet<string> = new Set();
+
 /** One subscription owner in the main window; a failed host cannot erase another host. */
 export function useRemoteBotSync(): void {
   const { dataOwnerId, isAuthenticated } = useAuth();

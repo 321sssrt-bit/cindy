@@ -9,7 +9,7 @@ import { createLogger } from '@/lib/logger';
 
 import { isTeammateTaskSession } from '../../../shared/sessionSource';
 import { isWorkbenchTaskSource } from '../../../shared/botWorkbench';
-import { useRemoteBots } from './useRemoteBots';
+import { useRemoteBots, useRemoteCindyIds } from './useRemoteBots';
 import { useCompanionCloud } from './companionCloudStore';
 import { cloudRemoteBots, withoutShadowedBots } from './companionCloudPresentation';
 import { taskCreatorFilterKey } from './cindyDeviceRoster';
@@ -143,7 +143,7 @@ export type TaskBotIdentity = Pick<BotProfile, 'id' | 'name' | 'avatar' | 'avata
   taskRelation?: 'created' | 'owned';
   templateId?: string;
   filterKey?: string;
-  /** Previous per-computer selection keys, used to preserve existing filter choices. */
+  /** Previous per-computer/cloud selection keys, preserving existing filter choices. */
   filterMemberKeys?: readonly string[];
 };
 
@@ -151,27 +151,32 @@ export function useTaskCreatorOptions(): TaskBotIdentity[] {
   const profiles = useBotProfiles();
   const remote = useRemoteBots();
   const cloud = useCompanionCloud();
+  const cindyIds = useRemoteCindyIds();
   return useMemo(() => {
     const grouped = new Map<string, TaskBotIdentity>();
-    for (const bot of [...withoutShadowedBots(profiles, cloud).filter(bot => !bot.hiddenAt && bot.status !== 'deleting'), ...cloudRemoteBots(cloud, remote)]) {
+    for (const source of [...withoutShadowedBots(profiles, cloud).filter(bot => !bot.hiddenAt && bot.status !== 'deleting'), ...cloudRemoteBots(cloud, remote)]) {
+      const bot = cindyIds.has(source.id) ? { ...source, templateId: 'cindy' } : source;
       const key = taskCreatorFilterKey(bot, cloud);
+      const memberKeys = [taskBotKey(bot), ...(cloud.enabled && cloud.actors.some(actor => actor.externalId === bot.id)
+        ? [JSON.stringify(['companion', bot.id])] : [])];
       const existing = grouped.get(key);
       if (existing) {
-        existing.filterMemberKeys = [...(existing.filterMemberKeys ?? []), taskBotKey(bot)];
+        existing.filterMemberKeys = [...new Set([...(existing.filterMemberKeys ?? []), ...memberKeys])];
       } else {
         // Keep the original device ID for avatar resolution; the merged choice has no device subtitle.
         grouped.set(key, { ...bot, filterKey: key, deviceName: key === taskBotKey(bot) && 'deviceName' in bot ? bot.deviceName : undefined,
-          filterMemberKeys: [taskBotKey(bot)] });
+          filterMemberKeys: memberKeys });
       }
     }
     // Old per-computer choices follow the same cloud companion after it moves home.
-    for (const bot of [...profiles, ...remote]) {
+    for (const source of [...profiles, ...remote]) {
+      const bot = cindyIds.has(source.id) ? { ...source, templateId: 'cindy' } : source;
       const option = grouped.get(taskCreatorFilterKey(bot, cloud));
       const member = taskBotKey(bot);
       if (option && !option.filterMemberKeys?.includes(member)) option.filterMemberKeys = [...(option.filterMemberKeys ?? []), member];
     }
     return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [profiles, remote, cloud]);
+  }, [profiles, remote, cloud, cindyIds]);
 }
 
 /** Indexed once for the sidebar, so selecting multiple creators does not scan every Bot per row. */
@@ -180,24 +185,27 @@ export function useTaskCreatorIndex(): ReadonlyMap<string, ReadonlySet<string>> 
   const profiles = useBotProfiles();
   const remote = useRemoteBots();
   const cloud = useCompanionCloud();
+  const cindyIds = useRemoteCindyIds();
   return useMemo(() => {
     const index = new Map<string, Set<string>>();
+    const filterKey = (bot: Pick<TaskBotIdentity, 'id' | 'deviceId' | 'templateId'>) =>
+      taskCreatorFilterKey(cindyIds.has(bot.id) ? { ...bot, templateId: 'cindy' } : bot, cloud);
     const add = (bot: Pick<TaskBotIdentity, 'id' | 'deviceId' | 'templateId'>, ids: readonly string[] | undefined) => {
       for (const id of ids ?? []) {
         const key = taskCreatorSessionKey(id, bot.deviceId);
         const creators = index.get(key) ?? new Set<string>();
-        creators.add(taskCreatorFilterKey(bot, cloud));
+        creators.add(filterKey(bot));
         index.set(key, creators);
       }
     };
     for (const bot of [...profiles, ...remote]) {
-      index.set(`creator:${taskBotKey(bot)}`, new Set([taskCreatorFilterKey(bot, cloud)]));
+      index.set(`creator:${taskBotKey(bot)}`, new Set([filterKey(bot)]));
     }
     const localById = new Map(profiles.map(bot => [bot.id, bot]));
     for (const scope of scopes) add(localById.get(scope.botId) ?? { id: scope.botId }, scope.delegatedSessionIds);
     for (const bot of remote) add(bot, bot.delegatedSessionIds);
     return index;
-  }, [scopes, profiles, remote, cloud]);
+  }, [scopes, profiles, remote, cloud, cindyIds]);
 }
 
 function taskCreatorSessionKey(id: string, deviceId?: string): string {

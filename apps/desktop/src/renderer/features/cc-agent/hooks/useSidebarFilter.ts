@@ -45,7 +45,6 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { taskCreatorFilterKey } from '@/features/bots/cindyDeviceRoster';
 import type { TaskBotIdentity } from '@/features/bots/botFollowScopes';
 import { createLogger } from '@/lib/logger';
 import { isDataOwnerPushStampCurrent } from '@/contexts/dataOwnerGeneration';
@@ -60,6 +59,7 @@ import {
   loadCreators,
   persistCreators,
   nextCreatorsAfterToggle,
+  normalizeTaskCreators,
   type FilterCreators,
   loadStatus,
   loadProjects,
@@ -238,13 +238,8 @@ export function useSidebarFilter(
   const [status, setStatusState] = useState<FilterStatus>(() => loadStatus());
   const [projects, setProjectsState] = useState<FilterProjects>(() => loadProjects(ownerId));
   const [storedCreators, setCreators] = useState<FilterCreators>(() => loadCreators(ownerId));
-  const normalizeCreators = useCallback((selected: FilterCreators): FilterCreators => {
-    if (selected === 'all') return selected;
-    const aliases = new Map(creatorOptions.flatMap(bot => (bot.filterMemberKeys ?? [])
-      .map(member => [member, taskCreatorFilterKey(bot)] as const)));
-    const next = [...new Set(selected.map(key => aliases.get(key) ?? key))];
-    return next.length === selected.length && next.every((key, i) => key === selected[i]) ? selected : next;
-  }, [creatorOptions]);
+  const normalizeCreators = useCallback((selected: FilterCreators): FilterCreators =>
+    normalizeTaskCreators(selected, creatorOptions), [creatorOptions]);
   const creators = useMemo(() => normalizeCreators(storedCreators), [normalizeCreators, storedCreators]);
   useEffect(() => {
     if (creators === storedCreators) return;

@@ -407,6 +407,9 @@ async function runRefreshRemoteDeviceSessions(
         if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status))
           return 'superseded';
         const ordinary = parseRemoteSessionList(value, status);
+        // Optional old-host history may span many pages. Publish the successful
+        // ordinary read now; reconcile removals only after discovery completes.
+        remoteProjectsStore.mergeDeviceSessions(deviceId, deviceName, ordinary, status);
         const teammateTasks = await readRemoteTeammateTasks(deviceId, status, listLimit,
           () => remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status));
         if (!remoteProjectsStore.isLatestSnapshotEpoch(deviceId, epoch, status)) return 'superseded';

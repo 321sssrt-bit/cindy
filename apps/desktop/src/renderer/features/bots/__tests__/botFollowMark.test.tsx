@@ -8,6 +8,7 @@ import type { Session } from '@/lib/ccAgent.types';
 const h = vi.hoisted(() => ({
   profiles: [] as Array<Record<string, unknown>>,
   remote: [] as Array<Record<string, unknown>>,
+  cindyIds: new Set<string>(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -22,7 +23,7 @@ vi.mock('../botStore', () => ({
   ensureBotProfilesLoaded: vi.fn(async () => h.profiles),
 }));
 
-vi.mock('../useRemoteBots', () => ({ useRemoteBots: () => h.remote }));
+vi.mock('../useRemoteBots', () => ({ useRemoteBots: () => h.remote, useRemoteCindyIds: () => h.cindyIds }));
 
 import { BotFollowMark, useSessionFollowers } from '../BotFollowMark';
 import { __testing, useSessionDelegatingBot, useTaskCreatorIndex, useTaskCreatorOptions, matchesTaskCreators, taskBotKey } from '../botFollowScopes';
@@ -48,6 +49,7 @@ beforeEach(() => {
   __testing.reset();
   resetCompanionCloudStoreForTests();
   h.remote = [];
+  h.cindyIds = new Set();
   h.profiles = [bot('bot-1', 'Dash'), bot('bot-2', 'Lizi')];
   followScopes.mockClear();
   (window as unknown as { electronAPI: unknown }).electronAPI = {
@@ -282,4 +284,27 @@ it.each(['routine', 'channel'])('uses exact local/remote ownership for %s avatar
   expect(matchesTaskCreators(remote, [localKey], result.current)).toBe(false);
   expect(matchesTaskCreators(remote, [remoteKey], result.current)).toBe(true);
   expect(matchesTaskCreators(local, [localKey, remoteKey], result.current)).toBe(true);
+});
+
+// Unit / review4390134785: existing coverage starts with a real roster, missing
+// the cloud-only -> known-Cindy -> online transition and saved companion alias.
+it('keeps a cloud-only Cindy selection valid when identity and its home roster arrive', async () => {
+  resetCompanionCloudStoreForTests({ enabled: true, selfDeviceId: 'desktop', humanActorId: 'human', demotedBotIds: [],
+    actors: [{ id: 'actor', externalId: 'cloud-cindy', name: 'Cindy', avatar: null, homeDeviceId: 'laptop' }] });
+  const { normalizeTaskCreators } = await import('../../cc-agent/hooks/helpers/sidebarFilterCore');
+  const { result, rerender } = renderHook(() => ({ options: useTaskCreatorOptions(), index: useTaskCreatorIndex() }));
+  const old = [JSON.stringify(['companion', 'cloud-cindy'])];
+  expect(result.current.options.find(b => b.id === 'cloud-cindy')?.filterKey).toBe(old[0]);
+  h.cindyIds = new Set(['cloud-cindy']);
+  rerender();
+  const known = result.current.options.find(b => b.id === 'cloud-cindy')!;
+  const cindyKey = JSON.stringify(['teammate', 'cindy']);
+  expect(known.filterKey).toBe(cindyKey);
+  expect(known.deviceName).toBeUndefined();
+  expect(normalizeTaskCreators(old, result.current.options)).toEqual([cindyKey]);
+  h.remote = [{ ...bot('cloud-cindy', 'Renamed', { templateId: 'cindy' }), deviceId: 'laptop', delegatedSessionIds: ['child'] }];
+  rerender();
+  const selected = normalizeTaskCreators(old, result.current.options);
+  expect(matchesTaskCreators(session({ id: 'child', deviceLinkDeviceId: 'laptop' }), selected, result.current.index)).toBe(true);
+  expect(normalizeTaskCreators([...old, cindyKey], result.current.options)).toEqual([cindyKey]);
 });

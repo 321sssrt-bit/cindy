@@ -5,6 +5,7 @@ import { persistCreators } from '../../../src/renderer/features/cc-agent/hooks/h
 import { useSidebarFilter } from '../../../src/renderer/features/cc-agent/hooks/useSidebarFilter';
 import { BotFollowMark, useSessionFollowers } from '../../../src/renderer/features/bots/BotFollowMark';
 import { matchesTaskCreators, useTaskCreatorIndex, useTaskCreatorOptions } from '../../../src/renderer/features/bots/botFollowScopes';
+import { resetCompanionCloudStoreForTests } from '../../../src/renderer/features/bots/companionCloudStore';
 import { setDataOwnerGeneration } from '../../../src/renderer/contexts/dataOwnerGeneration';
 import type { Session } from '../../../src/renderer/lib/ccAgent.types';
 
@@ -25,7 +26,7 @@ function TaskRow({ task }: { task: Session }) {
   </div>;
 }
 function Fixture() {
-  useState(() => { persistCreators(['["laptop","remote-cindy"]'], 'fixture'); return true; });
+  useState(() => { persistCreators(['["companion","remote-cindy"]'], 'fixture'); return true; });
   const options = useTaskCreatorOptions();
   const hidden = useMemo(() => new Set<string>(), []);
   const filter = useSidebarFilter(hidden, snapshot, options);
@@ -41,6 +42,8 @@ function Fixture() {
 mountPage({
   host: () => {
     setDataOwnerGeneration('fixture', 1);
+    resetCompanionCloudStoreForTests({ enabled: true, selfDeviceId: 'desktop', humanActorId: 'human', demotedBotIds: [],
+      actors: [{ id: 'actor', externalId: 'remote-cindy', name: 'Cindy', avatar: null, homeDeviceId: 'laptop' }] });
     return {
       authHasPersistedSessionHintSync: () => false,
       appearanceSettings: undefined,

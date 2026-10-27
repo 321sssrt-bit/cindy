@@ -1577,17 +1577,25 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     }]);
   }
 
-  it('answers a durable Subagent harness hook through the hook bridge instead of an approval prompt', async () => {
+  // The harness hook bridge was reverted, so the host no longer runs these
+  // hooks, but a child started by an older bridge can still raise one. Every
+  // `cindy:harness-hook` is answered `continue` and never becomes an approval.
+  it.each([
+    ['tool.before', toolBeforeHook],
+    ['compaction.before', harnessHook(JSON.stringify({ name: 'compaction.before' }))],
+    ['non-JSON payload', harnessHook('not json')],
+    ['unknown hook name', harnessHook(JSON.stringify({ name: 'tool.after', toolName: 'bash' }))],
+    ['tool.before without a tool name', harnessHook(JSON.stringify({ name: 'tool.before', input: {} }))],
+    ['array payload', harnessHook('[]')],
+  ] as const)('answers continue for a durable Subagent harness hook without an approval prompt (%s)', async (_case, pending) => {
     const runId = '123e4567-e89b-42d3-a456-426614174098';
     const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-hook', () => handlerAttached);
+    let ready = false;
+    mockHarnessHookRun(runId, 'tool-harness-hook', () => ready, [pending]);
     const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
-    const hook = vi.fn(async () => ({ action: 'block', reason: 'policy' }) as const);
     const handle = await new PiAgent(buildDeps()).startSession(opts());
     handle.setInteractionResolver(resolver);
-    handle.setHarnessHookHandler?.(hook);
-    handlerAttached = true;
+    ready = true;
 
     await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
       expect.any(String),
@@ -1596,72 +1604,10 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
       expect.objectContaining({
         childId: `${runId}-1`,
         approvalId: 'hook-1',
-        // The bridge forwards only the action; reasons never reach Pi.
-        value: JSON.stringify({ action: 'block' }),
+        value: JSON.stringify({ action: 'continue' }),
         runtimeOwnerId: ownerId(),
       }),
     ), { timeout: 3_000 });
-    expect(hook).toHaveBeenCalledWith({
-      name: 'tool.before',
-      toolName: 'bash',
-      toolUseId: 'bash-1',
-      input: { command: 'git status' },
-    });
-    expect(resolver).not.toHaveBeenCalled();
-
-    await handle.close();
-  });
-
-  it('forwards a durable Subagent compaction.before hook with only its name', async () => {
-    const runId = '123e4567-e89b-42d3-a456-42661417409a';
-    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-compaction', () => handlerAttached, [
-      harnessHook(JSON.stringify({ name: 'compaction.before' })),
-    ]);
-    const hook = vi.fn(async () => ({ action: 'continue' }) as const);
-    const handle = await new PiAgent(buildDeps()).startSession(opts());
-    handle.setHarnessHookHandler?.(hook);
-    handlerAttached = true;
-
-    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
-      expect.any(String),
-      'tool-harness-compaction',
-      'approval',
-      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
-    ), { timeout: 3_000 });
-    expect(hook).toHaveBeenCalledWith({ name: 'compaction.before' });
-
-    await handle.close();
-  });
-
-  // Same gate as the root session: anything that is not a well-formed
-  // tool.before / compaction.before keeps the native policy (continue) and
-  // never reaches the hook handler or an approval card.
-  it.each([
-    ['non-JSON payload', 'not json'],
-    ['unknown hook name', JSON.stringify({ name: 'tool.after', toolName: 'bash' })],
-    ['tool.before without a tool name', JSON.stringify({ name: 'tool.before', input: {} })],
-    ['array payload', '[]'],
-  ])('answers continue for a malformed durable Subagent hook (%s)', async (_case, placeholder) => {
-    const runId = '123e4567-e89b-42d3-a456-42661417409b';
-    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-malformed', () => handlerAttached, [harnessHook(placeholder)]);
-    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
-    const hook = vi.fn(async () => ({ action: 'block' }) as const);
-    const handle = await new PiAgent(buildDeps()).startSession(opts());
-    handle.setInteractionResolver(resolver);
-    handle.setHarnessHookHandler?.(hook);
-    handlerAttached = true;
-
-    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
-      expect.any(String),
-      'tool-harness-malformed',
-      'approval',
-      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
-    ), { timeout: 3_000 });
-    expect(hook).not.toHaveBeenCalled();
     expect(resolver).not.toHaveBeenCalled();
 
     await handle.close();
@@ -1672,15 +1618,14 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     // and was escalated as an unreviewable action.
     const runId = '123e4567-e89b-42d3-a456-42661417409c';
     const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-auto', () => handlerAttached);
+    let ready = false;
+    mockHarnessHookRun(runId, 'tool-harness-auto', () => ready);
     const review = vi.fn(async () => ({ verdict: 'allow' as const }));
     const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
     const handle = await new PiAgent(buildDeps({ reviewAutoPermissionAction: review as never }))
       .startSession({ ...opts(), permissionMode: 'auto' });
     handle.setInteractionResolver(resolver);
-    handle.setHarnessHookHandler?.(async () => ({ action: 'continue' }));
-    handlerAttached = true;
+    ready = true;
 
     await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
       expect.any(String),
@@ -1695,12 +1640,12 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
   });
 
   it('still forwards a real cindy:permission with its tool and input next to a hook', async () => {
-    // The hook gate must only take `cindy:harness-hook`; a permission raised
+    // The hook branch must only take `cindy:harness-hook`; a permission raised
     // in the same run keeps its tool name and arguments and its approval card.
     const runId = '123e4567-e89b-42d3-a456-42661417409d';
     const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-mixed', () => handlerAttached, [
+    let ready = false;
+    mockHarnessHookRun(runId, 'tool-harness-mixed', () => ready, [
       toolBeforeHook,
       {
         id: 'approval-2',
@@ -1710,11 +1655,9 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
       },
     ]);
     const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
-    const hook = vi.fn(async () => ({ action: 'continue' }) as const);
     const handle = await new PiAgent(buildDeps()).startSession(opts());
     handle.setInteractionResolver(resolver);
-    handle.setHarnessHookHandler?.(hook);
-    handlerAttached = true;
+    ready = true;
 
     await vi.waitFor(() => {
       expect(control).toHaveBeenCalledWith(
@@ -1730,7 +1673,6 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
         expect.objectContaining({ childId: `${runId}-2`, approvalId: 'approval-2', confirmed: true }),
       );
     }, { timeout: 3_000 });
-    expect(hook).toHaveBeenCalledOnce();
     expect(resolver).toHaveBeenCalledOnce();
     expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'permission',
@@ -1740,39 +1682,6 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     }));
 
     await handle.close();
-  });
-
-  it('answers continue, not the bridge close block, when a navigation close lands mid-hook', async () => {
-    // Closing the bridge settles pending hooks as `block`; the detached child
-    // keeps running and must not have its tool refused because the view left.
-    const runId = '123e4567-e89b-42d3-a456-426614174099';
-    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    let handlerAttached = false;
-    mockHarnessHookRun(runId, 'tool-harness-hook-close', () => handlerAttached);
-    let hookEntered!: () => void;
-    const entered = new Promise<void>((resolve) => { hookEntered = resolve; });
-    const handle = await new PiAgent(buildDeps()).startSession(opts());
-    handle.setHarnessHookHandler?.(() => {
-      hookEntered();
-      return new Promise(() => {});
-    });
-    handlerAttached = true;
-    await entered;
-
-    await handle.close({ reason: 'navigation' });
-
-    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
-      expect.any(String),
-      'tool-harness-hook-close',
-      'approval',
-      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
-    ), { timeout: 3_000 });
-    expect(control).not.toHaveBeenCalledWith(
-      expect.any(String),
-      'tool-harness-hook-close',
-      'approval',
-      expect.objectContaining({ value: JSON.stringify({ action: 'block' }) }),
-    );
   });
 
   /**

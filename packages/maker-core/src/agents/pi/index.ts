@@ -4727,45 +4727,19 @@ export class PiAgent extends BaseAgent {
         return;
       }
       if (approval.method === 'input' && approval.title === 'cindy:harness-hook') {
-        // Child bridges raise their internal tool.before / compaction.before
-        // sync hooks on the same extension_ui channel as permissions. They are
-        // not approvals: answer them the way the root session's RPC loop does
-        // (same validity gate, `continue` when hooks are off or this handle has
-        // closed) instead of rendering a `Subagent: tool` card with `{}` input.
-        let request: Record<string, unknown> = {};
+        // The harness hook bridge was reverted (2f2721a49b), so nothing on the
+        // host handles these any more, but a durable child started by an older
+        // bridge can still raise one. It is an internal sync hook, not an
+        // approval: answer `continue` (the native policy) instead of rendering
+        // a `Subagent: tool` card with `{}` input (#7494).
         try {
-          const parsed = JSON.parse(approval.placeholder ?? '{}') as unknown;
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            request = parsed as Record<string, unknown>;
-          }
-        } catch {
-          // Invalid bridge input preserves the original native policy.
-        }
-        const valid = harnessHooksEnabled && !closed
-          && (request.name === 'compaction.before'
-            || (request.name === 'tool.before' && typeof request.toolName === 'string'));
-        try {
-          const result = valid
-            ? await harnessHookBridge.run({
-              name: request.name as 'tool.before' | 'compaction.before',
-              ...(request.name === 'tool.before' ? {
-                toolName: request.toolName as string,
-                toolUseId: typeof request.toolUseId === 'string' ? request.toolUseId : undefined,
-                input: request.input,
-              } : {}),
-            })
-            : { action: 'continue' as const };
-          // Same fence as the turn-change acknowledgement: park across an
-          // account switch rather than answer for the outgoing account.
+          // Park across an account switch rather than answer for the outgoing
+          // account, as the turn-change acknowledgement does.
           if (accountBoundaryTeardown) return;
-          // A navigation close during the wait closes the bridge, which settles
-          // pending hooks as `block`. A detached child keeps running, so that
-          // must not reach it: once this handle is closed, answer `continue`.
-          const answer = closed ? { action: 'continue' as const } : result;
           const controlled = await publishPiSubagentApproval(status.taskId, {
             childId: task.childId,
             approvalId: approval.id,
-            value: JSON.stringify(answer),
+            value: JSON.stringify({ action: 'continue' }),
             runtimeOwnerId: controlOwnerId,
           });
           if (controlled > 0) piSubagentApprovalDeliveries.add(key);

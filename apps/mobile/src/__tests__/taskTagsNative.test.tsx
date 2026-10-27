@@ -288,3 +288,19 @@ it('resets sorting after leaving the list and keeps an exit when the catalog shr
     environment: { key: 'editMode', value: 'inactive' },
   });
 });
+
+it('allows finishing sorting while offline without enabling writes or re-entry', async () => {
+  const state = baseState();
+  await render(state);
+  await press('taskTags.reorder');
+  await render({ ...state, disabled: true });
+  const reorderButton = () =>
+    node.querySelector<HTMLButtonElement>('[data-testid="taskTags.reorder"]')!;
+  expect(reorderButton().disabled).toBe(false);
+  await press('taskTags.reorder');
+  expect(modifiers()).toContainEqual({ environment: { key: 'editMode', value: 'inactive' } });
+  expect(reorderButton().disabled).toBe(true);
+  expect(node.querySelector<HTMLButtonElement>('[data-testid="taskTags.tag.a"]')!.disabled).toBe(true);
+  act(() => h.onMove!([0], 3));
+  expect(state.onMove).not.toHaveBeenCalled();
+});

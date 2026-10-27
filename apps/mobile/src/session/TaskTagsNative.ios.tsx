@@ -280,7 +280,7 @@ export function NativeTaskTagsExpanded({ state }: { state: TaskTagsExpandedState
         <Section>
           <ComposerNativeRow
             title={t(sorting ? 'taskTags.reorderDone' : 'taskTags.reorder')}
-            disabled={state.disabled}
+            disabled={state.disabled && !sorting}
             onPress={() => setSorting((value) => !value)}
             testID="taskTags.reorder"
           />

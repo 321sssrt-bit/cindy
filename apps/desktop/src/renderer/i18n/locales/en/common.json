@@ -9423,6 +9423,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "Belongs to {{names}}",
+      "createdMark": "Created by {{names}}",
       "followingMark": "This task is looked after by {{names}}"
     },
     "glance": {
@@ -13261,7 +13263,7 @@
       "selectFolderFailed": "Could not select folder. Try again.",
       "projectsToggleExpand": "Expand all project sessions",
       "projectsToggleCollapse": "Collapse all project sessions",
-      "filterAria": "Sidebar settings (Status: {{status}}, Harness: {{vendor}}, Last activity: {{lastActivity}}, Group by: {{groupBy}}, Sort by: {{sortBy}}, Projects: {{projects}})",
+      "filterAria": "Sidebar settings (Status: {{status}}, Harness: {{vendor}}, Last activity: {{lastActivity}}, Group by: {{groupBy}}, Sort by: {{sortBy}}, Projects: {{projects}}, Teammates: {{creators}})",
       "organizeSidebar": "Sidebar settings",
       "filterAllText": "all",
       "filterSelectedProjects": "{{count}} selected",
@@ -13326,6 +13328,9 @@
       "filterProjectOrderTip": {
         "custom": "Drag project rows with the mouse to reorder. Sessions inside still follow the sort above."
       },
+      "filterCreatorsHeading": "Teammates",
+      "filterCreatorsAny": "Any source",
+      "filterSelectedCreators": "{{count}} selected",
       "filterProjectsHeading": "Projects",
       "filterAllProjects": "All projects",
       "filterHeading": "Filters",

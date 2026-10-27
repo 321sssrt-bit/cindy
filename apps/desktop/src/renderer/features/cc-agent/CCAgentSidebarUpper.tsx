@@ -1,3 +1,4 @@
+import { matchesTaskCreators, useTaskCreatorIndex, useTaskCreatorOptions } from '@/features/bots/botFollowScopes';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { ErrorNotice } from '@/components/ui/error-notice';
 /**
@@ -443,7 +444,8 @@ export function CCAgentSidebarUpper() {
   // F-PJ-10：filter.status 决定后端 fetch 时是否带 ?status=archived|all
   const hiddenProjects = useHiddenProjects();
   const { hiddenProjectKeys, initialSnapshot: sidebarSettingsSnapshot } = hiddenProjects;
-  const filter = useSidebarFilter(hiddenProjectKeys, sidebarSettingsSnapshot);
+  const creatorOptions = useTaskCreatorOptions();
+  const filter = useSidebarFilter(hiddenProjectKeys, sidebarSettingsSnapshot, creatorOptions);
   const includeArchived = filter.status;
   const sessionsHook = useCCSessions({ includeArchived });
   const { sessions: allSessionsForAttentionRaw } = useCCSessions({ includeArchived: 'all' });
@@ -1581,18 +1583,20 @@ function ExpandedView({
     [scopedSidebarSessions, hiddenProjectKeys, localPlatform],
   );
 
+  const taskCreatorIndex = useTaskCreatorIndex();
   const activityFilteredSessions = useMemo(() => {
     const cutoff = cutoffForLastActivity(filter.lastActivity);
-    if (cutoff === null) return sidebarSessions;
-    return sidebarSessions.filter((s) => sessionActivityMs(s) >= cutoff);
-  }, [sidebarSessions, filter.lastActivity]);
+    if (cutoff === null && filter.creators === 'all') return sidebarSessions;
+    return sidebarSessions.filter((s) => (cutoff === null || sessionActivityMs(s) >= cutoff)
+      && matchesTaskCreators(s, filter.creators, taskCreatorIndex));
+  }, [sidebarSessions, filter.lastActivity, filter.creators, taskCreatorIndex]);
   const activityFilteredPersistentLocalProjects = useMemo(
     () =>
       filterPersistentLocalProjectsByLastActivity(
-        visiblePersistentLocalProjects,
+        filter.creators === 'all' ? visiblePersistentLocalProjects : [],
         cutoffForLastActivity(filter.lastActivity),
       ),
-    [filter.lastActivity, visiblePersistentLocalProjects],
+    [filter.lastActivity, filter.creators, visiblePersistentLocalProjects],
   );
 
   /* ---- Grouping & collapse ---- */

@@ -1,4 +1,4 @@
-import { beginQuietScheduledOutput, hidesScheduledTranscript } from './silent-output.js';
+import { beginQuietScheduledOutput, hidesScheduledTranscript, hasVisibleScheduledOutput } from './silent-output.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import { BUILTIN_ROUTINE_SCHEDULE_PREFIX, routineInstructionFromPrompt } from '../../shared/botAutonomy.js';
 import {
@@ -3337,7 +3337,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // Save a canonical reply missing from the normal text-event persistence path,
     // including done-only replacements of a partial stream. Matching replies need no extra row.
     const missingFinalReply =
-      !hidesScheduledTranscript(schedule) &&
+      !(hidesScheduledTranscript(schedule) && !hasVisibleScheduledOutput(ctx.runId)) &&
       !finalTextMatchesStream &&
       finalRun.status === 'success' &&
       !!assistantText.trim();
@@ -3368,7 +3368,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       if (!silenced) ctx.onRunnerNotified?.(finalRun.status === 'success' ? 'success' : 'failure');
       const ownerScope = captureDataOwnerBroadcastScope();
       if (
-        (hidesScheduledTranscript(schedule) || missingFinalReply) &&
+        ((hidesScheduledTranscript(schedule) && !hasVisibleScheduledOutput(ctx.runId)) || missingFinalReply) &&
         finalRun.status === 'success' &&
         assistantText.trim()
       ) {
@@ -3589,6 +3589,12 @@ export class MakerScheduleRunner implements ScheduleRunner {
           // 边界是本 run 的 auto-resume claim。旧 turn 的 done 即使迟到也不能提前
           // 收口，恢复 turn 跨过 pre-vendor 边界时 claim 会先被清除。
           if (isCurrentAutoResumePending()) return;
+          const terminalOutcome = ev.data as { status?: unknown; cancelled?: boolean } | null;
+          const terminalStatus = terminalOutcome?.cancelled === true ? 'cancelled' : terminalOutcome?.status;
+          if (['cancelled', 'aborted', 'interrupted', 'failed'].includes(String(terminalStatus))) {
+            fail(new Error(`Scheduled turn ended with status: ${terminalStatus}`));
+            return;
+          }
           // silent-stop:上游空内容消息静默收尾,main 守卫会在 1.5s 后自动续跑
           // (或弹耗尽横幅)。不 finish——等续跑 turn 的 done 或守卫 settle 通知。
           // settle 通知覆盖守卫决策为非续跑的所有路径(skip/exhausted/send 失败),
@@ -3602,8 +3608,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
               : (owner.beginTurnContinuationWait?.(continuationId) ?? null);
           if (continuationState === 'cancelled') {
             // Provider already observed an explicit stop/teardown. Session
-            // gets a separate ordered boundary; this run can settle now.
-            finish();
+            // gets a separate ordered boundary; this run did not complete.
+            fail(new Error('Scheduled turn continuation was cancelled'));
             return;
           }
           if (continuationState === 'awaiting' || continuationState === 'active') {
@@ -3620,7 +3626,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
                 }
                 pendingContinuationUnsub?.();
                 pendingContinuationUnsub = undefined;
-                finish();
+                fail(new Error('Scheduled turn continuation was cancelled'));
               },
             );
             this.deps.logger.info?.(

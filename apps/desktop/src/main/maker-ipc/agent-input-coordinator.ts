@@ -1356,7 +1356,10 @@ export class AgentInputCoordinator {
    * this account's user typed on Desktop or a same-account remote device. Automation,
    * other tasks, Orca, plugins, shared-task guests and automatic resumes never qualify.
    */
-  isActiveInputOwnerAuthored(sessionId: string): boolean {
+  isActiveInputOwnerAuthored(sessionId: string, vendorGeneration?: number): boolean {
+    const active = this.states.get(sessionId)?.activeTurn;
+    if (vendorGeneration !== undefined && active?.vendorTurnGeneration != null
+      && vendorGeneration !== active.vendorTurnGeneration) return false;
     return this.activeInputHasOwnerAuthor(sessionId, false);
   }
 

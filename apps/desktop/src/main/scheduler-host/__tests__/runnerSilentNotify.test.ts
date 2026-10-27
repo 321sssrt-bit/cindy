@@ -54,7 +54,7 @@ vi.mock('../runners/_shared', () => ({
 }));
 
 import { MakerScheduleRunner } from '../runner';
-import { projectQuietScheduledOutput } from '../silent-output.js';
+import { projectQuietScheduledOutput, revealScheduledOutput, hasVisibleScheduledOutput } from '../silent-output.js';
 
 type SessionSendOptions = Parameters<Session['send']>[1];
 type SendImpl = (
@@ -560,6 +560,27 @@ describe('MakerScheduleRunner silent-run notification skip', () => {
           content: 'A new review needs attention',
         });
       expect(notifier.notify).toHaveBeenCalledTimes(silenced ? 0 : 1);
+    },
+  );
+
+  it.each([true, false].flatMap(silenced => [true, false].map(terminalOnly => ({ silenced, terminalOnly }))))(
+    'persists an owner-promoted reply once (silenced=$silenced, terminalOnly=$terminalOnly)',
+    async ({ silenced, terminalOnly }) => {
+      const h = createSessionHarness(acceptingSend());
+      const { runner, notifier } = createRunnerHarness(h.session, { silenced });
+      const promise = runner.fire(baseSchedule({ source: 'bot', silentWhenIdle: true }), createFireContext());
+      await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+      h.emit({ type: 'text', data: { text: 'Hidden preamble' } });
+      revealScheduledOutput({ kind: 'scheduler', scheduleId: 'schedule-1', scheduleName: 'Check', runId: 'run-1' });
+      if (!terminalOnly) h.emit({ type: 'text', data: { text: 'Owner reply', isFinal: true } });
+      h.emit({ type: 'done', data: { result: 'Owner reply' } });
+      await promise;
+      const repairs = mocks.createMessage.mock.calls.filter(([, body]) => body.role === 'assistant');
+      // The normal text pipeline persists streamed replies; only a done-only reply needs repair.
+      expect(repairs).toHaveLength(terminalOnly ? 1 : 0);
+      if (terminalOnly) expect(repairs[0][1].content).toBe('Owner reply');
+      expect(notifier.notify).toHaveBeenCalledTimes(silenced ? 0 : 1);
+      expect(hasVisibleScheduledOutput('run-1')).toBe(false);
     },
   );
 

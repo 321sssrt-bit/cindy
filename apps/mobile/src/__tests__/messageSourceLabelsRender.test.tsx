@@ -416,6 +416,14 @@ describe('completed message actions', () => {
     expect(final).toContain('message.moreButton');
   });
 
+  it('reserves the completed action row while an assistant reply streams', () => {
+    const html = render([
+      { ...msg('streaming', 'Working', { isStreaming: true }), role: 'assistant' },
+    ], { isSessionStreaming: true });
+    expect(html).toContain('message.actionSlot');
+    expect(html).not.toContain('message.actionBar');
+  });
+
   it('places controls outside the bubble and forks the selected row exactly once', () => {
     const onForkMessage = vi.fn();
     const h = mount([msg('first', 'Question', null), msg('second', 'Follow-up', null)], { onForkMessage });

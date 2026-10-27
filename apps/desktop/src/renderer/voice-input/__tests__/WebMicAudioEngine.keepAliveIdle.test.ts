@@ -232,6 +232,31 @@ describe('keep-alive microphone idle window', () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps an existing warm microphone until 30 minutes after a direct recording ends', async () => {
+    mod.noteVoiceInputUse();
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+
+    const directTrack = createFakeTrack();
+    getUserMedia.mockImplementationOnce(async () => ({
+      getAudioTracks: () => [directTrack],
+      getTracks: () => [directTrack],
+    }));
+    const engine = new mod.WebMicAudioEngine({ workletUrl: WORKLET_URL, keepAlive: false });
+    await engine.start();
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await engine.stop();
+    expect(directTrack.stopped).toBe(true);
+
+    // Cross the original warm session's deadline without remounting. Its
+    // existing timer must follow the same last-use timestamp as future prewarm.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(track.stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    expect(track.stopped).toBe(true);
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
   it('reopens the warm microphone from a later mount inside the use window', async () => {
     mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });

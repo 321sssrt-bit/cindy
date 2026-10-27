@@ -1022,6 +1022,13 @@ function keepAliveMonotonicNow(): number {
 export function noteVoiceInputUse(): void {
   ensureKeepAlivePowerReleaseListener();
   lastVoiceInputUseAt = keepAliveMonotonicNow();
+  // Direct capture and an enable broadcast can record use while a different
+  // session is already idle. Keep its actual timer in sync with this timestamp;
+  // otherwise it expires early, then a later mount reopens it using newer intent.
+  // A busy session keeps its owner; its stop() re-arms after releasing the claim.
+  if (keepAliveSession && !keepAliveSession.isBusy()) {
+    scheduleKeepAliveIdleDispose(keepAliveSession, 'idle_timeout_after_use', { refresh: true });
+  }
 }
 
 /**

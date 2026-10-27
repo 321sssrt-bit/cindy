@@ -137,6 +137,40 @@ describe('permanent Bot model selection', () => {
     expect(await h.reconcile.preview('canonical')).toEqual(h.state.next);
     expect(h.apply).not.toHaveBeenCalled();
   });
+  describe.each(['paused', 'no-enabled-model'] as const)('after a temporarily %s profile', (unavailable) => {
+    it.each([
+      { pending: false, changed: false },
+      { pending: true, changed: false },
+      { pending: false, changed: true },
+      { pending: true, changed: true },
+    ])('compares the last known default chain (pending=$pending, changed=$changed)', async ({ pending, changed }) => {
+      const h = harness();
+      h.state.followsCindyDefault = true;
+      h.state.hasRuntimeOverride = true;
+      if (pending) h.state.next = { ...h.state.current, model: 'pending-fallback' };
+      await h.reconcile('canonical');
+      const chain = h.state.chain;
+      if (unavailable === 'paused') {
+        h.read.mockResolvedValueOnce(null);
+        await h.reconcile('canonical');
+      } else {
+        h.state.chain = [];
+        await expect(h.reconcile('canonical')).rejects.toThrow('[PRECONDITION_FAILED]');
+      }
+      expect(h.apply).not.toHaveBeenCalled();
+      h.state.chain = changed ? [{ ...chain[0]!, model: 'new-primary', providerId: 'new-source' }] : chain;
+      const expected = changed
+        ? expect.objectContaining({ agentKind: 'codex', model: 'new-primary', providerId: 'new-source' })
+        : h.state.next ?? h.state.current;
+      await expect(h.reconcile.preview('canonical')).resolves.toEqual(expected);
+      await h.reconcile('canonical');
+      if (changed) {
+        expect(h.apply).toHaveBeenCalledExactlyOnceWith('canonical', expected, h.state.current);
+      } else {
+        expect(h.apply).not.toHaveBeenCalled();
+      }
+    });
+  });
   it('previews a draft and then saved chain without consuming the next-send change', async () => {
     const h = harness();
     h.state.hasRuntimeOverride = true;

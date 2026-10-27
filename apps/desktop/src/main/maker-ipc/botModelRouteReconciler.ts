@@ -119,13 +119,12 @@ export function createBotModelRouteReconciler(deps: {
         if (deps.ownerEpoch() !== epoch) throw new Error('Bot model route owner changed');
         if ((revisions.get(sessionId) ?? 0) !== revision) continue;
         if (!state) {
-          // Paused profiles are absent from the apply reader. Keep an explicit
-          // save pending until resume can accept it and invalidate the scope.
-          if (configured.get(sessionId) !== '') configured.delete(sessionId);
+          // Paused profiles are absent from the apply reader. Retain the last
+          // known chain (or explicit-save marker) so resume can detect changes.
           return;
         }
         if (!state.chain.length) {
-          configured.delete(sessionId);
+          // A temporary loss of model visibility must not erase that baseline.
           throwIpcError('PRECONDITION_FAILED', '请先选择已开启的伙伴模型');
         }
         const key = JSON.stringify(state.chain);

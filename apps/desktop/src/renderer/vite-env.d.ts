@@ -2303,6 +2303,7 @@ interface ElectronAPI {
 
   // ── Discord Bot (Settings → IM Bot tab) ──
   discordBot: {
+    reconnect: () => Promise<{ status: DiscordBotTransportStatus; ownerUserId: string | null }>;
     getStatus: () => Promise<{
       status: DiscordBotTransportStatus;
       ownerUserId: string | null;

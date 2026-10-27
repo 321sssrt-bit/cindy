@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getDefaultVoiceInputSettings, type VoiceInputDataSnapshot } from '../../../shared/voiceInputData';
 
 vi.mock('../audioContextPool', () => ({
   PCM16K_WORKLET_NAME: 'pcm16k-worklet',
@@ -236,25 +237,75 @@ describe('keep-alive microphone idle window', () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
   });
 
-  it('reclaims a session whose recording claim leaked', async () => {
+  it('does not replace a recording still awaiting microphone permission after 60 seconds', async () => {
     mod.noteVoiceInputUse();
-    // Startup hangs on the device handshake and its owner never stops: the claim
-    // outlives any plausible startup, so the session would read as busy forever
-    // and neither the idle window nor a settings change could reclaim it.
-    getUserMedia.mockImplementationOnce(() => new Promise(() => undefined));
+    let resolveStream: (value: unknown) => void = () => undefined;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveStream = resolve;
+    }));
     const engine = new mod.WebMicAudioEngine({
       workletUrl: WORKLET_URL,
       keepAlive: true,
       onInterrupted: vi.fn(),
     });
-    void engine.start().catch(() => undefined);
+    const starting = engine.start();
+    void starting.catch(() => undefined);
     await vi.advanceTimersByTimeAsync(0);
 
     await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
 
-    // The leaked session is reclaimed and a fresh warm-up owns the device again.
-    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    // A permission prompt has no fixed response deadline. A mount must neither
+    // replace the owner's pending request nor cause a later cold fallback.
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    resolveStream({ getAudioTracks: () => [track], getTracks: () => [track] });
+    await starting;
+    expect(track.stopped).toBe(false);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    await engine.stop();
+  });
+
+  it('warms on an enable broadcast but not on repeated or newly mounted settings snapshots', async () => {
+    const { subscribeVoiceInputSettings } = await import('../../hooks/useVoiceInputSettings');
+    let settings = { ...getDefaultVoiceInputSettings('darwin'), fastActivationEnabled: false };
+    const listeners = new Set<(snapshot: VoiceInputDataSnapshot) => void>();
+    Object.assign(window.electronAPI.voiceInput, {
+      getDataSnapshot: () => ({ settings, history: [] }),
+      onDataChanged: (listener: (snapshot: VoiceInputDataSnapshot) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    });
+    const warming: Promise<void>[] = [];
+    const subscribe = () => subscribeVoiceInputSettings(() => {
+      warming.push(mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL }));
+    });
+    const emit = async (enabled: boolean) => {
+      settings = { ...settings, fastActivationEnabled: enabled };
+      listeners.forEach((listener) => listener({ settings, history: [] } as VoiceInputDataSnapshot));
+      await Promise.all(warming.splice(0));
+    };
+    let unsubscribe = subscribe();
+    try {
+      await emit(true);
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(IDLE_TTL_MS);
+      expect(track.stopped).toBe(true);
+      await emit(true);
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+      // A renderer subscribing after the switch is already on must not infer a
+      // new activation from that initial snapshot or a history-only broadcast.
+      unsubscribe();
+      unsubscribe = subscribe();
+      await emit(true);
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      await emit(false);
+      await emit(true);
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it('does not extend the idle window when prewarm re-asserts keep-alive intent', async () => {

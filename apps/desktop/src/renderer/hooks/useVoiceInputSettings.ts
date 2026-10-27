@@ -133,7 +133,13 @@ export async function adviseAndRecordVoiceInputDictionaryLearning(
 export function subscribeVoiceInputSettings(
   callback: (settings: VoiceInputSettings) => void,
 ): () => void {
+  // Every renderer receives the existing main-owned broadcast. Only a live
+  // off-to-on transition is user intent; subscribing with an already-enabled
+  // snapshot (or receiving history/language updates) must not renew the window.
+  let fastActivationEnabled = getVoiceInputSettings().fastActivationEnabled;
   return window.electronAPI.voiceInput.onDataChanged((snapshot: VoiceInputDataSnapshot) => {
+    if (!fastActivationEnabled && snapshot.settings.fastActivationEnabled) noteVoiceInputUse();
+    fastActivationEnabled = snapshot.settings.fastActivationEnabled;
     callback(snapshot.settings);
   });
 }
@@ -261,14 +267,7 @@ export function useVoiceInputSettings(): {
   );
 
   const setFastActivationEnabled = useCallback(
-    (fastActivationEnabled: boolean) => {
-      // Flipping this switch on is an explicit statement of intent, so it counts
-      // as use and lets the immediate prewarm open the microphone. Without it the
-      // setting would stay inert until the first dictation, which is not what the
-      // user just asked for.
-      if (fastActivationEnabled) noteVoiceInputUse();
-      return updateSettings({ fastActivationEnabled });
-    },
+    (fastActivationEnabled: boolean) => updateSettings({ fastActivationEnabled }),
     [updateSettings],
   );
 

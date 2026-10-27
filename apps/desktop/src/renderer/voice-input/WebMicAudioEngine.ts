@@ -210,10 +210,6 @@ let keepAliveIdleDeadlineAt: number | undefined;
 // indicator would never go out on a machine the user is merely working in —
 // contradicting the promise in settings.voiceInput.fastActivation.hint.
 let lastVoiceInputUseAt: number | undefined;
-// A recording claim that never reached activate() is a leak: the session stays
-// isBusy() forever, so neither the idle window nor "setting turned off" is
-// allowed to touch it and the microphone can never be reclaimed.
-const STALE_RECORDING_RESERVATION_MS = 60 * 1000;
 
 function isSpecificMicrophoneDeviceId(deviceId?: string): deviceId is string {
   return Boolean(deviceId && deviceId !== 'default');
@@ -476,9 +472,6 @@ class KeepAliveMicSession {
   // session, and a flag would let whichever finishes first clear the other's
   // claim — handing the still-live session to a replacing prewarm.
   private recordingReservations = 0;
-  // When the current claim was taken. Only used to detect a claim that never
-  // reached activate() and never got released.
-  private reservationClaimedAt: number | undefined;
 
   constructor(options: KeepAliveSessionOptions) {
     this.options = options;
@@ -692,28 +685,11 @@ class KeepAliveMicSession {
    * stop(), or on any startup path that fails after claiming.
    */
   reserveForRecording(): void {
-    if (this.recordingReservations === 0) this.reservationClaimedAt = keepAliveMonotonicNow();
     this.recordingReservations += 1;
   }
 
   releaseRecordingReservation(): void {
     this.recordingReservations = Math.max(0, this.recordingReservations - 1);
-    if (this.recordingReservations === 0) this.reservationClaimedAt = undefined;
-  }
-
-  /**
-   * A claim that has outlived any plausible startup.
-   *
-   * start() takes the claim before its first await and stop() drops it, but a
-   * startup that dies in an unforeseen way would keep it forever: the session
-   * then reads as busy, so neither the idle window nor "fast activation turned
-   * off" may dispose it — the microphone stays open with no path back. Callers
-   * use this to reclaim such a session instead of trusting the claim blindly.
-   */
-  hasStaleRecordingReservation(): boolean {
-    if (this.active || this.recordingReservations === 0) return false;
-    if (this.reservationClaimedAt === undefined) return false;
-    return keepAliveMonotonicNow() - this.reservationClaimedAt > STALE_RECORDING_RESERVATION_MS;
   }
 
   /** Someone other than the caller still needs this session live. */
@@ -934,16 +910,10 @@ export async function prewarmVoiceInputMicrophone(options: WebMicAudioEngineOpti
   // track the user is speaking into when the device/profile changed. stop()
   // already owns both re-arming the idle window and honouring the new config.
   if (keepAliveSession?.isBusy()) {
-    if (keepAliveSession.hasStaleRecordingReservation()) {
-      // Self-heal a leaked claim (see hasStaleRecordingReservation): without this
-      // the session is busy forever and no later prewarm can ever reclaim it.
-      await disposeKeepAliveVoiceInputMicrophone('stale_recording_reservation');
-    } else {
-      if (keepAliveSession.key !== keepAliveKey(normalized)) {
-        keepAliveSession.markStaleForReplacement();
-      }
-      return;
+    if (keepAliveSession.key !== keepAliveKey(normalized)) {
+      keepAliveSession.markStaleForReplacement();
     }
+    return;
   }
   if (!isWithinVoiceInputUseWindow()) {
     // Nobody asked to dictate inside the retention window, so mounting a

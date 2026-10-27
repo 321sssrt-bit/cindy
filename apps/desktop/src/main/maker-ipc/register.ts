@@ -4766,13 +4766,13 @@ export function collectAgentInputQueueScanTexts(): string[] {
 }
 
 export interface AutomationUserTurnGitBaselineHooks {
-  beforeDispatchUserTurn(sessionId: string): void | Promise<void>;
+  beforeDispatchUserTurn(sessionId: string, signal?: AbortSignal): void | Promise<void>;
   onUndispatchedUserTurn(sessionId: string): void;
 }
 
 export function createAutomationUserTurnGitBaselineHooks(): AutomationUserTurnGitBaselineHooks {
   return {
-    beforeDispatchUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnStart(sessionId),
+    beforeDispatchUserTurn: (sessionId, signal) => gitSnapshotCoordinator?.onTurnStart(sessionId, signal),
     onUndispatchedUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnAbort(sessionId),
   };
 }
@@ -11744,12 +11744,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       try {
         const sendResult = await session.send(outgoingMessage, {
           ...opts,
-          onAccepted: async () => {
-            await opts.onAccepted?.();
+          onAccepted: async (signal) => {
+            await opts.onAccepted?.(signal);
             await beginTurnChangeSetAtDispatch(session, anchorClientId);
             turnChangeSetStarted = true;
             if (gitSnapshotCoordinator) {
-              await gitSnapshotCoordinator.onTurnStart(session.id);
+              await gitSnapshotCoordinator.onTurnStart(session.id, signal);
               baselineStarted = true;
             }
           },
@@ -18120,7 +18120,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       enqueueDurableWrite(`pi-entry-link:${sessionId}:${clientId}`, () =>
         patchMessageAgentMeta(sessionId, clientId, { piEntryId }),
       ),
-    beforeDispatchDirectUserTurn: (sessionId) => gitSnapshotCoordinator?.onTurnStart(sessionId),
+    beforeDispatchDirectUserTurn: (sessionId, signal) => gitSnapshotCoordinator?.onTurnStart(sessionId, signal),
     onModelDispatched: recordDispatchedModelHolder = (sessionId, clientId) => {
       const live = maker.getSession(sessionId);
       if (!live) return;
@@ -20317,7 +20317,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       });
     },
     onUserMessageRewritten: (sessionId, item, info) => (revokeTrustedDesktopQueueOrigin(item), broadcastGhostMessageRewritten({ sessionId, clientId: item.clientId, ...info })),
-    beforeDispatchUserTurn: async (sessionId, item) => {
+    beforeDispatchUserTurn: async (sessionId, item, signal) => {
       if (item.botTaskCoordination) await assertBotTaskCoordination(sessionId, item.botTaskCoordination);
       autoResumeBookkeeping.markReplacementDispatching(sessionId, item.clientId);
       const liveSession = maker.getSession(sessionId);
@@ -20329,7 +20329,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // 才是目标续跑轮 —— 绕过 coordinator 的 turn(silent-stop 自动续跑)不走这里,
       // 结构上不可能被误认。详见 uiContinuationSignal 的模块注释。
       publishUiTurnDispatching(sessionId, item.clientId);
-      await gitSnapshotCoordinator?.onTurnStart(sessionId);
+      await gitSnapshotCoordinator?.onTurnStart(sessionId, signal);
     },
     onUndispatchedUserTurn: (sessionId, item, disposition) => {
       void settleTodoDispatch(sessionId, item.clientId, false);

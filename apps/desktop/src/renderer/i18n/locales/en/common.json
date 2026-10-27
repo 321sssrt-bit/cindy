@@ -9605,6 +9605,8 @@
         "viewProcess": "Show work",
         "hideProcess": "Hide work",
         "stop": "Stop",
+        "stopping": "Stopping…",
+        "queued": "Waiting to start…",
         "stopMine": "Stop Mine",
         "stopAll": "Stop All",
         "stopAllHint": "Includes other people’s requests"
@@ -10661,7 +10663,9 @@
       "suggestion2": "2. Create your own dedicated App on the {{service}} Open Platform so you and your colleague each have your own.",
       "dismiss": "Dismiss",
       "createOwnApp": "Create my App ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ Attachment delivery incomplete: {{count}} not sent ({{names}}).",
+    "unnamedAttachment": "Untitled attachment"
   },
   "markdown": {},
   "diffPanel": {

@@ -9571,6 +9571,8 @@
         "viewProcess": "看過程",
         "hideProcess": "收起過程",
         "stop": "停止",
+        "stopping": "正在停止…",
+        "queued": "等待開始…",
         "stopMine": "停止我發起的",
         "stopAll": "全部停止",
         "stopAllHint": "包括其他人發起的"
@@ -10626,7 +10628,9 @@
       "suggestion2": "2. 到 {{service}} 開放平臺為自己另建一個獨立 App，與同事各用各的。",
       "dismiss": "關閉",
       "createOwnApp": "建立我的 App ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ 有 {{count}} 個附件未能傳送：{{names}}",
+    "unnamedAttachment": "未命名附件"
   },
   "markdown": {},
   "diffPanel": {

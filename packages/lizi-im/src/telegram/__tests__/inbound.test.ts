@@ -163,6 +163,61 @@ describe('detectGroupTrigger', () => {
 });
 
 describe('replyContextOf', () => {
+  // Regression: rich bot replies have no text/caption. Exercise the production
+  // reply/window projections; prior tests only used ordinary messages (unit).
+  it('preserves rich reply paragraphs, links and tables in references and history', () => {
+    const rich = msg({
+      text: undefined,
+      rich_message: {
+        blocks: [
+          {
+            type: 'paragraph',
+            text: ['示例城市税率 ', { type: 'bold', text: '7%' }],
+          },
+          {
+            type: 'paragraph',
+            text: { type: 'url', text: '来源', url: 'https://example.com/tax' },
+          },
+          {
+            type: 'table',
+            rows: [{ cells: [{ text: '城市' }, { text: '税率' }] }],
+          },
+          { type: 'list', items: [{ blocks: [{ type: 'paragraph', text: '注释' }] }] },
+          { type: 'photo', caption: '图注', file_id: 'not-visible' },
+        ],
+      },
+    });
+    const expected = '示例城市税率 7%\n来源 (https://example.com/tax)\n城市\t税率\n注释\n图注';
+    expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toBe(expected);
+    expect(groupWindowEntryOf(rich).text).toBe(expected);
+  });
+
+  it('uses an explicit quote and still respects protection of the original', () => {
+    const m = msg({
+      quote: { text: '选中的片段' },
+      reply_to_message: msg({ text: '完整正文' }),
+    });
+    expect(replyContextOf(m)?.text).toBe('选中的片段');
+    m.reply_to_message!.has_protected_content = true;
+    expect(replyContextOf(m)).toBeNull();
+  });
+
+  it('reports unreadable rich references and bounds deeply nested or long content', () => {
+    const rich = msg({
+      text: undefined,
+      rich_message: { blocks: [{ type: 'unknown' }] },
+    });
+    expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toContain('无法读取');
+    let nested: unknown = 'too deep';
+    for (let i = 0; i < 100; i++) nested = { type: 'bold', text: nested };
+    rich.rich_message = { blocks: [{ type: 'paragraph', text: nested }] };
+    expect(groupWindowEntryOf(rich).text).toBe('');
+    rich.rich_message = {
+      blocks: [{ type: 'paragraph', text: 'x'.repeat(100_000) }],
+    };
+    expect(groupWindowEntryOf(rich).text.length).toBeLessThanOrEqual(16_384);
+  });
+
   it('文本回复带作者与正文', () => {
     const m = msg({
       reply_to_message: msg({
@@ -170,7 +225,7 @@ describe('replyContextOf', () => {
         text: '昨天的部署日志在这',
       }),
     });
-    expect(replyContextOf(m)).toEqual({ author: 'Bob', text: '昨天的部署日志在这' });
+    expect(replyContextOf(m)).toEqual({ messageId: '1', author: 'Bob', text: '昨天的部署日志在这' });
   });
 
   it('回复 bot 的消息标 isBot', () => {
@@ -180,10 +235,10 @@ describe('replyContextOf', () => {
         text: '已完成',
       }),
     });
-    expect(replyContextOf(m)).toEqual({ author: 'Cindy', text: '已完成', isBot: true });
+    expect(replyContextOf(m)).toEqual({ messageId: '1', author: 'Cindy', text: '已完成', isBot: true });
   });
 
-  it('纯附件回复给类型占位; 无内容的服务消息返回 null', () => {
+  it('纯附件回复给类型占位; 正文不可读仍保留原消息 ID', () => {
     const photoReply = msg({
       reply_to_message: msg({
         text: undefined,
@@ -198,8 +253,10 @@ describe('replyContextOf', () => {
       }),
     });
     expect(replyContextOf(docReply)?.text).toBe('[文件: a.pdf]');
-    const empty = msg({ reply_to_message: msg({ text: undefined }) });
-    expect(replyContextOf(empty)).toBeNull();
+    const empty = msg({ reply_to_message: msg({ message_id: 42, text: undefined }) });
+    expect(replyContextOf(empty)).toMatchObject({
+      messageId: '42', text: '[引用消息的正文无法读取]',
+    });
     expect(replyContextOf(msg())).toBeNull();
   });
 

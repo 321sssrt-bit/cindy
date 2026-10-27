@@ -21,7 +21,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { jsonObjectArg } from './json-object-arg.js';
-import { sendFileWithImagePreview, type PrepareOutboundImage } from './outboundImage.js';
 
 import { FeishuBotToolRegistry, type FeishuBotToolResult } from './cindy_feishuBotToolRegistry';
 import { registerFeishuLaneTools } from './cindy_feishuBotLaneTools.js';
@@ -104,7 +103,6 @@ const RULES: Record<string, string> = {};
  * interface omits the host-only accessor and adds the resolved closure.
  */
 export type FeishuBotMcpDeps = Omit<FeishuBotMcpHostDeps, 'getOwnerOpenId' | 'readLaneScope'> & {
-  prepareOutboundImage?: PrepareOutboundImage;
   /**
    * 当前 tool-call 的飞书逐轮作用域(provider 闭包从 session ctx 解出);null 表示本轮
    * 不是由飞书消息触发或轮次已结束,轮次内工具一律 fail closed。缺省(未注入)时不注册
@@ -177,8 +175,7 @@ function registerSendFileToUser(
         );
       }
 
-      const result = await sendFileWithImagePreview(absPath, displayName, deps.prepareOutboundImage,
-        (file, name) => deps.sendFile(chatId, file, name));
+      const result = await deps.sendFile(chatId, absPath, displayName);
 
       if (!result.ok) {
         const codeMap: Record<string, string> = {
@@ -201,7 +198,7 @@ function registerSendFileToUser(
       }
 
       return buildJsonResult({
-        ...result,
+        ok: true,
         sent: {
           absPath,
           displayName: result.reason ?? displayName,
@@ -387,7 +384,7 @@ export function createFeishuBotMcpServer(deps: FeishuBotMcpDeps): McpServer {
   registerListToolsEntry(server, registry, d);
   registerCallToolEntry(server, registry, d);
   // 飞书轮次内的直通工具(顶层具名注册,审批策略能按工具名分档;只在宿主注入作用域读取器时出现)。
-  if (deps.getLaneScope) registerFeishuLaneTools(server, deps.getLaneScope, deps.prepareOutboundImage);
+  if (deps.getLaneScope) registerFeishuLaneTools(server, deps.getLaneScope);
 
   return server;
 }

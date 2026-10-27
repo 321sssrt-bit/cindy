@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { i18n } from '@/i18n';
 import { botGroupNewMessageCount } from '@cindy/maker-shared/botGroupPresentation';
+import { createChatHistory, type ChatHistoryState } from '@cindy/maker-shared/chat-history';
 import { chatGroupView, chatRoomRow, chatReadAt, createChatServerClient, type ChatMessage, type ChatPage, type ChatRoom, type ChatSnapshot } from '@/chat/chatServerClient';
 import { botGroupQuoteFromMessage, resolveBotGroupQuote, buildBotGroupQuoteCard, buildBotGroupTaskCard } from '@cindy/maker-shared/botGroupChat';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -14,6 +15,25 @@ const snapshot = (): ChatSnapshot => ({ room: room(), cursor: '9007199254741099'
 ] });
 
 describe('direct Chat Server client', () => {
+  // Unit: topic loads already cached replies but still fetched the root on every open.
+  it('reuses the durable root and reply page when reopening a topic', async () => {
+    const request = vi.fn().mockImplementation(async (path: string) => {
+      if (path === '/me') return { actor: { id: id(10), kind: 'human' } };
+      if (path.endsWith('/snapshot')) return snapshot();
+      if (path.endsWith(`/messages/${id(20)}`)) return message(20);
+      if (path.includes('/messages?')) return [{ ...message(21), threadRootId: id(20) }];
+      return [];
+    });
+    let saved: ChatHistoryState | undefined;
+    const history = createChatHistory({ api: request, current: () => true, newGeneration: () => 'topic',
+      store: { read: async () => saved, write: async (_, state) => { saved = state ?? undefined; } } });
+    const client = createChatServerClient(request, undefined, async () => history);
+    const first = await client.load(id(1), undefined, id(20));
+    request.mockClear();
+    expect((await client.load(id(1), undefined, id(20))).messages).toEqual(first.messages);
+    expect(first.messages.map(m => m.id)).toEqual([id(21), id(20)]);
+    expect(request.mock.calls.every(([path]) => path.includes('/execution-failures?'))).toBe(true);
+  });
   // #6907: existing fixtures never pair a human's group name A with account ownerName B (unit tier).
   it('keeps owner labels scoped to each group and follows refreshed names without changing identities', () => {
     const human = { ...snapshot().members[0], name: 'Nickname A' };

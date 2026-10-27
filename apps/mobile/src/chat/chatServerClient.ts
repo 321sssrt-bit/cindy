@@ -450,7 +450,8 @@ export function createChatServerClient(request: ChatRequest, personalList = crea
         messages.push(...batch); before = next;
       }
       if (threadRootId) {
-        const root = await request<ChatMessage>(`/conversations/${room}/messages/${chatId(threadRootId)}`);
+        const root = stored ? await stored.message<ChatMessage>(room, chatId(threadRootId))
+          : await request<ChatMessage>(`/conversations/${room}/messages/${chatId(threadRootId)}`);
         messages.push(root);
       }
       const executionFailures = await failures(room, messages);

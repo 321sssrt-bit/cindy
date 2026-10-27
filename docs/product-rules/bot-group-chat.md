@@ -847,8 +847,7 @@ Desktop 群聊与话题之间的分隔线支持左右拖拽和方向键调宽；
 
 ## 11. 聊天本地数据与同步优化（2026-10-26）
 
-> 状态：首批降耗与消息投影已在优化分支实现，尚未发布。主干已补展示缓存与持久发送队列；后续 inbox、显式私聊镜像修订仍是设计目标，不能将整节视为全部上线。
-> 客户端核对基线 `0e5057e36f001c0b241104cdc8741deeb15c0e10`；服务端 `9524de9deda2e6313b29a11652d2f90bf3c2788c`。
+> 状态：首批降耗与消息投影已合并主干；本节描述实现边界，部署版本需单独核验。后续 inbox、显式私聊镜像修订仍是设计目标，不能将整节视为全部上线。
 > SGP 观测、服务器实际表结构与降耗计划维护在服务端仓现有 [Chat Server 合同](https://github.com/xindong/cindy-server/blob/main/docs/chat-server.md)，不在客户端重复维护完整运维记录。
 
 实现核对入口：[chatServer.ts](../../apps/desktop/src/main/maker-ipc/chatServer.ts)、[BotGroupChatView.tsx](../../apps/desktop/src/renderer/features/bots/BotGroupChatView.tsx)、[手机 Chat 客户端](../../apps/mobile/src/chat/chatServerClient.ts)。原有文档中的本地群分期不能替代当前代码事实。
@@ -904,6 +903,12 @@ SGP 采样改变了优化顺序：当前请求主要是伙伴领取工作、身�
 正式群通过 `withChatServer()` 接入服务器；旧 `bot_groups` 等表仍用于旧群迁移和本机执行关联，不是正式服务器群消息的权威存储。新增 Chat 投影只缓存已下载范围，不冒充完整历史或执行数据库。
 
 `BotGroupChatView` 在 groupId 变化时加载详情；生产 `getGroup → detail` 通过持久投影读取 snapshot 与主时间线，30 秒内可复用已校验状态，过期／重连／本地写入后补 changes。管理、发送授权准备和执行上下文继续走现有权威读取。约 60 秒 summary 缓存仍供侧栏使用。旧页通过可选 `messageUpdates` 和 `historyRevision` 接收修正与重建信号。
+
+话题与主时间线共用服务器 `chat_message`：`conversation_id` 指向群，主消息的 `thread_root_id` 为空，话题回复指向同群根消息；编辑版本、删除标记与房间变更游标共用。话题的运行时 Session 负责伙伴上下文，不是另一套聊天消息库，也不需要独立同步游标。
+
+Desktop `chatServer.thread → threadDetail` 复用同一房间的 snapshot／成员、根消息和 `threadRootId + before + limit` 分页覆盖；Mobile 直连的 `load` 同样从该投影读取话题根消息。根消息可能已不在最新页，因而在房间状态中增加可选 `lookups`／`staleLookups` ID 索引（最多 100 个独立读取），正文仍只存在 `messages` 中。它们随既有事务与游标一起保存，不新增表或 migration，不改变服务端 API。新消息只失效匹配主时间线／话题筛选的最新页；新回复、删除、表情变更同时失效相关根消息聚合。
+
+Desktop 关闭后重开话题，先复用同账号运行代次、同房间 `historyRevision` 的窗口，再后台同步；窗口缓存最多 20 个话题、每个 500 条回复，持久记录仍由上述投影管理。刷新用 `messageUpdates` 修正已展开旧回复；本机表情操作优先复用该修正，未返回目标消息时在同一合并刷新内顺序补读其旧页，不能让最新页刷新把表情回包误判为过期。旧页晚于最新刷新返回时，只补入新加载回复的失败状态，保留已显示源消息的较新状态，并把新增源 ID 带入合并后的补读以核对当前状态。历史代次变化、撤权或主群重置时丢弃旧窗口及在途分页，不能混入旧正文；根消息返回 `MESSAGE_NOT_FOUND` 只清除当前话题窗口，保留群持久投影和其他话题，不能与房间级 `CONVERSATION_NOT_FOUND` 或成员撤权混同。首次打开或缺页仍请求服务器，重启／重连先补增量；执行失败状态和必要的已读写入继续请求服务器，因此缓存命中不等于完全零 HTTP。
 
 主干已为 Desktop 增加持久 outbox 与发送 journal，为 Mobile 接入 durable outbox；保存的展示窗口与增量投影分工见 [本地接入合同](../dev-rules/chat-server-local-test.md)。本轮手机增加独立的持久消息投影，复用原列表缓存、读位和 endpoint 规则；直连服务器和经电脑 Remote Resource 仍是同一房间的两种访问路径。
 

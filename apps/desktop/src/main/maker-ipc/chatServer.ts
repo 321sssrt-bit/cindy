@@ -1434,8 +1434,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
    * A server without read state, or a failed write, leaves unread as it was. Returns the position
    * before this read, or undefined without read state.
    */
-  async function markThreadRead(roomId: string, root: Message, newestFirst: Message[]): Promise<number | undefined> {
-    const reads = threadReads(await recentSnapshot(roomId));
+  async function markThreadRead(roomId: string, root: Message, newestFirst: Message[], snapshot?: Snapshot): Promise<number | undefined> {
+    const reads = threadReads(snapshot ?? await recentSnapshot(roomId));
     if (!reads) return undefined;
     const before = reads.get(root.id) ?? 0n;
     const newest = newestFirst.reduce((max, m) => BigInt(m.seq) > max ? BigInt(m.seq) : max, BigInt(root.seq));
@@ -1462,6 +1462,62 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const written = await writeReadState<{ following: boolean }>(roomId, {
       operationId: randomUUID(), threadRootId: rootId, readSeq: read?.read_seq ?? '0', following: next });
     return written.following;
+  }
+  async function threadDetail(input: Parameters<ChatServerApi['thread']>[0], attempt = 0): Promise<{
+    root: BotGroupMessageView; replies: BotGroupMessageView[]; hasMore: boolean; historyRevision?: string;
+    messageUpdates?: BotGroupMessageView[]; executionFailures: BotGroupExecutionFailureView[]; readBefore?: number; following?: boolean;
+  }> {
+    const i = z.object({ groupId: id, rootId: id, before: z.number().int().positive().optional(), sourceMessageIds: z.array(id).optional(),
+      markRead: z.boolean().optional() }).parse(input);
+    i.groupId = await resolveGroup(i.groupId);
+    await ensureRegistered();
+    const cache = history();
+    try {
+      const s = cache ? await cache.snapshot<Snapshot>(i.groupId) : await groupSnapshot(i.groupId);
+      if (!isGroupRoom(s.room)) throw new Error('NOT_A_GROUP');
+      const revision = cache ? (s as Snapshot & { cacheGeneration: string }).cacheGeneration : undefined;
+      subscribe(i.groupId, s.cursor);
+      const query = new URLSearchParams({ threadRootId: i.rootId, limit: '50' });
+      if (i.before) query.set('before', String(i.before));
+      // Root and replies use the same room cursor and durable, account-scoped message map.
+      const membersRead = cache ? Promise.resolve(s.members) : api<Member[]>(`/conversations/${i.groupId}/members`);
+      const rootRead = cache?.message<Message>(i.groupId, i.rootId) ?? api<Message>(`/conversations/${i.groupId}/messages/${i.rootId}`);
+      const pageRead = cache?.page<Message>(i.groupId, query) ?? api<Message[]>(`/conversations/${i.groupId}/messages?${query}`);
+      for (const read of [rootRead, pageRead]) read.catch(() => undefined);
+      const members = await membersRead;
+      const root = await rootRead;
+      const page = await pageRead;
+      const executionFailures = await failureSnapshot(i.groupId, members, [...(i.sourceMessageIds ?? []), root.id, ...page.map(m => m.id)]);
+      const projection = await cache?.projection<Message>(i.groupId, i.sourceMessageIds ?? []);
+      const rootViews = await messageViews(i.groupId, [root], members);
+      await decorateThreads(i.groupId, rootViews, [root], page, members, false);
+      const replies = await messageViews(i.groupId, [...page].reverse(), members);
+      const messageUpdates = projection ? await messageViews(i.groupId, projection.messages.filter(m => m.threadRootId === i.rootId), members) : undefined;
+      const retry = () => {
+        if (attempt >= 2) throw new Error('CHAT_HISTORY_CHANGED');
+        return threadDetail(input, attempt + 1);
+      };
+      if (revision && cache?.generation(i.groupId) !== revision) return retry();
+      // Reuse the already validated personal reads; writing read state still goes to the server.
+      const following = i.before ? undefined : cache
+        ? s.reads ? s.reads.find(read => read.thread_key === root.id)?.following === true : undefined
+        : await threadFollowing(i.groupId, root.id);
+      const readBefore = i.markRead && !i.before ? await markThreadRead(i.groupId, root, page, cache ? s : undefined) : undefined;
+      if (revision && cache?.generation(i.groupId) !== revision) return retry();
+      return { root: rootViews[0]!, executionFailures, replies, hasMore: page.length === 50,
+        ...(revision ? { historyRevision: revision, messageUpdates } : {}),
+        ...(readBefore !== undefined ? { readBefore } : {}), ...(following !== undefined ? { following } : {}) };
+    } catch (error) {
+      if (error instanceof ChatResponseError && [403, 404].includes(error.status) && error.message !== 'MESSAGE_NOT_FOUND') {
+        // Execution metadata is read outside the history transaction, but its denial
+        // also revokes the warm projection. A missing root only invalidates that topic,
+        // not this room's membership or other cached messages. Preserve the original error.
+        await cache?.clear(i.groupId).catch(() => undefined);
+        displayHistory.forget(i.groupId);
+        threads.reset();
+      }
+      throw error;
+    }
   }
   async function detail(roomId: string, options?: unknown, summaryOnly = false, attempt = 0): Promise<BotGroupDetail> {
     id.parse(roomId);
@@ -2633,29 +2689,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       changed(target); return {};
     }),
     status: async () => ({ enabled: true, connected: current() && connected }),
-    thread: input => result(async () => {
-      const i = z.object({ groupId: id, rootId: id, before: z.number().int().positive().optional(), sourceMessageIds: z.array(id).optional(),
-        markRead: z.boolean().optional() }).parse(input);
-      i.groupId = await groupRoom(i.groupId);
-      // One round trip; awaited in the former order so the same failure is reported first.
-      const membersRead = api<Member[]>(`/conversations/${i.groupId}/members`);
-      const rootRead = api<Message>(`/conversations/${i.groupId}/messages/${i.rootId}`);
-      const pageRead = api<Message[]>(`/conversations/${i.groupId}/messages?threadRootId=${i.rootId}&limit=50${i.before ? `&before=${i.before}` : ''}`);
-      for (const read of [rootRead, pageRead]) read.catch(() => undefined);
-      const members = await membersRead;
-      const root = await rootRead;
-      const page = await pageRead;
-      const executionFailures = await failureSnapshot(i.groupId, members, [...(i.sourceMessageIds ?? []), root.id, ...page.map(m => m.id)]);
-      // A share in the main chat can itself be a thread root.
-      const rootViews = await messageViews(i.groupId, [root], members);
-      await decorateThreads(i.groupId, rootViews, [root], page, members, false);
-      // An older page is history being scrolled: it says nothing about the Thread's switches.
-      const following = i.before ? undefined : await threadFollowing(i.groupId, root.id);
-      const readBefore = i.markRead && !i.before ? await markThreadRead(i.groupId, root, page) : undefined;
-      return { root: rootViews[0], executionFailures,
-        replies: await messageViews(i.groupId, page.reverse(), members), hasMore: page.length === 50,
-        ...(readBefore !== undefined ? { readBefore } : {}), ...(following !== undefined ? { following } : {}) };
-    }),
+    thread: input => result(() => threadDetail(input)),
     followThread: input => result(async () => {
       const i = z.object({ groupId: id, rootId: id, following: z.boolean() }).strict().parse(input);
       const room = await groupRoom(i.groupId);

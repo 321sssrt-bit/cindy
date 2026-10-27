@@ -71,21 +71,27 @@ describe('permanent Bot model selection', () => {
     expect(h.apply).not.toHaveBeenCalled();
     expect(await h.reconcile.preview('canonical')).toBeNull();
   });
-  it('replaces an automatic runtime route when the Bot follows Cindy default', async () => {
+  // Regression: unchanged Cindy defaults used to undo a successful fallback at
+  // each send. Exercise the real reconciler/preview in the unit tier; the old
+  // explicit-chain tests did not cover companions following the app default.
+  it('preserves an effective fallback across repeated sends when Cindy default is unchanged', async () => {
     const h = harness();
     const state = { ...h.state, hasRuntimeOverride: true, followsCindyDefault: true };
     const reconcile = createBotModelRouteReconciler({ ownerEpoch: () => 'owner', read: async () => state, apply: h.apply });
-    await expect(reconcile.preview('canonical')).resolves.toMatchObject({ model: 'luna', agentKind: 'codex' });
+    await expect(reconcile.preview('canonical')).resolves.toEqual(state.current);
     await reconcile('canonical');
-    expect(h.apply).toHaveBeenCalledWith('canonical', expect.objectContaining({ model: 'luna' }), state.current);
+    await reconcile('canonical');
+    await expect(reconcile.preview('canonical')).resolves.toEqual(state.current);
+    expect(h.apply).not.toHaveBeenCalled();
   });
-  it('replaces a pending non-default route even when the live model still equals Cindy default', async () => {
+  it('preserves a pending fallback even when the live model still equals Cindy default', async () => {
     const h = harness();
     const current = { agentKind: 'codex' as const, model: 'luna', providerId: 'xd', effort: 'medium' as const, fastMode: false };
     const state = { ...h.state, current, next: { ...current, model: 'sol' }, hasRuntimeOverride: true, followsCindyDefault: true };
     const reconcile = createBotModelRouteReconciler({ ownerEpoch: () => 'owner', read: async () => state, apply: h.apply });
+    await expect(reconcile.preview('canonical')).resolves.toEqual(state.next);
     await reconcile('canonical');
-    expect(h.apply).toHaveBeenCalledWith('canonical', current, current);
+    expect(h.apply).not.toHaveBeenCalled();
   });
   it('reads a changed default after acquiring the ordinary send lock without deadlocking a lock holder', async () => {
     const h = harness();
@@ -174,15 +180,17 @@ describe('permanent Bot model selection', () => {
     await h.reconcile('canonical');
     expect(h.apply).toHaveBeenCalledWith('canonical', expect.objectContaining({ agentKind: 'codex', model: 'luna' }), h.state.current);
   });
-  it('preserves an automatic runtime override while the configured chain stays unchanged', async () => {
+  it.each([false, true])('preserves fallback until the configured chain changes (default=%s)', async (followsCindyDefault) => {
     const h = harness();
+    h.state.followsCindyDefault = followsCindyDefault;
     h.state.hasRuntimeOverride = true;
     await h.reconcile('canonical');
     await h.reconcile('canonical');
     expect(h.apply).not.toHaveBeenCalled();
     h.state.chain[0].model = 'new-model';
     await h.reconcile('canonical');
-    expect(h.apply).toHaveBeenCalledOnce();
+    expect(h.apply).toHaveBeenCalledExactlyOnceWith('canonical',
+      expect.objectContaining({ model: 'new-model' }), h.state.current);
   });
   it('does not interfere with ordinary or frozen background tasks', async () => {
     const apply = vi.fn();
@@ -206,8 +214,9 @@ describe('permanent Bot model selection', () => {
   });
 });
 
-it('applies an explicit settings save immediately even while an earlier fallback is effective', async () => {
+it.each([false, true])('applies an explicit save even while fallback is effective (default=%s)', async (followsCindyDefault) => {
   const h = harness();
+  h.state.followsCindyDefault = followsCindyDefault;
   h.state.hasRuntimeOverride = true;
   await h.reconcile.profileChanged('canonical');
   expect(h.apply).toHaveBeenCalledWith('canonical', expect.objectContaining({ model: 'luna', agentKind: 'codex' }), h.state.current);
@@ -325,7 +334,9 @@ it.each(['restart', 'changed-chain', 'pending-route', 'follow-default'] as const
     }
     const baseline = h.baseline();
     await h.reconcile('canonical');
-    expect(h.apply).toHaveBeenCalledOnce();
+    // Unchanged defaults now preserve the runtime override; scope.restore must
+    // still restore the saved fallback without needing an intermediate switch.
+    expect(h.apply).toHaveBeenCalledTimes(scenario === 'follow-default' ? 0 : 1);
     expect(h.onSelectionAccepted).not.toHaveBeenCalled();
     expect(h.baseline()).toBe(baseline);
     await h.scope.restore('canonical', 'automation');

@@ -832,6 +832,17 @@ describe('routine check configuration', () => {
     } finally { await f.engine.stop(); }
   });
 
+  it('persists the explicit routine session mode and defaults legacy rules to persistent at runtime', async () => {
+    const f = await fixture();
+    try {
+      const fresh = await f.engine.put('bot', { ...input, sessionMode: 'fresh' });
+      expect(fresh.sessionMode).toBe('fresh');
+      const legacy = await f.engine.put('bot-legacy', input);
+      expect(legacy.sessionMode).toBeUndefined();
+      expect(() => parseRoutineInput({ ...input, sessionMode: 'invalid' })).toThrow('Invalid routine session mode');
+    } finally { await f.engine.stop(); }
+  });
+
   /*
    * 测试价值
    * - 生产入口与可观察结果：RoutineEngine.put / ensureBuiltin 经同一串行写队列后落地的内置规则（enabled、prompt）。

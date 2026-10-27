@@ -16313,6 +16313,10 @@
       "not-equals": "不等于"
     },
     "quiet": "检查没事不说话",
+    "sessionMode": "运行会话",
+    "sessionModePersistent": "持久会话（保留上下文）",
+    "sessionModeFresh": "每次新建会话（隔离上下文）",
+    "sessionModeHint": "持久会话会继续同一条例行任务对话；每次新建会为每次触发创建并关闭独立会话。",
     "quietHint": "仅报告变化或问题。提醒和定时发送可关闭此项。",
     "checkCommand": "前置检查命令",
     "checkHint": "可选。在电脑上先检查：退出码 2 跳过本轮，0 继续执行，异常仍会报告。清空可移除。",

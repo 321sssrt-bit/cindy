@@ -152,6 +152,7 @@ export function BotRoutines({
       silentWhenIdle: value.silentWhenIdle ?? true,
       preRunHook: value.preRunHook ?? null,
       modelOverride: value.modelOverride ?? null,
+      sessionMode: value.sessionMode ?? 'persistent',
     });
   const saved = routines.find((item) => item.id === selected);
   const dirty =
@@ -275,7 +276,7 @@ export function BotRoutines({
               variant="secondary"
               onClick={() => {
                 setSelected('new');
-                setDraft({ name: '', prompt: '', enabled: true, triggers: [], silentWhenIdle: false });
+                setDraft({ name: '', prompt: '', enabled: true, triggers: [], silentWhenIdle: false, sessionMode: 'persistent' });
               }}
             >
               <Plus size={14} />
@@ -427,6 +428,20 @@ export function BotRoutines({
               fastMode: route.fastMode, agentDeviceId: route.agentDeviceId ?? null,
             } : null })}
           />}
+          <label className="block space-y-2">
+            <span className={fieldLabelClass}>{t('routines.sessionMode')}</span>
+            <select
+              aria-label={t('routines.sessionMode')}
+              className="w-full rounded-full border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 py-2 text-12"
+              disabled={busy || saved?.builtin === 'nightly-learning'}
+              value={draft.sessionMode ?? 'persistent'}
+              onChange={(event) => setDraft({ ...draft, sessionMode: event.target.value as 'persistent' | 'fresh' })}
+            >
+              <option value="persistent">{t('routines.sessionModePersistent')}</option>
+              <option value="fresh">{t('routines.sessionModeFresh')}</option>
+            </select>
+            <p className="text-12 text-[var(--text-secondary)]">{t('routines.sessionModeHint')}</p>
+          </label>
           <fieldset disabled={!!saved?.builtin} className="min-w-0 space-y-5">
           <details className="space-y-3">
             <summary className="min-h-8 cursor-pointer rounded-full py-2 focus-visible:outline focus-visible:outline-[var(--focus-ring)]">{t('routines.advancedSettings')}</summary>
@@ -935,6 +950,7 @@ function routineInput(routine: Routine): RoutineInput {
     ...(routine.silentWhenIdle !== undefined ? { silentWhenIdle: routine.silentWhenIdle } : {}),
     ...(routine.preRunHook !== undefined ? { preRunHook: routine.preRunHook } : {}),
     ...(routine.modelOverride !== undefined ? { modelOverride: routine.modelOverride } : {}),
+    ...(routine.sessionMode !== undefined ? { sessionMode: routine.sessionMode } : {}),
   };
 }
 

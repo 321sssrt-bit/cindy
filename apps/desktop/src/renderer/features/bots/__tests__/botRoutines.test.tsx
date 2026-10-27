@@ -139,6 +139,15 @@ it('saves enabled state and does not run a routine just by saving', async () => 
   fireEvent.click(screen.getByRole('button', { name: 'routines.back' }));
   await screen.findByText('Daily report');
 });
+it('saves the selected session mode without executing a routine', async () => {
+  const api = setup();
+  render(<BotRoutines botId="bot" />);
+  fireEvent.click(await screen.findByText('Daily report'));
+  fireEvent.change(screen.getByLabelText('routines.sessionMode'), { target: { value: 'fresh' } });
+  fireEvent.click(screen.getByRole('button', { name: 'routines.save' }));
+  await waitFor(() => expect(api.save).toHaveBeenCalledWith('bot', expect.objectContaining({ sessionMode: 'fresh' }), 'daily'));
+  expect(api.runNow).not.toHaveBeenCalled();
+});
 it('requires confirmation for deletion, then refreshes the list', async () => {
   const api = setup();
   render(<BotRoutines botId="bot" />);

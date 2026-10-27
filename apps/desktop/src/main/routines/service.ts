@@ -54,6 +54,7 @@ export interface RoutineHostDeps {
   recoverImports?: () => Promise<void>;
   getBot(botId: string): Promise<{ status: string; canonicalSessionId?: string | null }>;
   ensureRoutineSession(input: { botId: string; routineId: string; title: string; modelOverride?: RoutineModel | null }): Promise<{ ok: true; sessionId: string; created: boolean } | { ok: false; message: string }>;
+  closeRoutineSession?(sessionId: string): Promise<void>;
   getScheduler(): Pick<Scheduler, 'runNow' | 'pause' | 'delete'> | null;
   getScheduleStorage(): Pick<ScheduleStorage, 'get' | 'insert' | 'update' | 'listRuns'>;
 }
@@ -194,7 +195,15 @@ async function execute(scope: string, routine: Routine, run: RoutineRun, signal:
     const exhausted = await getRoutineHost().finishImportedAutomation?.(root, routine, bot.canonicalSessionId, run.id, imported.direct, true, signal, () => assertScope(scope));
     return { resultText: imported.direct, ...(exhausted ? { disableRoutine: true } : {}) };
   }
-  const lane = await getRoutineHost().ensureRoutineSession({ botId: routine.botId, routineId: routine.id, title: routine.name, modelOverride: routine.modelOverride });
+  const persistent = routine.sessionMode !== 'fresh';
+  // Fresh mode still creates a host-owned lane so it inherits the same bot
+  // permissions and model route; the lane is closed after this trigger.
+  const lane = await getRoutineHost().ensureRoutineSession({
+    botId: routine.botId,
+    routineId: persistent ? routine.id : `${routine.id}:${randomUUID()}`,
+    title: routine.name,
+    modelOverride: routine.modelOverride,
+  });
   assertScope(scope);
   if (!lane.ok) throw new Error(lane.message);
   if (signal.aborted) throw new Error('Routine cancelled');
@@ -261,6 +270,13 @@ async function execute(scope: string, routine: Routine, run: RoutineRun, signal:
   } finally {
     signal.removeEventListener('abort', abort);
     await cancellation;
+    if (!persistent) {
+      const closeRoutineSession = getRoutineHost().closeRoutineSession;
+      if (closeRoutineSession) {
+        await closeRoutineSession(lane.sessionId).catch((error) =>
+          log.warn('fresh routine session close failed', { sessionId: lane.sessionId, error: String(error) }));
+      }
+    }
   }
 }
 
@@ -655,7 +671,8 @@ export async function listCompanionRoutines(botId: string, selfDeviceId: string 
     input: { name: routine.name, prompt: routine.prompt, enabled: routine.enabled, triggers: routine.triggers,
       ...(routine.silentWhenIdle !== undefined ? { silentWhenIdle: routine.silentWhenIdle } : {}),
       ...(routine.preRunHook !== undefined ? { preRunHook: routine.preRunHook } : {}),
-      ...(routine.modelOverride !== undefined ? { modelOverride: routine.modelOverride } : {}) },
+      ...(routine.modelOverride !== undefined ? { modelOverride: routine.modelOverride } : {}),
+      ...(routine.sessionMode !== undefined ? { sessionMode: routine.sessionMode } : {}) },
     originDeviceId: selfDeviceId,
   }));
 }

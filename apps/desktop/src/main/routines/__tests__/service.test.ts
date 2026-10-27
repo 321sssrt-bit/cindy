@@ -12,6 +12,7 @@ const mock = vi.hoisted(() => ({
   profiles: [] as Array<{ id: string; status: string }>,
   save: vi.fn<(state: RoutineState) => Promise<void>>(async () => {}),
   ensureRoutineSession: vi.fn(async ({ routineId }: { routineId: string }) => ({ ok: true as const, sessionId: `lane-${routineId}`, created: false })),
+  closeRoutineSession: vi.fn(async () => {}),
   getBot: vi.fn(async () => ({ status: 'active', canonicalSessionId: 'canonical-task' })),
   storage: {
     get: vi.fn<(id: string) => Promise<Schedule | null>>(async () => null),
@@ -69,6 +70,7 @@ import { admitTaskAction, assertTaskActionCurrent, hasTaskActionAuthorization } 
 beforeEach(() => { mock.readProfiles.mockImplementation(async () => mock.profiles); });
 beforeEach(() => configureRoutineHost({
   getBot: mock.getBot, ensureRoutineSession: mock.ensureRoutineSession,
+  closeRoutineSession: mock.closeRoutineSession,
   getScheduler: () => mock.schedulerReady ? mock.scheduler : null,
   getScheduleStorage: () => mock.storage,
 }));
@@ -109,6 +111,19 @@ it('dispatches into the routine lane and records its task for inspection', async
   );
   expect((await routineTools.history('bot', routine.id))[0]).toMatchObject({ resultText: 'Reviewed PR', sessionId: `lane-${routine.id}` });
   expect(mock.ensureRoutineSession).toHaveBeenCalledWith(expect.objectContaining({ botId: 'bot', routineId: routine.id }));
+});
+
+it('creates and closes an isolated lane for each fresh routine trigger', async () => {
+  const routine = await routineTools.save('bot', {
+    name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
+    sessionMode: 'fresh', triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+  });
+  await routineTools.runNow('bot', routine.id);
+  await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('success'));
+  expect(mock.ensureRoutineSession).toHaveBeenCalledWith(expect.objectContaining({
+    routineId: expect.stringMatching(new RegExp(`^${routine.id}:`)),
+  }));
+  expect(mock.closeRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
 });
 
 it('turns the teammate\'s weekday todo check on and off as one built-in routine', async () => {

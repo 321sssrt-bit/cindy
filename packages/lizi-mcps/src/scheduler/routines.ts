@@ -72,6 +72,7 @@ export function registerRoutineTools(
         effort: z.enum(['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']).optional(),
         fastMode: z.union([z.boolean(), z.literal('ultrafast')]).optional(),
       }).nullable().optional().describe('Model for this routine only. Use an available model/provider pair. null follows the companion; omission preserves the saved choice. Also configurable for built-in follow-up and todo checks.'),
+      sessionMode: z.enum(['persistent', 'fresh']).optional().describe('How to carry context between triggers: persistent reuses one routine session; fresh creates and closes an isolated session for each trigger. Omission preserves the saved choice.'),
       silentWhenIdle: z.boolean().optional().describe('Set true for checks: no routine chatter, report only when needed via schedule_notify_current_run. Reminders and scheduled delivery default to false. Preserve existing user choices.'),
       preRunHook: z.object({
         command: z.string().min(1).max(32000),

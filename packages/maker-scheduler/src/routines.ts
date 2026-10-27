@@ -52,6 +52,9 @@ export interface RoutineModel {
   fastMode?: Schedule['fastMode'];
 }
 
+/** How a routine carries context from one trigger to the next. */
+export type RoutineSessionMode = "persistent" | "fresh";
+
 /** A single standing instruction, with OR-combined time and event triggers. */
 export interface Routine {
   /** Derived by the engine, never accepted as configuration. */
@@ -68,6 +71,8 @@ export interface Routine {
   preRunHook?: PreRunHookConfig | null;
   /** Omission preserves saved settings when an older client edits a rule. */
   modelOverride?: RoutineModel | null;
+  /** Omission keeps the legacy persistent routine lane. */
+  sessionMode?: RoutineSessionMode;
   /**
    * 宿主内置规则（每个伙伴一条的「跟进」与「夜间学习」，以及主人在近况里打开的「每天查待办」）。由宿主模板生成，不接受用户/模型
    * 改写指令与触发条件、不能删除；可暂停（enabled），普通 Agent 规则可单独选模型。可选字段：旧数据与旧客户端缺省即普通规则，
@@ -87,6 +92,7 @@ export interface Routine {
 export type RoutineInput = Pick<
   Routine,
   "name" | "prompt" | "enabled" | "triggers" | "silentWhenIdle" | "preRunHook" | "modelOverride"
+  | "sessionMode"
 >;
 
 function record(value: unknown): Record<string, unknown> {
@@ -199,10 +205,17 @@ export function parseRoutineInput(value: unknown): RoutineInput {
       ...(model.fastMode === undefined ? {} : { fastMode: model.fastMode as RoutineModel['fastMode'] }),
     };
   }
+  let sessionMode: RoutineSessionMode | undefined;
+  if (input.sessionMode !== undefined) {
+    if (input.sessionMode !== "persistent" && input.sessionMode !== "fresh")
+      throw new Error("Invalid routine session mode");
+    sessionMode = input.sessionMode;
+  }
   return {
     ...(modelOverride === undefined ? {} : { modelOverride }),
     ...(input.silentWhenIdle === undefined ? {} : { silentWhenIdle: input.silentWhenIdle as boolean }),
     ...(preRunHook === undefined ? {} : { preRunHook }),
+    ...(sessionMode === undefined ? {} : { sessionMode }),
     name: string(input.name, 200),
     prompt: string(input.prompt, 100_000),
     enabled: input.enabled,

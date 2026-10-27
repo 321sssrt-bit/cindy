@@ -141,12 +141,16 @@ it('saves enabled state and does not run a routine just by saving', async () => 
 });
 it('saves the selected session mode without executing a routine', async () => {
   const api = setup();
+  const scrollIntoView = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   render(<BotRoutines botId="bot" />);
   fireEvent.click(await screen.findByText('Daily report'));
-  fireEvent.change(screen.getByLabelText('routines.sessionMode'), { target: { value: 'fresh' } });
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'routines.sessionMode' }), { key: 'ArrowDown' });
+  fireEvent.click(await screen.findByRole('option', { name: 'routines.sessionModeFresh' }));
   fireEvent.click(screen.getByRole('button', { name: 'routines.save' }));
   await waitFor(() => expect(api.save).toHaveBeenCalledWith('bot', expect.objectContaining({ sessionMode: 'fresh' }), 'daily'));
   expect(api.runNow).not.toHaveBeenCalled();
+  HTMLElement.prototype.scrollIntoView = scrollIntoView;
 });
 it('requires confirmation for deletion, then refreshes the list', async () => {
   const api = setup();

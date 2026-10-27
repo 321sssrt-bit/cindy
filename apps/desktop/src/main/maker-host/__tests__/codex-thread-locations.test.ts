@@ -16,6 +16,46 @@ async function fixture() {
   return { root, locations: new CodexThreadLocations(path.join(root, 'owner', 'locations')) };
 }
 describe('native thread locations across accounts', () => {
+  it('rejects a stale index after asynchronous ancestry repair without a filename change', async () => {
+    const { root } = await fixture();
+    const old = path.join(root, 'sessions', 'old.jsonl');
+    const archived = path.join(root, 'archived_sessions', 'old.jsonl');
+    await fs.mkdir(path.dirname(old), { recursive: true });
+    await fs.writeFile(old, 'history');
+    const locations = new CodexThreadLocations(path.join(root, 'locations'), async () => {
+      await fs.mkdir(path.dirname(archived), { recursive: true });
+      await fs.rename(old, archived);
+      await locations.record('thread', archived, root);
+      return old;
+    });
+    await locations.record('thread', old, root);
+    await expect(locations.prepareResume('thread', async () => undefined)).rejects.toThrow('location changed');
+    expect(await locations.read('thread')).toBe(archived);
+  });
+  // #7436 unit: a concurrent archive can publish its index during repair's
+  // asynchronous temp write. Existing tests cover only sequential index writes.
+  // Windows: this file completes in 0.31s, including module collection.
+  it('does not overwrite a newer location while publishing a repaired index', async () => {
+    const { root } = await fixture();
+    const directory = path.join(root, 'locations');
+    const old = path.join(root, 'sessions', 'old.jsonl');
+    const repaired = path.join(root, 'sessions', 'repaired.jsonl');
+    const archived = path.join(root, 'archived_sessions', 'new.jsonl');
+    await fs.mkdir(path.dirname(old), { recursive: true });
+    await fs.writeFile(old, 'history');
+    const locations = new CodexThreadLocations(directory, () => repaired);
+    await locations.record('thread', old, root);
+    const writeFile = fs.writeFile;
+    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, contents, options) => {
+      await writeFile(file, contents, options);
+      await writeFile(path.join(directory, 'thread.json'), JSON.stringify({ threadId: 'thread', path: archived, sqliteHome: root }));
+    });
+    try {
+      await expect(locations.prepareResume('thread', async () => undefined)).rejects.toThrow('location changed');
+    } finally { spy.mockRestore(); }
+    expect(await locations.readStorage('thread')).toEqual({ historyHome: root, sqliteHome: root, rolloutPath: archived });
+  });
+
   it('keeps the original database home and recovers legacy location records', async () => {
     const { root, locations } = await fixture();
     const home = path.join(root, 'account-a');

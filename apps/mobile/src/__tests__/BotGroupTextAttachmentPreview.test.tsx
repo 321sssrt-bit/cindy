@@ -21,6 +21,7 @@ vi.mock('lucide-react-native', () => ({
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock('@/theme', () => ({
   fontWeight: { semibold: '600' },
+  iconSize: { action: 20, md: 16 },
   lineHeight: { bodySmall: 20 },
   monoFont: 'monospace',
   radius: { pill: 9999 },

@@ -10,7 +10,7 @@ import { Text } from '@/components/AppText';
 import { HtmlFileReader } from '@/session/HtmlFileReader';
 import { MarkdownFileReader } from '@/session/MarkdownFileReader';
 import { withDownloadedRemoteMediaFile } from '@/session/remoteMediaDiskCacheExpo';
-import { fontWeight, lineHeight, monoFont, radius, spacing, textStyles, typeScale, useTheme } from '@/theme';
+import { fontWeight, iconSize, lineHeight, monoFont, radius, spacing, textStyles, typeScale, useTheme } from '@/theme';
 
 const TEXT_ATTACHMENT_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 const JSON_ATTACHMENT_PREVIEW_MAX_LINES = 10_000;
@@ -138,7 +138,7 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
               style={styles.closeButton}
               testID="groupChat.server.attachmentPreviewCloseButton"
             >
-              <X color={colors.textSecondary} size={20} />
+              <X color={colors.textSecondary} size={iconSize.action} />
             </Pressable>
             <Text numberOfLines={1} style={[textStyles.body, styles.title, { color: colors.textPrimary }]}>{fileName}</Text>
           </View>
@@ -158,7 +158,7 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
               ) : null}
               {kind !== 'html' && (state.status === 'too-large' || state.status === 'binary') ? (
                 <Pressable accessibilityRole="button" onPress={() => { void openOutside(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewOpenOutside">
-                  <ExternalLink color={colors.textPrimary} size={16} />
+                  <ExternalLink color={colors.textPrimary} size={iconSize.md} />
                   <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewOpenOutside')}</Text>
                 </Pressable>
               ) : null}

@@ -1766,8 +1766,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     let makerMemoryRules = '';
     let makerMemoryIndex = '';
     let memoryFlushController: MemoryFlushController | null = null;
+    let mutableModel = opts.model;
+    let mutableProviderId = opts.providerId ?? null;
     const getAutoCompactThresholdPct = (): number | undefined =>
-      this.deps.runtimeConfig.autoCompactThresholdPct;
+      this.deps.resolveModelCompactionPct?.(mutableProviderId, mutableModel)
+        ?? this.deps.runtimeConfig.autoCompactThresholdPct;
     const autoCompactController =
       getAutoCompactThresholdPct() === undefined
         ? null
@@ -2980,8 +2983,6 @@ export class ClaudeCodeAgent extends BaseAgent {
     // model / effort / permissionMode 在 setX 后会变, handle 通过 getter 读 mutable 引用;
     // translator ctx 也通过 getter 读, 让 turn start/end 日志反映"当前真实值"而不是创建时的值。
     // 必须在 buildQuery / forward loop 之前声明, 否则 ctx getter 会捕获到 TDZ。
-    let mutableModel = opts.model;
-    let mutableProviderId = opts.providerId ?? null;
     let mutableAutoReviewCredentialMode = effectiveCredentialMode;
     let nativeAutoReviewUnavailable = false;
     let currentAutoReviewIntent: AutoReviewUserIntent = '';
@@ -3715,8 +3716,8 @@ export class ClaudeCodeAgent extends BaseAgent {
       const currentSdkModel = sdkModelFor(mutableModel);
       const workingWindow = resolveModelContextWindow(mutableModel);
       appliedContextWindow = workingWindow;
-      applyClaudeContextWindow(env, workingWindow, this.deps.runtimeConfig.autoCompactThresholdPct);
-      if (remoteEnv) applyClaudeContextWindow(remoteEnv, workingWindow, this.deps.runtimeConfig.autoCompactThresholdPct);
+      applyClaudeContextWindow(env, workingWindow, getAutoCompactThresholdPct());
+      if (remoteEnv) applyClaudeContextWindow(remoteEnv, workingWindow, getAutoCompactThresholdPct());
       const currentSdkEffort = getSdkEffortForModel(mutableModel, mutableEffort, mutableProviderId);
       const baseResumeAt = vo.resumeSessionAt as string | undefined;
       const baseFork = vo.forkSession as boolean | undefined;

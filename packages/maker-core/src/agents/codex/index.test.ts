@@ -32979,6 +32979,27 @@ describe('CodexAgent context window reporting', () => {
     await handle.close();
   });
 
+  it('keeps per-model catalog settings free of global window overrides and preserves in-flight compaction facts', async () => {
+    let pct: number | null = 75;
+    const resolveCodexContextWindowInfo = vi.fn(async () => null);
+    const agent = new CodexAgent(createDeps({}, {
+      resolveModelCompactionPct: () => pct,
+      resolveCodexThreadContextWindow: () => 400_000,
+      resolveCodexContextWindowInfo,
+    }));
+    const host = installFakeHost(agent, method => method === Method.ConfigRead ? { config: {} } : undefined);
+    const handle = await agent.startSession({ sessionId: 'model-compaction-policy', model: GATEWAY_MODEL, workingDir: '/repo' });
+    try {
+      const start = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as { config?: Record<string, unknown> };
+      expect(start.config?.model_context_window).toBeUndefined();
+      expect(start.config?.model_auto_compact_token_limit).toBeUndefined();
+      pct = 60;
+      await handle.getCodexContextWindowInfo?.();
+      expect(resolveCodexContextWindowInfo).toHaveBeenLastCalledWith(GATEWAY_MODEL,
+        expect.objectContaining({ model_auto_compact_token_limit: 300_000 }), null);
+    } finally { await handle.close(); }
+  });
+
   it('reads the bound CLI configuration without changing it or using the provider catalog', async () => {
     const nativeInfo = { contextWindow: 272_000, usableContextWindow: 258_400, autoCompactTokenLimit: 244_800,
       modelMaxContextWindow: 872_000, source: 'runtime' as const, fallbackModel: false };

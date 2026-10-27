@@ -3604,6 +3604,12 @@
           "contextLimitHint": "Applies to all available engines for this model. Edit in whole K (1 K = 1,000 tokens); untouched values retain their precision. Saved changes apply to subsequent runs without interrupting a response. Actual capacity remains subject to the model service’s limits.",
           "contextLimitLocalMillionHint": "Native 256K (262,144 tokens), with optional expansion to 1M (1,000,000). If the service is running, restart it under Manage Service to apply changes; if stopped, they apply on next use. Longer inputs need more memory and take longer to process.",
           "contextLimitAria": "Context limit (thousands of tokens)",
+          "compaction": {
+            "title": "Automatic Compaction",
+            "hint": "Compact context at the selected usage percentage. Lower values compact earlier; engine limits still apply.",
+            "default": "{{pct}}% (Default)",
+            "timing": "Applies to all available engines for this model and source on subsequent runs, without interrupting a response."
+          },
           "contextLimitRoute": "Current {{tokens}} tokens · 1 K = 1,000 tokens",
           "contextLimitOverWindow": "Above the provider’s declared window; requests may fail.",
           "restoreDefault": "Restore default",
@@ -12794,6 +12800,29 @@
   },
   "ccAgent": {
     "sessionEntry": {"missing":"This session could not be found. It may have been deleted.","denied":"This account or computer cannot access this session.","failed":"Could not load this session.","back":"Back to Sessions","retry":"Reload Session"},
+    "contextRingPanel": {
+      "title": "Context",
+      "meaning": "What AI can refer to this turn: conversation, instructions and tool results.",
+      "used": "Used",
+      "available": "Plenty of room",
+      "elevated": "Filling up",
+      "nearLimit": "Near the limit",
+      "unknown": "No data yet",
+      "continueHint": "Keep going. No adjustment needed yet.",
+      "unknownHint": "Current usage appears when the model reports it.",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "Compact context",
+      "compactHelp": "Summarize earlier content to free space. Some details may be omitted.",
+      "adjust": "Adjust window",
+      "taskScope": "This Session",
+      "modelSettings": "Model Defaults",
+      "modelSettingsHint": "Change this model’s default window and limit. This also affects other sessions.",
+      "remoteModelSettings": "For lasting changes, edit model settings on the computer running this session.",
+      "costHint": "A larger window holds more content and may cost more.",
+      "technical": "Technical details",
+      "auto": "Automatic compaction",
+      "autoHelp": "Codex automatically compacts context near its compaction threshold."
+    },
     "contextWindowBudget": {
       "menuTitle": "Task context window",
       "triggerLabel": "Task context window, currently {{window}}",

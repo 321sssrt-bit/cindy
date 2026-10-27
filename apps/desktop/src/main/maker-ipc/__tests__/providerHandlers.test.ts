@@ -4594,6 +4594,29 @@ describe('model context limit IPC', () => {
   const related = { providerId: 'openai', agent: 'claude-code' as const, modelId: 'chatgpt/gpt-6' };
   const stamp = { dataOwnerId: 'owner-a', ownerGeneration: 1 };
 
+  it('saves model compaction for all aliases with owner and range validation', async () => {
+    const harness = new IpcHarness();
+    const writeModelCompaction = vi.fn(async () => {});
+    registerProviderHandlers(harness, makeDeps({
+      currentOwnerSession: () => ({ dataOwnerId: 'owner-a', generation: 1 }),
+      listProviders: async () => [catalogView('openai', { codex: ['gpt-6'], 'claude-code': ['chatgpt/gpt-6'] })],
+      readModelContextLimit: () => ({ limit: null, isCustomized: false }),
+      writeModelContextLimit: vi.fn(), writeModelCompaction,
+      readModelCompaction: () => ({ pct: 90, isCustomized: false }),
+    }));
+    const target = { ...primary, relatedTargets: [related] };
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_CONTEXT_LIMIT_GET, target)).resolves.toMatchObject({
+      compaction: { pct: 90, isCustomized: false },
+    });
+    await harness.invoke(MAKER_INVOKE.MODEL_COMPACTION_SET, target, 80, stamp);
+    expect(writeModelCompaction).toHaveBeenCalledExactlyOnceWith([primary, related], 80);
+    for (const invalid of [49, 91, 80.5, '80', NaN]) {
+      await expect(harness.invoke(MAKER_INVOKE.MODEL_COMPACTION_SET, target, invalid, stamp)).rejects.toThrow();
+    }
+    await expect(harness.invoke(MAKER_INVOKE.MODEL_COMPACTION_SET, target, 70, { ...stamp, ownerGeneration: 0 })).rejects.toThrow();
+    expect(writeModelCompaction).toHaveBeenCalledTimes(1);
+  });
+
   it('returns native facts separately from model preferences without writing or launching a task', async () => {
     const harness = new IpcHarness();
     const native = { contextWindow: 272_000, usableContextWindow: 258_400, autoCompactTokenLimit: 244_800,

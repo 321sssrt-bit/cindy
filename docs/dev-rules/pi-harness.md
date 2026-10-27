@@ -126,15 +126,16 @@ Cindy 显式设置:models.json、`settings.json` 的 `transport:sse` 与 `retry.
 目前只在会话启动钩子接入）。
 Pi 原生负责 threshold 与 overflow 压缩；
 Cindy 消费 compaction 事件做 UI、usage、digest 投影，并只在本机原生自动压缩确定性失败后锁存
-下一次发送前换窗。设置页的 Pi 百分比默认 90%（已有显式 override 保留），在每次启动或恢复
-Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveTokens`
-（`capacity - budget * pct/100`）；切模只按这份百分比快照重算，不回读最新全局值。
+下一次发送前换窗。Desktop 按供应商与模型提供统一压缩比例（默认 90%，所有 Harness 共用），
+在每次启动或恢复 Pi 任务时写入原生设置（`capacity - budget * pct/100`），
+模型覆盖写进 `compaction.modelOverrides`；旧 Pi 全局偏好不再参与 Desktop 运行时计算。
 模型容量用于 Pi 原生请求长度裁剪，不能随小预算缩到 1K；工作预算只调整原生压缩阈值，
 并作为已应用预算进入 Cindy 的用量快照。
 大窗切小窗先由 Desktop 的统一目标窗口事务按目标窗口 90% 固定压力线评估（独立于 Pi
 日常自动压缩百分比），命中时复用既有上下文接续事务；未命中时，已加载的 Pi 1.0 模型使用启动时写入的
 `compaction.modelOverrides["provider/modelId"].reserveTokens`，再用原生 `set_model` 与
-`get_state` 确认 provider／model／contextWindow。百分比沿用任务启动快照；工作预算按来源和模型解析。
+`get_state` 确认 provider／model／contextWindow。压缩比例与工作预算均按来源和模型解析，
+与运行时快照不同则按既有预览结果重建，不把偏好更新冒充原生内存已更新。
 如果新目录或工作预算要求的保留量与运行中 Pi 实际配置不同，预览返回既有 `rebuild`，
 由宿主恢复流程加载配置；不得谎称文件改写已更新 Pi 内存。旧 Pi 不支持按模型配置时，
 同保留量的选择仍可热切，需变化时走同一预览分支。
@@ -142,7 +143,7 @@ Pi 任务时冻结，并写入该任务 `settings.json` 的 `compaction.reserveT
 不能当成无损配置刷新。忙时选择必须在回合结束后走同一切换与容量事务，不能由延后服务
 直接关闭 Pi。原生校验完成前，子代理 route 保持 pending；确认并持久化目标路由后才放行
 排队消息。
-Claude Code 仍用独立百分比。env:`CINDY_PI_API_KEY`、
+Claude Code、Codex 共用同一模型比例，各自适配原生参数。env:`CINDY_PI_API_KEY`、
 `CINDY_PI_SESSION_ID`、`PI_CODING_AGENT_DIR`、`CINDY_PI_PERMISSION_FILE`、`CINDY_PI_MCP_BRIDGE`、
 外部 MCP 专用动态 env、`PI_OFFLINE=1`(关启动期联网)、`NO_PROXY` 兜底 loopback(防全局代理
 打穿本地 proxy 与 MCP bridge)。
@@ -165,8 +166,8 @@ SSH 不套用本机限核值。沿用现有默认值与 override 存储，不新
 放任 pi 默认(未写 settings.json):`httpIdleTimeoutMs=300000`、`websocketConnectTimeoutMs`、
 `compaction.keepRecentTokens`、`defaultProjectTrust`。Cindy 会在每次 startSession 覆写
 `transport`、`retry.maxRetries=6`（provider 级保持 0）与 `compaction.reserveTokens`；
-未配置 Pi 百分比且未缩小工作预算时不写 `reserveTokens`，沿用 Pi 默认 16384；
-显式小预算仍以默认 90% 计算触发阈值。
+非 Desktop 宿主未提供百分比且未缩小工作预算时不写 `reserveTokens`，沿用 Pi 默认 16384；
+Desktop 始终提供模型比例，未自定义为 90%。
 
 ### 运行中的模型目录与凭据更新
 

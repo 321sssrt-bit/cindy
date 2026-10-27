@@ -34,7 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 
-import { readModelContextLimit } from './model-context-limit-store.js';
+import { readModelContextLimit, resolveModelCompactionPct } from './model-context-limit-store.js';
 import { toolchainThreadCapEnv } from './toolchain-thread-cap.js';
 import { inputHandoffTaskShellEnv } from '../input-handoff/askpass/index.js';
 
@@ -104,7 +104,7 @@ import businessOwnershipPrompt from './business-ownership-prompt.md?raw';
 import piSystemPrompt from './pi-system-prompt.md?raw';
 import { createLogger } from '../logger.js';
 import { readMemorySettings } from './memory-settings-store.js';
-import { readPiCompactionPct } from './compaction-settings-store.js';
+import { DEFAULT_MODEL_COMPACTION_PCT } from '../../shared/modelContextLimit.js';
 import { registerPiProxySession } from './pi-proxy-session-auth.js';
 import { derivePiProxySessionToken } from './pi-proxy-session-token.js';
 import {
@@ -876,7 +876,7 @@ function buildDesktopPiRuntimeConfig(): AgentRuntimeConfig {
     userDataPath: app.getPath('userData'),
   };
   Object.defineProperty(config, 'piAutoCompactThresholdPct', {
-    get: () => readPiCompactionPct(),
+    get: () => DEFAULT_MODEL_COMPACTION_PCT,
     enumerable: true,
     configurable: false,
   });
@@ -1961,6 +1961,10 @@ export function buildPiAgent(opts: BuildPiAgentOpts): PiAgent | null {
       const source = resolveModelContextProviderId(catalog, 'pi', providerId, modelId);
       return source ? readModelContextLimit('pi', source, modelId)
         ?? resolveModelDefaultContextWindow(catalog, 'pi', source, modelId) : null;
+    },
+    resolveModelCompactionPct: (providerId, modelId) => {
+      const source = resolveModelContextProviderId(getActiveCatalog(), 'pi', providerId, modelId);
+      return resolveModelCompactionPct(getActiveCatalog(), 'pi', source, modelId);
     },
     auth: desktopPiAuthAdapter,
     runtimeConfig: buildDesktopPiRuntimeConfig(),

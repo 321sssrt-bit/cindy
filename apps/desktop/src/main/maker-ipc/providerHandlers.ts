@@ -483,10 +483,13 @@ export interface ProviderHandlerDeps {
   readModelContextLimit?(target: ModelPriceOverrideTarget): ModelContextLimitView;
   validateModelContextLimit?(targets: readonly ModelPriceOverrideTarget[], limit: number): Promise<void>;
   writeModelContextLimit?(targets: readonly ModelPriceOverrideTarget[], limit: number | null): void | Promise<void>;
+  readModelCompaction?(target: ModelPriceOverrideTarget): { pct: number; isCustomized: boolean };
+  writeModelCompaction?(targets: readonly ModelPriceOverrideTarget[], pct: number | null): Promise<void>;
 }
 
 /** 上下文上限的读回视图(与写入返回同形，UI 一次拿齐当前值与是否自定义)。 */
 export interface ModelContextLimitView {
+  compaction?: import('../../shared/modelContextLimit').ModelContextLimitView['compaction'];
   mixed?: boolean;
   limit: number | null;
   isCustomized: boolean;
@@ -1890,7 +1893,9 @@ export function registerProviderHandlers(
   const readContextTargets = (targets: ModelPriceOverrideTarget[]): ModelContextLimitView => {
     const { read } = requireContextLimitDeps();
     const views = targets.map(read);
+    const policy = deps.readModelCompaction?.(targets[0]!);
     return {
+      ...(policy ? { compaction: policy } : {}),
       limit: views.find((v) => v.limit !== null)?.limit ?? null,
       isCustomized: views.some((v) => v.isCustomized),
       mixed: views.some((v) => v.limit !== views[0]!.limit),
@@ -1920,6 +1925,28 @@ export function registerProviderHandlers(
     }
     return view;
   });
+
+  registry.handle(
+    MAKER_INVOKE.MODEL_COMPACTION_SET,
+    async (event, input: unknown, pctInput: unknown, ownerInput: unknown) => {
+      assertTrustedProviderMutationSender(event);
+      assertContextOwner(ownerInput);
+      const targets = parseContextTargets(input);
+      if (pctInput !== null && (typeof pctInput !== 'number' || !Number.isInteger(pctInput) || pctInput < 50 || pctInput > 90)) {
+        throwIpcError('INVALID_PARAMS', 'compaction percentage must be 50–90 or null');
+      }
+      if (!deps.writeModelCompaction) throwIpcError('INTERNAL', 'model compaction settings unavailable');
+      const ownerAtIngress = captureProviderOwnerSession();
+      return withProviderConfigMutation(targets[0]!.providerId, () => enqueuePriceMutation(async () => {
+        if (pctInput !== null) for (const target of targets) await requirePriceTargetModel(target);
+        assertProviderMutationOwner(ownerAtIngress, 'active account changed before setting compaction');
+        await deps.writeModelCompaction!(targets, pctInput as number | null);
+        assertProviderMutationOwner(ownerAtIngress, 'active account changed after setting compaction');
+        deps.broadcastChanged();
+        return readContextTargets(targets);
+      }));
+    },
+  );
 
   registry.handle(
     MAKER_INVOKE.MODEL_CONTEXT_LIMIT_SET,

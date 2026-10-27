@@ -1199,11 +1199,14 @@ import {
 } from '../maker-host/session-provider-store.js';
 import { getActiveCatalog, setDiscoveredProviderModels } from '../maker-host/active-catalog.js';
 import { createSubscriptionFastPolicy } from '../maker-host/subscription-fast-policy.js';
-import { readCompactionPct } from '../maker-host/compaction-settings-store.js';
+import { DEFAULT_MODEL_COMPACTION_PCT, modelCompactionTarget } from '../../shared/modelContextLimit.js';
 import { resolveVerifiedContextWindow, resolveModelDefaultContextWindow } from '../maker-host/catalog-to-descriptors.js';
 import {
   isModelContextLimitCustomized,
   readModelContextLimit,
+  readModelCompactionPct,
+  resolveModelCompactionPct,
+  writeModelCompactionWithRefresh,
   writeModelContextLimitsWithRefresh,
 } from '../maker-host/model-context-limit-store.js';
 import { refreshAnthropicModelsFromProbe } from '../maker-host/model-discovery/anthropic.js';
@@ -7631,6 +7634,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         codexHome: getCodexHome(),
         binaryPath: getCachedBinaryStatus('codex').binaryPath,
         modelId: target.modelId,
+        compactionPctOverride: resolveModelCompactionPct(getActiveCatalog(), 'codex', target.providerId, target.modelId),
         contextWindowOverride: readModelContextLimit('codex', target.providerId, target.modelId)
           ?? resolveModelDefaultContextWindow(getDesktopSelectableCatalog(), 'codex', target.providerId, target.modelId),
       });
@@ -7646,6 +7650,35 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         target.modelId,
       ),
     }),
+    readModelCompaction: (target) => {
+      const provider = getActiveCatalog().providers.find((entry) => entry.id === target.providerId);
+      const identity = provider ? modelCompactionTarget(provider, target.agent, target.modelId) : target;
+      const pct = readModelCompactionPct(identity.providerId, identity.modelId);
+      return { pct: pct ?? DEFAULT_MODEL_COMPACTION_PCT, isCustomized: pct !== null };
+    },
+    writeModelCompaction: (targets, pct) => {
+      const catalog = getActiveCatalog();
+      const identities = targets.map((target) => {
+        const provider = catalog.providers.find((entry) => entry.id === target.providerId);
+        return provider ? modelCompactionTarget(provider, target.agent, target.modelId) : target;
+      });
+      // Even an edit sent through one harness changes every alias of this model.
+      // Pass explicit targets so unchanged window sizes still reload the new percentage.
+      const affectedTargets = [...targets];
+      for (const provider of catalog.providers) {
+        for (const agent of ['claude-code', 'codex', 'pi'] as const) {
+          for (const model of provider.models[agent] ?? []) {
+            const identity = modelCompactionTarget(provider, agent, model.id);
+            if (identities.some((entry) => entry.providerId === identity.providerId && entry.modelId === identity.modelId)) {
+              affectedTargets.push({ agent, providerId: provider.id, modelId: model.id });
+            }
+          }
+        }
+      }
+      return writeModelCompactionWithRefresh(
+        identities, pct, () => refreshContextSettings(affectedTargets), () => refreshContextSettings(affectedTargets),
+      );
+    },
     validateModelContextLimit: async (targets, limit) => {
       const localTargets = targets.filter((target) => target.providerId === MANAGED_LLAMACPP_PROVIDER_ID);
       if (localTargets.length) {
@@ -18480,7 +18513,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       }
       return result;
     },
-    getAutoCompactThresholdPct: () => readCompactionPct(),
+    getAutoCompactThresholdPct: () => DEFAULT_MODEL_COMPACTION_PCT,
     resolveVerifiedWindow: (agentKind, modelId, providerId) => {
       const catalog = getActiveCatalog();
       const makerAgentKind = dbToMakerAgentKind(agentKind);

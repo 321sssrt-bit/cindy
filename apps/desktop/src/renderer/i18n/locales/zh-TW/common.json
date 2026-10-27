@@ -3574,6 +3574,12 @@
           "contextLimitHint": "套用至此模型所有可用引擎。以整數 K 編輯（1 K = 1,000 tokens）；未編輯時保留精確值。儲存後用於後續執行，不影響正在產生的內容。實際可用長度仍受模型服務限制。",
           "contextLimitLocalMillionHint": "原生 256K（262,144 tokens），可選擴展至 1M（1,000,000）。服務執行時需在「管理服務」中重新啟動以套用變更；已停止時，下次使用自動生效。長輸入會增加記憶體用量和等待時間。",
           "contextLimitAria": "上下文上限（千 tokens）",
+          "compaction": {
+            "title": "自動壓縮",
+            "hint": "占用達到所選比例時整理上下文。比例越低，越早壓縮；實際時機仍受引擎限制。",
+            "default": "{{pct}}%（預設）",
+            "timing": "套用至此來源下該模型的所有可用引擎。後續執行生效，不中斷正在產生的內容。"
+          },
           "contextLimitRoute": "目前 {{tokens}} tokens · 1 K = 1,000 tokens",
           "contextLimitOverWindow": "已超過上游宣告的長度，可能導致請求失敗。",
           "restoreDefault": "恢復預設",
@@ -12740,6 +12746,29 @@
   },
   "ccAgent": {
     "sessionEntry": {"missing":"找不到這條任務，它可能已被刪除。","denied":"目前帳號或電腦無法存取這條任務。","failed":"未能載入這條任務。","back":"返回任務列表","retry":"重新載入任務"},
+    "contextRingPanel": {
+      "title": "上下文",
+      "meaning": "AI 本輪可參考的內容，包括對話、指令與工具結果。",
+      "used": "已使用",
+      "available": "空間充足",
+      "elevated": "占用較高",
+      "nearLimit": "接近上限",
+      "unknown": "尚無資料",
+      "continueHint": "可以繼續對話，暫時無需調整。",
+      "unknownHint": "收到模型的用量資料後，這裡會顯示目前占用。",
+      "tokens": "{{used}} / {{total}} tokens",
+      "compact": "壓縮上下文",
+      "compactHelp": "概括較早內容，騰出空間。部分細節可能省略。",
+      "adjust": "調整視窗",
+      "taskScope": "本任務",
+      "modelSettings": "模型預設設定",
+      "modelSettingsHint": "修改此模型的預設視窗及上限，也會影響其他任務。",
+      "remoteModelSettings": "長期調整需前往執行此任務的電腦，修改模型設定。",
+      "costHint": "較大的視窗可容納更多內容，也可能增加費用。",
+      "technical": "技術詳情",
+      "auto": "自動壓縮",
+      "autoHelp": "Codex 會在接近壓縮門檻時自動整理上下文。"
+    },
     "contextWindowBudget": {
       "menuTitle": "任務上下文視窗",
       "triggerLabel": "任務上下文視窗，目前 {{window}}",

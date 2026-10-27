@@ -212,6 +212,7 @@ async function startRewindableSession(
     effort?: Effort;
     availableModels?: ModelDescriptor[];
     resolveModelContextLimit?: AgentDeps['resolveModelContextLimit'];
+    resolveModelCompactionPct?: AgentDeps['resolveModelCompactionPct'];
     resolveModelEfforts?: AgentDeps['resolveModelEfforts'];
     shouldHandoffAfterContextAssessment?: (tokens: number, window: number) => boolean;
   } = {},
@@ -245,6 +246,7 @@ async function startRewindableSession(
     ),
     capabilityAdditions: { availableModels: options.availableModels ?? TEST_MODELS },
     resolveModelContextLimit: options.resolveModelContextLimit,
+    resolveModelCompactionPct: options.resolveModelCompactionPct,
     ...(options.resolveModelEfforts ? { resolveModelEfforts: options.resolveModelEfforts } : {}),
     ...(remoteCcQueryFactory ? { remoteCcQueryFactory } : {}),
   });
@@ -331,6 +333,19 @@ describe('ClaudeCodeAgent runtime settings during rewind window', () => {
       budget = null;
       expect(await handle.requiresModelSwitchRebuild?.('claude-opus-4-6')).toBe(true);
     } finally { await handle.close(); }
+  });
+
+  it('uses the model compaction policy in the native environment and preserves the legacy fallback', async () => {
+    for (const pct of [75, null]) {
+      sdkMock.query.mockClear();
+      const { handle } = await startRewindableSession({
+        autoCompactThresholdPct: 85,
+        resolveModelCompactionPct: () => pct,
+      });
+      try {
+        expect(sdkMock.query.mock.calls[0]?.[0]?.options?.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe(String(pct ?? 85));
+      } finally { await handle.close(); }
+    }
   });
 
   it('passes the selected custom-provider window and compact threshold to spawned Claude Code', async () => {

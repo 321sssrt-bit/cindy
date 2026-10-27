@@ -240,15 +240,29 @@ export function useSessionGroupArchive({
       const succeededIds = new Set<string>();
       let newlyRunning = 0;
       let newlyAttached = 0;
+      let newlyPinned = 0;
       for (const s of candidates) {
         try {
           const statusWriteTarget = await sessionService.resolveStatusWriteTarget(s.id);
           // Confirmation, earlier writes and target resolution can outlive preflight.
-          // No further asynchronous preparation may precede closing this query.
           const reason = await archiveBlockReason(s.id);
           if (reason) {
             if (reason === 'attached') newlyAttached++;
             else newlyRunning++;
+            continue;
+          }
+          const current = await sessionService.get(s.id);
+          if (current.status !== 'active' || current.deviceLinkDeviceId || !belongsToGroup(current)) {
+            continue;
+          }
+          if (current.pinnedAt) {
+            newlyPinned++;
+            continue;
+          }
+          // The final metadata read is also an asynchronous boundary. Check the
+          // live runtime again, then close and write without further preparation.
+          if (makerChatStore.getRunningSnapshot().get(s.id)?.isRunning) {
+            newlyRunning++;
             continue;
           }
           makerChatStore.closeSessionQuery(s.id);
@@ -282,7 +296,7 @@ export function useSessionGroupArchive({
           }),
         );
       }
-      const lateSkipNotes = skipNotesFor(newlyRunning, 0, newlyAttached);
+      const lateSkipNotes = skipNotesFor(newlyRunning, newlyPinned, newlyAttached);
       if (lateSkipNotes.length > 0) {
         toast.warning(
           t('ccAgent.sidebar.archiveAll.skipped', { skip: lateSkipNotes.join(skipSep) }),

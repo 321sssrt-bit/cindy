@@ -25,6 +25,7 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 vi.mock('@/lib/sessionService', () => ({
+  get: vi.fn(),
   setStatus: vi.fn(),
   restoreIfArchived: vi.fn(),
   resolveStatusWriteTarget: vi.fn(),
@@ -89,6 +90,7 @@ function session(id: string, patch: Partial<Session> = {}): Session {
 
 function mount(sessions: Session[], status: FilterStatus = 'active') {
   const writes = new Map(sessions.map((s) => [s.id, s]));
+  vi.mocked(sessionService.get).mockImplementation(async (id) => ({ ...writes.get(id)! }));
   vi.mocked(sessionService.setStatus).mockImplementation(async (id, nextStatus) => {
     const updated = { ...writes.get(id)!, status: nextStatus };
     writes.set(id, updated);
@@ -122,6 +124,84 @@ afterEach(() => {
 });
 
 describe('session group bulk lifecycle', () => {
+  // Review #7539: candidates captured before confirmation can become pinned,
+  // deleted, archived or leave their automation before the persisted write.
+  // Earlier running/takeover regressions did not change persisted metadata.
+  // Minimal input: two automation members, one changed during confirmation;
+  // invoke the production hook and verify persisted state and cleanup. Tier: unit.
+  // Six regressions fail before the fix. Standalone after fix: Vitest 2.19s
+  // (21 tests, 33ms), pnpm wall 3.87s on Windows (2026-10-27).
+  it.each([
+    ['pinned', { pinnedAt: '2026-10-27' }],
+    ['deleted', { status: 'deleted' }],
+    ['archived', { status: 'archived' }],
+    ['moved out of the automation', { source: undefined }],
+  ] satisfies [string, Partial<Session>][])(
+    'preserves a member that becomes %s while confirmation is open',
+    async (_change, patch) => {
+      const runs = [
+        session('eligible', { source: 'scheduler' }),
+        session('other', { source: 'scheduler' }),
+      ];
+      const view = mount(runs);
+      view.options.confirmDialog.mockImplementation(async () => {
+        view.writes.set('eligible', { ...runs[0], ...patch });
+        return true;
+      });
+      await act(async () => {
+        await view.result.current(automationScope(runs));
+      });
+      expect(view.writes.get('eligible')).toEqual({ ...runs[0], ...patch });
+      expect(view.writes.get('other')?.status).toBe('archived');
+      expect(makerChatStore.closeSessionQuery).not.toHaveBeenCalledWith('eligible');
+      expect(makerChatStore.purgeSession).not.toHaveBeenCalledWith('eligible');
+      expect(view.options.patchLocal).not.toHaveBeenCalledWith('eligible', expect.anything());
+      expect(view.options.navigate).not.toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith('ccAgent.sidebar.archiveAll.archived:{"count":1}');
+      if ('pinnedAt' in patch && patch.pinnedAt) {
+        expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('skipPinned'));
+      }
+    },
+  );
+
+  it('keeps a later member pinned during an earlier archive write', async () => {
+    const runs = [
+      session('first', { source: 'scheduler' }),
+      session('eligible', { source: 'scheduler' }),
+    ];
+    const view = mount(runs);
+    vi.mocked(sessionService.setStatus).mockImplementation(async (id, status) => {
+      const updated = { ...view.writes.get(id)!, status };
+      view.writes.set(id, updated);
+      view.writes.set('eligible', { ...view.writes.get('eligible')!, pinnedAt: '2026-10-27' });
+      return updated;
+    });
+    await act(async () => {
+      await view.result.current(automationScope(runs));
+    });
+    expect(view.writes.get('eligible')?.status).toBe('active');
+    expect(view.writes.get('eligible')?.pinnedAt).toBe('2026-10-27');
+    expect(makerChatStore.closeSessionQuery).toHaveBeenCalledExactlyOnceWith('first');
+    expect(view.options.navigate).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith('ccAgent.sidebar.archiveAll.archived:{"count":1}');
+  });
+
+  it('preserves a run that starts during the final metadata read', async () => {
+    const runs = [session('eligible', { source: 'scheduler' })];
+    const view = mount(runs);
+    vi.mocked(sessionService.get).mockImplementation(async () => {
+      liveRunning.set('eligible', { isRunning: true });
+      return runs[0];
+    });
+    await act(async () => {
+      await view.result.current(automationScope(runs));
+    });
+    expect(view.writes.get('eligible')?.status).toBe('active');
+    expect(makerChatStore.closeSessionQuery).not.toHaveBeenCalled();
+    expect(sessionService.setStatus).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
   // Review P1 regression: the new automation entry bypassed IM takeover checks
   // and used candidates fixed before confirmation. Earlier tests had neither
   // attached records nor state changes during awaits. Exercise real hook writes,

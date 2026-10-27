@@ -44,20 +44,35 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? GHOST_AGENT_MODELS_CACHE_MS;
   let locations: { owner: string; at: number; value: GhostAgentLocation[] } | null = null;
+  const locationReads = new Map<string, Promise<GhostAgentLocation[] | undefined>>();
   const catalogs = new Map<string, { at: number; value: GhostAgentModelsOk }>();
 
   return {
-    async locations(owner: string, read: () => Promise<GhostAgentLocationsReadResult>): Promise<GhostAgentLocation[] | undefined> {
-      if (locations && locations.owner === owner && now() - locations.at < ttlMs) return locations.value;
-      try {
-        const result = await read();
-        if (result.status !== 'complete') return undefined;
-        const value = result.locations;
-        locations = { owner, at: now(), value };
-        return value;
-      } catch {
-        return undefined;
+    locations(
+      owner: string,
+      read: () => Promise<GhostAgentLocationsReadResult>,
+    ): Promise<GhostAgentLocation[] | undefined> {
+      if (locations && locations.owner === owner && now() - locations.at < ttlMs) {
+        return Promise.resolve(locations.value);
       }
+      const inFlight = locationReads.get(owner);
+      if (inFlight) return inFlight;
+
+      let pending: Promise<GhostAgentLocation[] | undefined>;
+      pending = Promise.resolve()
+        .then(read)
+        .then((result) => {
+          if (result.status !== 'complete') return undefined;
+          const value = result.locations;
+          locations = { owner, at: now(), value };
+          return value;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (locationReads.get(owner) === pending) locationReads.delete(owner);
+        });
+      locationReads.set(owner, pending);
+      return pending;
     },
     async catalog(
       owner: string,

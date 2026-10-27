@@ -5,7 +5,7 @@
  * - 现有覆盖缺口：原用例只验证降级列表，没有覆盖插件缓存失败恢复或同账号并发合并
  * - 最小失败输入：同账号两个并发读取，handleListDevices 先拒绝、重试再返回一台远程电脑
  * - tier：unit
- * - 实测耗时：4.03 s（红测单文件运行，macOS arm64）
+ * - 实测耗时：4.02 s（修复后单文件运行，macOS arm64）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceLinkDeviceView } from '../../../shared/deviceLinkIpc.js';

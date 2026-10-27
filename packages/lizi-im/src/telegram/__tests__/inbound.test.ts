@@ -228,6 +228,16 @@ describe('replyContextOf', () => {
     expect(replyContextOf(m)).toBeNull();
   });
 
+  it('keeps all 500 short paragraphs without charging absent fields to the node budget', () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `段落 ${i}`);
+    const rich = msg({
+      text: undefined,
+      rich_message: { blocks: lines.map((text) => ({ type: 'paragraph', text })) },
+    });
+    expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toBe(lines.join('\n'));
+    expect(groupWindowEntryOf(rich).text).toBe(lines.join('\n'));
+  });
+
   it('reports unreadable rich references and bounds deeply nested or long content', () => {
     const rich = msg({
       text: undefined,

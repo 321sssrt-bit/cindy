@@ -16,6 +16,8 @@ export function telegramMessageText(message: TelegramTextContent): string {
   let remaining = MAX_TEXT;
   let nodes = 2048;
   function visit(value: unknown, depth = 0, separator = '', childSeparator = ''): string {
+    // Missing optional fields are not nodes in the incoming document.
+    if (value === undefined || value === null) return '';
     if (depth > 20 || --nodes < 0 || remaining <= 0) return '';
     if (typeof value === 'string') {
       const text = value.slice(0, remaining);

@@ -39,11 +39,13 @@ it('retains fresh executions when cached history changes during load', async () 
 });
 
 describe('direct Chat Server client', () => {
-  // Unit: topic loads already cached replies but still fetched the root on every open.
-  it('reuses the durable root and reply page when reopening a topic', async () => {
+  // Unit: reuse cached topic history, but refresh live execution state on every open.
+  it('reuses the durable root and reply page while refreshing executions when reopening a topic', async () => {
+    let executionStatus = 'running';
     const request = vi.fn().mockImplementation(async (path: string) => {
       if (path === '/me') return { actor: { id: id(10), kind: 'human' } };
       if (path.endsWith('/snapshot')) return snapshot();
+      if (path.endsWith('/executions')) return [{ id: id(30), bot_id: id(12), status: executionStatus, epoch: 1, source_message_id: id(20) }];
       if (path.endsWith(`/messages/${id(20)}`)) return message(20);
       if (path.includes('/messages?')) return [{ ...message(21), threadRootId: id(20) }];
       return [];
@@ -53,9 +55,13 @@ describe('direct Chat Server client', () => {
       store: { read: async () => saved, write: async (_, state) => { saved = state ?? undefined; } } });
     const client = createChatServerClient(request, undefined, async () => history);
     const first = await client.load(id(1), undefined, id(20));
+    expect(chatGroupView(first, id(10)).round.speakers).toMatchObject([{ executionId: id(30), executionStatus: 'running' }]);
+    executionStatus = 'stopping';
     request.mockClear();
-    expect((await client.load(id(1), undefined, id(20))).messages).toEqual(first.messages);
+    const reopened = await client.load(id(1), undefined, id(20));
+    expect(reopened.messages).toEqual(first.messages);
     expect(first.messages.map(m => m.id)).toEqual([id(21), id(20)]);
+    expect(chatGroupView(reopened, id(10)).round.speakers).toMatchObject([{ executionId: id(30), executionStatus: 'stopping' }]);
     // History stays cached while the existing live execution and failure reads
     // still refresh. No snapshot, root or reply-page request may be repeated.
     const refreshedPaths = request.mock.calls.map(([path]) => path.split('?')[0]);

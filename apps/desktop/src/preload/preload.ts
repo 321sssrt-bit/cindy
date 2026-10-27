@@ -1661,6 +1661,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     gitPreflight: (): Promise<{ ok: boolean; version: string | null }> =>
       ipcRenderer.invoke('plugin-market:git-preflight'),
   },
+  pluginContributions: {
+    reviewUpdates: () => ipcRenderer.invoke('plugin-contributions:review-updates'),
+    markReviewRead: (pluginId: string, key: string) => ipcRenderer.invoke('plugin-contributions:mark-review-read', { pluginId, key }),
+    prepare: (instanceId: string, expected?: import('../shared/pluginContributions').ContributionInstallationBinding) => ipcRenderer.invoke('plugin-contributions:prepare', { instanceId, expected }),
+    submit: (preparedId: string) => ipcRenderer.invoke('plugin-contributions:submit', preparedId),
+    status: (localId: string) => ipcRenderer.invoke('plugin-contributions:status', localId),
+    cancel: (localId: string) => ipcRenderer.invoke('plugin-contributions:cancel', localId),
+    cancelReview: (pluginId: string, release: { releaseId: string; sha256: string; revision: string }) => ipcRenderer.invoke('plugin-contributions:cancel-review', { pluginId, release }),
+    setAnonymity: (pluginId: string, anonymous: boolean) => ipcRenderer.invoke('plugin-contributions:set-anonymity', { pluginId, anonymous }),
+    discard: (preparedId: string) => ipcRenderer.invoke('plugin-contributions:discard', preparedId),
+    list: (input: { query: string; filter: import('../shared/pluginContributions').MyPluginFilter; cursor?: string }) => ipcRenderer.invoke('plugin-contributions:list', input),
+    submission: (pluginId: string, submissionId: string) => ipcRenderer.invoke('plugin-contributions:submission', { pluginId, submissionId }),
+    releases: (pluginId: string, cursor?: string) => ipcRenderer.invoke('plugin-contributions:releases', { pluginId, ...(cursor ? { cursor } : {}) }),
+    detail: (pluginId: string, cursor?: string) => ipcRenderer.invoke('plugin-contributions:detail', { pluginId, ...(cursor ? { cursor } : {}) }),
+  } satisfies import('../shared/pluginContributions').PluginContributionsApi,
   pluginPublisher: {
     start: (filePath: string): Promise<{ transferId: string; uploadId: string | null }> =>
       ipcRenderer.invoke('plugin-publisher:start', filePath),
@@ -5296,7 +5311,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   worktreeSuggestName: (req: { baseRepo: string }): Promise<unknown> =>
     ipcRenderer.invoke('worktree:suggest-name', req),
   worktreeBranchSyncStatus: (req: import('../shared/worktreeBranchSync').BranchSyncRequest): Promise<import('../shared/worktreeBranchSync').BranchSyncStatus> => ipcRenderer.invoke('worktree:branch-sync-status', req),
-  worktreeSyncBranch: (req: import('../shared/worktreeBranchSync').BranchSyncRequest): Promise<import('../shared/worktreeBranchSync').BranchSyncResult> => ipcRenderer.invoke('worktree:sync-branch', req),
+  worktreeSyncBranch: (req: import('../shared/worktreeBranchSync').BranchSyncRequest): Promise<import('../shared/worktreeBranchSync').BranchSyncReply> => ipcRenderer.invoke('worktree:sync-branch', req),
   worktreeListBranches: (req: { baseRepo: string }): Promise<unknown> =>
     ipcRenderer.invoke('worktree:list-branches', req),
   // P1: 删除/归档确认预检(有无 worktree、是否有未提交更改)
@@ -6793,6 +6808,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       target: import('../shared/modelContextLimit').ModelContextLimitTarget,
     ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
       ipcRenderer.invoke('maker:model-context-limit:get', target),
+    setModelCompaction: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      pct: number | null,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
+    ): Promise<import('../shared/modelContextLimit').ModelContextLimitView> =>
+      ipcRenderer.invoke('maker:model-compaction:set', target, pct, owner),
     /**
      * 任务窗口档位表的**权威边界**（路由默认 / 路由物理上限 / 该路由模型级上限）。
      * 与运行期收敛同源、与 device-link 的 maker:get-context-window-bounds 同一 handler：
@@ -8283,6 +8304,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         scheduleName?: string;
         workingDir?: string;
         providerId?: string;
+        modelAgentDeviceId?: string;
         agentKind?: 'claude-code' | 'codex';
         model?: string;
         /** 绑定会话任务:workingDir 空时 main 按会话 meta.workDir 解析落盘/自测目录。 */

@@ -335,6 +335,32 @@ describe('browser experience cache', () => {
     } finally { await h.cleanup(); }
   });
 
+  it('never splits a UTF-16 surrogate pair across readResult pages, even at maxChars 1', async () => {
+    const original = { ok: true, action: 'act' as const, data: { targetId: 'tab', result: '😀'.repeat(9_000) } };
+    const h = await makeHarness({ getRuntime: () => ({ call: async () => original }) });
+    const loneSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+    try {
+      const id = (await invoke(h, { action: 'act', targetId: 'tab', request: { kind: 'evaluate', fn: '() => []' } })).fullResult.id;
+      // 首个 emoji 从奇数位开始，12_000 的页尾正好切在代理对中间：页尾须退回一位。
+      const emoji = JSON.stringify(original).indexOf('😀');
+      expect((12_000 - emoji) % 2).toBe(1);
+      const first = await invoke(h, { action: 'readResult', resultId: id, offset: 0, maxChars: 12_000 });
+      expect(first.nextOffset).toBe(11_999);
+      // 每一页都必须是合法 Unicode，拼接后逐字节还原。
+      let offset: number | null = 0;
+      let text = '';
+      while (offset !== null) {
+        const chunk = await invoke(h, { action: 'readResult', resultId: id, offset, maxChars: 12_000 });
+        expect(chunk.text).not.toMatch(loneSurrogate);
+        text += chunk.text; offset = chunk.nextOffset;
+      }
+      expect(JSON.parse(text)).toEqual(original);
+      // maxChars=1 落在代理对上时整对返回并前进，不会卡在原地。
+      expect(await invoke(h, { action: 'readResult', resultId: id, offset: emoji, maxChars: 1 }))
+        .toMatchObject({ text: '😀', nextOffset: emoji + 2 });
+    } finally { await h.cleanup(); }
+  });
+
   it('evicts old originals and preserves success with advisory warnings or failed experience storage', async () => {
     let big = true;
     const h = await makeHarness({
@@ -809,7 +835,7 @@ describe('createBrowserMcpServer', () => {
     await h.cleanup();
   });
 
-  it('compiles extract into an act:evaluate call', async () => {
+  it('sends a structured DOM read with an evaluate fallback for other runtimes', async () => {
     const h = await makeHarness();
     await h.client.callTool({
       name: 'call_tool',
@@ -828,6 +854,9 @@ describe('createBrowserMcpServer', () => {
     expect(call.action).toBe('act');
     expect(call.targetId).toBe('t1');
     expect(call.request?.kind).toBe('evaluate');
+    expect(call.request).toMatchObject({ domRead: { kind: 'extract',
+      extract: { from: '.book', multiple: true, fields: { title: 'h3', price: '.price_color' } },
+    } });
     // The compiled fn carries the field schema and is a function source.
     expect(call.request?.fn).toContain('querySelectorAll');
     expect(call.request?.fn).toContain('.book');
@@ -1460,7 +1489,8 @@ describe('createBrowserMcpServer', () => {
       expect(parsed.loginWall).toBeUndefined();
     }
     // The check runs on the tab the snapshot came from.
-    expect(h.calls[1]).toMatchObject({ action: 'act', targetId: 't9', request: { kind: 'evaluate' } });
+    expect(h.calls[1]).toMatchObject({ action: 'act', targetId: 't9',
+      request: { kind: 'evaluate', domRead: { kind: 'login-wall' } } });
     await h.cleanup();
   });
 

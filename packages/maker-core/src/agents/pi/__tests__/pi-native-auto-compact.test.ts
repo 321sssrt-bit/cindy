@@ -648,7 +648,7 @@ describe("PiAgent native auto-compaction ownership", () => {
     walk(agentHome);
     expect(files.length).toBeGreaterThan(0);
     return JSON.parse(readFileSync(files[files.length - 1]!, "utf8")) as {
-      compaction?: { reserveTokens?: number };
+      compaction?: { reserveTokens?: number; modelOverrides?: Record<string, { reserveTokens?: number }> };
     };
   }
 

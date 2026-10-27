@@ -141,6 +141,7 @@
     "allDone": "都做完了"
   },
   "speaking": {
+    "stopping": "正在停止…",
     "planning": "正在安排…",
     "step": "正在做…"
   },

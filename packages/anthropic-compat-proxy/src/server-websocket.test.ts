@@ -753,6 +753,35 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(response).toContain(`{"error":{"status":${status}}}`);
   });
 
+  // Regression #7427: host OAuth handling must see complete 401/403 upgrade
+  // bodies, including 403 responses mapped to native HTTP fallback. Collection
+  // is bounded and observer failures never replace the original response.
+  it.each([
+    { status: 401, bytes: 128, observed: true },
+    { status: 403, bytes: 128, observed: true },
+    { status: 401, bytes: 65_537, observed: false },
+  ])('observes bounded upgrade authentication refusals: %j', async ({ status, bytes, observed }) => {
+    const body = JSON.stringify({ error: { code: 'token_revoked', padding: 'x'.repeat(bytes) } });
+    const upstream = createServer((_req, res) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(body);
+    });
+    const port = await listenOnAvailableLoopbackPort(upstream);
+    cleanups.push(() => new Promise<void>((resolve) => upstream.close(() => resolve())));
+    const observe = vi.fn(async () => { throw new Error('fixture observer failure'); });
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid', transformRequest: [],
+      resolveWebSocketUpstream: () => `http://127.0.0.1:${port}`,
+      prepareWebSocketRequest: async ({ headers }) => ({ headers: { ...headers },
+        signal: new AbortController().signal, onUpgradeFailure: observe }),
+    });
+    const response = await readUpgradeFailure(proxy.url);
+    expect(response).toContain(status === 403 ? 'HTTP/1.1 426' : 'HTTP/1.1 401');
+    if (status === 401) expect(response).toContain(body);
+    if (observed) expect(observe).toHaveBeenCalledExactlyOnceWith(status, body);
+    else expect(observe).not.toHaveBeenCalled();
+  });
+
   it('does not impose a local websocket capacity limit', async () => {
     // 容量由 Codex / 上游控制。proxy 自设连接上限会凭空制造 503,让 Cindy 的
     // at-capacity 行为与官方 Codex 不一致。

@@ -6,7 +6,7 @@ vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => state.ow
 vi.mock('../codex-account-auth.js', () => ({ isOpenAiSubscriptionProviderId: (id: string) => id === 'openai' || id === 'account-b' }));
 vi.mock('../session-provider-store.js', () => ({ getSessionProvider: () => state.provider, hasHostedSessionModelAccess: () => state.hosted }));
 vi.mock('../guest-provider-route-store.js', () => ({ guestProviderRouteForSession: () => state.guest ? {} : null }));
-vi.mock('../anthropic-responses-bridge-host.js', () => ({ getChatgptBridgeAuthForDispatch: vi.fn() }));
+vi.mock('../anthropic-responses-bridge-host.js', () => ({ getChatgptBridgeAuthForDispatch: vi.fn(), invalidateChatgptBridgeAuth: vi.fn(async () => false) }));
 
 vi.mock('../subscription-fast-request-policy.js', () => ({ subscriptionRequestAllowsFast: vi.fn(() => state.fastAllowed) }));
 
@@ -66,6 +66,62 @@ describe('Pi subscription WebSocket routing', () => {
       await send({ ...request, service_tier: 'default' });
       expect(messages.at(-1)).toEqual({ ...request, service_tier: 'default' });
     } finally { outbound.destroy(); inbound.destroy(); decode.destroy(); }
+  });
+
+  // Regression #7427: a WS refusal must use the token proof captured for that
+  // connection, while late failures from replaced credentials are ignored.
+  it('invalidates explicit handshake authentication errors only for the current account proof', async () => {
+    state.provider = 'account-b';
+    registerPiProxySession('fixture-session', 'fixture-token', () => 'account-b');
+    let current = true;
+    const invalidate = vi.fn(async (_failure: { status: number; body: string; failedAccessToken: string }, _provider?: string) => true);
+    const prepared = await createPiWebSocketRequestPreparer(async () => ({
+      accessToken: 'fixture-rejected-token', accountId: null, canDispatch: () => current,
+    }), invalidate)(context('account-b'));
+    await prepared.onUpgradeFailure!(401, '{"error":{"code":"token_revoked"}}');
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith({ status: 401,
+      body: '{"error":{"code":"token_revoked"}}', failedAccessToken: 'fixture-rejected-token' }, 'account-b');
+    invalidate.mockClear();
+    await prepared.onUpgradeFailure!(401, '{"error":"unauthorized"}');
+    await prepared.onUpgradeFailure!(403, '{"error":"permission denied"}');
+    current = false;
+    await prepared.onUpgradeFailure!(401, '{"error":{"code":"token_revoked"}}');
+    current = true; state.owner = 'owner-b';
+    await prepared.onUpgradeFailure!(401, '{"error":{"code":"token_revoked"}}');
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { type: 'error', status: 401, error: { code: 'token_revoked' } },
+    { type: 'error', error: { code: 'token_invalidated', status: 401 } },
+    { type: 'error', error: { code: 'token_revoked' } },
+    { type: 'response.failed', response: { error: { code: 'token_revoked', status: 401 } } },
+  ])('observes established WS authentication failures and preserves the response: %j', async event => {
+    registerPiProxySession('fixture-session', 'fixture-token', () => 'openai');
+    const invalidate = vi.fn(async (_failure: { status: number; body: string; failedAccessToken: string }, _provider?: string) => true);
+    const prepared = await createPiWebSocketRequestPreparer(async () => ({
+      accessToken: 'fixture-rejected-token', accountId: null, canDispatch: () => true,
+    }), invalidate)(context());
+    const transforms = prepared.transforms!();
+    const inbound = transforms.inbound;
+    const observed: unknown[] = [];
+    const decode = createWebSocketMessageTransform(false, message => {
+      observed.push(JSON.parse(message.toString())); return message;
+    });
+    inbound.pipe(decode); decode.resume();
+    const send = async (body: unknown) => {
+      const payload = Buffer.from(JSON.stringify(body));
+      const header = payload.length < 126 ? Buffer.from([129, payload.length]) : Buffer.from([129, 126, payload.length >> 8, payload.length & 255]);
+      await new Promise<void>((resolve, reject) => inbound.write(Buffer.concat([header, payload]), error => error ? reject(error) : resolve()));
+    };
+    try {
+      await send({ type: 'response.output_text.delta', delta: 'token_revoked' });
+      expect(invalidate).not.toHaveBeenCalled();
+      await send(event);
+      expect(invalidate).toHaveBeenCalledOnce();
+      expect(invalidate.mock.calls[0]![0]).toMatchObject({ status: 401, failedAccessToken: 'fixture-rejected-token' });
+      expect(observed.at(-1)).toEqual(event);
+    } finally { inbound.destroy(); transforms.outbound.destroy(); decode.destroy(); }
   });
 
   it('keeps hosted and shared-provider routes on HTTP for live per-model authorization', () => {

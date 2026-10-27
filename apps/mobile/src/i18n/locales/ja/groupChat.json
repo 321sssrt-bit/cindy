@@ -141,6 +141,7 @@
     "allDone": "すべて完了"
   },
   "speaking": {
+    "stopping": "停止中…",
     "planning": "役割分担を考えています…",
     "step": "作業中…"
   },

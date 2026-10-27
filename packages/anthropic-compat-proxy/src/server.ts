@@ -2874,6 +2874,8 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
     let upstreamAttempt = 0;
     let removeAuthorizationListener: (() => void) | undefined;
     let authorizeWebSocket: (() => boolean) | undefined;
+    let preparedTransforms: (() => { outbound: Transform; inbound: Transform }) | undefined;
+    let onUpgradeFailure: ((status: number, body: string) => Promise<void>) | undefined;
     // bundled Codex 0.145.0 的 startup-prewarm / reconnect 都带稳定 thread-id。
     // 真正无 scope 的非 Codex / 通用 socket 仍保留空值隔离；不能把泛用的
     // x-client-request-id 当作稳定 recovery key，误逐出其它 thread 的连接。
@@ -3006,6 +3008,9 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
           removeAuthorizationListener = () => prepared.signal.removeEventListener('abort', revoke);
           outboundHeaders = prepared.headers;
           authorizeWebSocket = prepared.authorize;
+          onUpgradeFailure = prepared.onUpgradeFailure;
+          if (prepared.transforms && !opts.webSocketTransforms) throw new Error('WEBSOCKET_TRANSFORMS_REQUIRE_UNCOMPRESSED_NEGOTIATION');
+          preparedTransforms = prepared.transforms;
         }
         let attemptSettled = false;
 
@@ -3145,7 +3150,7 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         upstreamSocket.on('error', abort('upstream-error'));
 
         let guarded: ReturnType<NonNullable<ProxyOptions['webSocketTransforms']>> | undefined;
-        try { guarded = opts.webSocketTransforms?.({ url, headers }); }
+        try { guarded = preparedTransforms?.() ?? opts.webSocketTransforms?.({ url, headers }); }
         catch { abort('websocket-guard-failed')(); return; }
         if (guarded) {
           guarded.outbound.on('error', abort('websocket-outbound-rejected'));
@@ -3211,6 +3216,18 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         upstreamReqForEarlyClose = null;
         settle('upstream-refused');
         const status = upstreamRes.statusCode ?? 502;
+        if (onUpgradeFailure && (status === 401 || status === 403)) {
+          const observe = onUpgradeFailure;
+          const chunks: Buffer[] = [];
+          let bytes = 0;
+          upstreamRes.on('data', (chunk: Buffer) => {
+            bytes += chunk.length;
+            if (bytes <= 64 * 1024) chunks.push(Buffer.from(chunk));
+          });
+          upstreamRes.once('end', () => {
+            if (bytes <= 64 * 1024) void observe(status, Buffer.concat(chunks).toString('utf8')).catch(() => {});
+          });
+        }
         logger.warn?.('upstream refused websocket upgrade', {
           reqId,
           status,

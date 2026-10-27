@@ -18,7 +18,7 @@ vi.mock('../../appSessionState.js', () => ({ activeOwnerScopeKey: () => 'fixture
 vi.mock('../codex-account-auth.js', () => ({ isOpenAiSubscriptionProviderId: (id: string) => id === 'openai' || id === 'account-b' }));
 vi.mock('../session-provider-store.js', () => ({ getSessionProvider: () => null, hasHostedSessionModelAccess: () => false }));
 vi.mock('../guest-provider-route-store.js', () => ({ guestProviderRouteForSession: () => null }));
-vi.mock('../anthropic-responses-bridge-host.js', () => ({ getChatgptBridgeAuthForDispatch: vi.fn() }));
+vi.mock('../anthropic-responses-bridge-host.js', () => ({ getChatgptBridgeAuthForDispatch: vi.fn(), invalidateChatgptBridgeAuth: vi.fn(async () => false) }));
 const fastPolicy = vi.hoisted(() => ({ allowed: true }));
 vi.mock('../subscription-fast-request-policy.js', () => ({ subscriptionRequestAllowsFast: () => fastPolicy.allowed }));
 import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream, piWebSocketTransforms } from '../pi-subscription-websocket.js';
@@ -60,6 +60,11 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
     { label: 'independent account', source: 'account-b', provider: 'openai-codex-account', fast: false, fallback: false, reconnect: false },
     { label: 'reconnect', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: true },
     { label: 'native SSE fallback', source: 'openai', provider: 'openai-codex', fast: false, fallback: true, reconnect: false },
+    // Regression #7427: exercise the native 1009 fallback on the first request,
+    // a reused connection and reconnect, without rewriting or discarding history.
+    { label: 'oversized first history', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, oversized: 'initial' },
+    { label: 'oversized reused socket', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, oversized: 'tool' },
+    { label: 'oversized reconnect history', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: true, oversized: 'reconnect' },
     { label: 'original SSE baseline', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, baseline: true },
     { label: 'live Fast change', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, toggleFast: true },
     { label: 'Fast restriction between tool steps', source: 'openai', provider: 'openai-codex', fast: true, fallback: false, reconnect: false, restrictFast: true },
@@ -69,7 +74,8 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
     const directory = await mkdtemp(join(tmpdir(), 'cindy-pi-ws-'));
     const requests: Array<Record<string, any>> = [];
     const handshakes: Array<Record<string, any>> = [];
-    const ws = new WebSocketServer({ noServer: true });
+    const uploads: Array<{ transport: string; bytes: number }> = [];
+    const ws = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
     let acknowledgeDisconnect!: () => void;
     const disconnected = new Promise<void>(resolve => { acknowledgeDisconnect = resolve; });
     const upstream = createServer((_req, res) => { void disconnected.then(() => res.end('closed')); });
@@ -81,7 +87,10 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
       connections++;
       ws.handleUpgrade(req, socket, head, client => {
         client.once('close', acknowledgeDisconnect);
+        // A real upstream rejects oversized messages with close 1009.
+        client.on('error', () => {});
         client.on('message', async raw => {
+          uploads.push({ transport: 'websocket', bytes: Buffer.byteLength(raw.toString()) });
           const body = JSON.parse(raw.toString());
           const index = requests.length - (continuationRejected ? 1 : 0);
           requests.push(body);
@@ -108,6 +117,7 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
       webSocketTransforms: piWebSocketTransforms,
       routingTransform: () => ({ localHandler: async ({ rawBody, parsedBody, ctx, res }) => {
         const index = requests.length;
+        uploads.push({ transport: 'sse', bytes: rawBody.length });
         const decoded = parsedBody ?? JSON.parse((ctx.headers['content-encoding'] === 'zstd' ? zstdDecompressSync(rawBody) : rawBody).toString());
         requests.push({ ...decoded, fallback: true });
         res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -142,6 +152,9 @@ export default async function(pi: any) {
     execute: async () => {
       ++count;
       if (${scenario.reconnect} && count === 2) await fetch('${upstreamUrl}/wait-for-disconnect');
+      if ((${JSON.stringify(scenario.oversized)} === 'tool' && count === 1) || (${JSON.stringify(scenario.oversized)} === 'reconnect' && count === 2)) {
+        return { content: Array.from({ length: 20 }, () => ({ type: 'image', data: '${image}', mimeType: 'image/png' })), details: {} };
+      }
       return { content: count === 1
       ? [{ type: 'image', data: '${image}', mimeType: 'image/png' }]
       : [{ type: 'text', text: 'fixture-tool-ok' }], details: {} };
@@ -149,7 +162,7 @@ export default async function(pi: any) {
 }
 `);
       // Supply the large initial history through a file rather than exceeding argv limits.
-      await writeFile(join(directory, 'prompt.txt'), 'Run the fixture tool.\n' + 'fixture-context '.repeat(65_536));
+      await writeFile(join(directory, 'prompt.txt'), 'Run the fixture tool.\n' + 'fixture-context '.repeat(scenario.oversized === 'initial' ? 1_200_000 : 65_536));
       child = spawn(binary, ['--print', '--mode', 'json', '--no-session', '--no-extensions', '--extension', join(directory, 'adapter.ts'),
         '--provider', scenario.provider, '--model', model, `@${join(directory, 'prompt.txt')}`], {
         cwd: directory, env: { ...process.env, HOME: directory, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: '1',
@@ -165,11 +178,24 @@ export default async function(pi: any) {
       const [exit] = await once(child, 'exit'); clearTimeout(timer);
       expect(exit, errors + output.slice(-3000)).toBe(0);
       expect(output).toContain('fixture-complete');
+      // Body bytes observed at the receiving endpoint: WS JSON versus native
+      // zstd SSE. Excludes handshake, RFC6455, HTTP and TLS framing overhead.
+      console.info('Pi fixture request body bytes', JSON.stringify({ scenario: scenario.label, uploads }));
       expect(requests).toHaveLength(scenario.missingContinuation ? 5 : 4);
       if (scenario.baseline) {
         expect(handshakes).toHaveLength(0);
         expect(requests.every(body => body.fallback && !body.previous_response_id && JSON.stringify(body).length > 900_000)).toBe(true);
         expect(JSON.stringify(requests[3].input)).toContain('data:image/png;base64,');
+      } else if (scenario.oversized) {
+        const firstFallback = requests.findIndex(body => body.fallback);
+        expect(firstFallback, JSON.stringify(requests.map(body => ({ fallback: body.fallback, bytes: Buffer.byteLength(JSON.stringify(body)), previous: body.previous_response_id })))).toBe(scenario.oversized === 'initial' ? 0 : scenario.oversized === 'tool' ? 1 : 2);
+        expect(requests.slice(firstFallback).every(body => body.fallback && !body.previous_response_id)).toBe(true);
+        expect(Buffer.byteLength(JSON.stringify(requests[firstFallback]))).toBeGreaterThan(16 * 1024 * 1024);
+        expect(requests.filter(body => !body.fallback).every(body => Buffer.byteLength(JSON.stringify(body)) <= 15 * 1024 * 1024)).toBe(true);
+        expect(handshakes).toHaveLength(scenario.reconnect ? 2 : 1);
+        expect(JSON.stringify(requests.at(-1)!.input)).toContain('data:image/png;base64,');
+        if (scenario.oversized === 'initial') expect(JSON.stringify(requests.at(-1)!.input)).toContain('fixture-context');
+        else expect(JSON.stringify(requests.at(-1)!.input).match(/data:image\/png;base64,/g)).toHaveLength(scenario.oversized === 'reconnect' ? 21 : 20);
       } else if (scenario.fallback) {
         expect(requests.every(body => body.fallback)).toBe(true);
       } else {
@@ -185,6 +211,8 @@ export default async function(pi: any) {
         const last = requests.at(-1)!;
         expect(last.previous_response_id).toBe('resp_2');
         expect(JSON.stringify(last).length).toBeLessThan(20_000);
+        expect(uploads.at(-1)).toMatchObject({ transport: 'websocket' });
+        expect(uploads.at(-1)!.bytes).toBeLessThan(20_000);
         expect(JSON.stringify(last.input)).not.toContain('data:image/png;base64,');
         if (scenario.reconnect) {
           expect(connections).toBe(2);

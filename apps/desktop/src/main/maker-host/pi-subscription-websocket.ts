@@ -3,8 +3,9 @@ import { standardSpeedRequest } from '@cindy/maker-core';
 import { subscriptionRequestAllowsFast } from './subscription-fast-request-policy.js';
 import { createWebSocketMessageTransform, type ProxyOptions } from '@cindy/anthropic-compat-proxy';
 import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
-import { getChatgptBridgeAuthForDispatch } from './anthropic-responses-bridge-host.js';
+import { getChatgptBridgeAuthForDispatch, invalidateChatgptBridgeAuth } from './anthropic-responses-bridge-host.js';
 import { isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
+import { detectChatgptBridgeAuthInvalidationReason } from './chatgpt-bridge-auth-invalidation.js';
 import { buildChatgptBridgeHeaders } from './chatgpt-bridge-headers.js';
 import {
   authenticatePiProxySession,
@@ -41,6 +42,7 @@ export const resolvePiWebSocketUpstream: NonNullable<ProxyOptions['resolveWebSoc
 export function createPiWebSocketRequestPreparer(
   readAuth: (providerId: string) => ReturnType<typeof getChatgptBridgeAuthForDispatch>
     = providerId => getChatgptBridgeAuthForDispatch(providerId),
+  invalidate: typeof invalidateChatgptBridgeAuth = invalidateChatgptBridgeAuth,
 ): NonNullable<ProxyOptions['prepareWebSocketRequest']> {
   return async (ctx) => {
     const owner = activeOwnerScopeKey();
@@ -55,16 +57,25 @@ export function createPiWebSocketRequestPreparer(
     for (const name of ['sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions', 'openai-beta']) {
       if (ctx.headers[name]) headers[name] = ctx.headers[name];
     }
-    return { headers, signal: route.signal, authorize: () => {
+    const authorize = () => {
       const live = authenticatedRoute(ctx);
       return auth.canDispatch() && owner === activeOwnerScopeKey() && live?.signal === route.signal
         && live.providerId === route.providerId;
-    } };
+    };
+    const onUpgradeFailure = async (status: number, body: string) => {
+      if (!authorize() || !detectChatgptBridgeAuthInvalidationReason(status, body)) return;
+      await invalidate({ status, body, failedAccessToken: auth.accessToken }, route.providerId);
+    };
+    const transforms = () => piWebSocketTransforms(ctx, onUpgradeFailure);
+    return { headers, signal: route.signal, authorize, onUpgradeFailure, transforms };
   };
 }
 
 /** Enforce live account/task Fast restrictions at each response.create dispatch. */
-export const piWebSocketTransforms: NonNullable<ProxyOptions['webSocketTransforms']> = (ctx) => {
+export function piWebSocketTransforms(
+  ctx: Context,
+  onAuthFailure?: (status: number, body: string) => Promise<void>,
+): ReturnType<NonNullable<ProxyOptions['webSocketTransforms']>> {
   const route = authenticatedRoute(ctx);
   if (!route) throw new Error('PI_WEBSOCKET_ROUTE_UNAVAILABLE');
   return {
@@ -74,6 +85,23 @@ export const piWebSocketTransforms: NonNullable<ProxyOptions['webSocketTransform
       const restricted = standardSpeedRequest(JSON.parse(message.toString('utf8')));
       return restricted === null ? message : Buffer.from(JSON.stringify(restricted));
     }),
-    inbound: new PassThrough(),
+    inbound: onAuthFailure ? createWebSocketMessageTransform(false, async message => {
+      // Ordinary content, including text mentioning authentication, cannot revoke
+      // credentials. Only bounded explicit provider error events are inspected.
+      if (message.length <= 64 * 1024) {
+        let event: any;
+        try { event = JSON.parse(message.toString('utf8')); } catch { return message; }
+        if (event?.type === 'error' || event?.type === 'response.failed') {
+          const error = event.error ?? event.response?.error;
+          const status = event.status ?? error?.status;
+          if (status === undefined || status === 401 || status === 403) {
+            // WS errors may omit HTTP status; the existing invalidator still
+            // requires an explicit OAuth revocation reason in the error body.
+            await onAuthFailure(status ?? 401, JSON.stringify(error ?? event)).catch(() => {});
+          }
+        }
+      }
+      return message;
+    }) : new PassThrough(),
   };
-};
+}

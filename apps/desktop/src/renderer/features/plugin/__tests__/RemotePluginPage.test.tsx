@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as renderUi, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemotePluginPage } from '../RemotePluginPage';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
@@ -11,6 +12,9 @@ const { invoke, confirm, localGhosts, notices } = vi.hoisted(() => ({
   localGhosts: vi.fn(),
 }));
 vi.mock('@/lib/toast', () => ({ toast: notices }));
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, dataOwnerId: null, dataOwnerGeneration: 0 }),
+}));
 vi.mock('@/components/new-chat/AddRemoteProjectDialog', () => ({
   AddRemoteProjectDialog: ({ fixedDeviceId, onProjectAdded, onOpenChange }: {
     fixedDeviceId: string;
@@ -119,6 +123,17 @@ const snapshot = (name: string) => ({
     unavailableCustomSourceNames: [],
   },
 });
+function RouteSearch() {
+  return <output data-testid="route-search">{useLocation().search}</output>;
+}
+const render = (ui: React.ReactNode, route = '/plugins') => renderUi(ui, {
+  wrapper: ({ children }) => (
+    <MemoryRouter initialEntries={[route]}>
+      {route.includes('?') ? <RouteSearch /> : null}
+      {children}
+    </MemoryRouter>
+  ),
+});
 const configurationResource = (state = 'configured', id = 'weather') => ({
   ref: { collectionId: 'plugins', kind: 'plugin', id },
   revision: 'r1',
@@ -186,6 +201,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('selected plugin host', () => {
+  // PR #7240: a retained remote selection mounted this page, which never read
+  // the public-link query. Local navigation tests cannot catch it. A query ID
+  // and the real remote page must read the selected Host's existing detail action
+  // once, display its result and never begin an install (unit, in-memory IPC).
+  it.each([true, false])('opens a shared plugin on the selected Host (initially online: %s)', async (online) => {
+    const pluginId = `c${'p'.repeat(24)}`;
+    const normal = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (device, channel, args) => args[0]?.actionId === 'management:market-detail'
+      ? { result: {
+        pluginId, ghostId: 'weather', name: 'Shared remote plugin', description: 'Public shared detail',
+        author: 'Example', version: '1.0.0', publishedAt: '2026-10-27T00:00:00.000Z',
+        scope: 'public', organizationId: null, defaultInstall: false, releaseId: 'shared-release',
+        installState: 'not-installed', enabled: null, sourceType: 'server', sourceMarketName: null,
+        icon: null, manifest: { ...snapshot(device).ghosts[0].manifest, name: 'Shared remote plugin' },
+      } }
+      : normal(device, channel, args));
+    const ui = render(<RemotePluginPage device={{ deviceId: 'computer-a', name: 'A' }} online={online} />, `/plugins?market=${pluginId}`);
+    if (!online) {
+      expect(invoke).not.toHaveBeenCalled();
+      expect(screen.getByTestId('route-search').textContent).toBe(`?market=${pluginId}`);
+      ui.rerender(<RemotePluginPage device={{ deviceId: 'computer-a', name: 'A' }} online />);
+    }
+    expect(await screen.findByRole('heading', { name: 'Shared remote plugin' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('route-search').textContent).toBe(''));
+    const reads = invoke.mock.calls.filter((call) => call[2][0]?.actionId === 'management:market-detail');
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toEqual(['computer-a', expect.any(String), [expect.objectContaining({ input: { pluginId } })]]);
+    expect(invoke.mock.calls.some((call) => call[2][0]?.actionId === 'management:begin')).toBe(false);
+    expect(localGhosts).not.toHaveBeenCalled();
+  });
+
   it('presents cancellation as a neutral overlay without inserting a banner', async () => {
     const normal = invoke.getMockImplementation()!;
     invoke.mockImplementation(async (device, channel, args) =>

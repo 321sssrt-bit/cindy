@@ -560,10 +560,6 @@
       "light": "semantic.defaults.login-primary-button-text.light",
       "dark": "semantic.defaults.login-primary-button-text.dark"
     },
-    "login-disabled-button-overlay": {
-      "light": "semantic.defaults.login-disabled-button-overlay.light",
-      "dark": "semantic.defaults.login-disabled-button-overlay.dark"
-    },
     "login-disabled-button-bg": {
       "light": "semantic.defaults.login-disabled-button-bg.light",
       "dark": "semantic.defaults.login-disabled-button-bg.dark"
@@ -3918,13 +3914,6 @@
           "login-link-pressed"
         ],
         "use": "墨水强调档 黑 95% / 白 100%"
-      },
-      {
-        "label": "`--login-disabled-button-overlay`",
-        "ids": [
-          "login-disabled-button-overlay"
-        ],
-        "use": "透明：禁用主按钮改为控件底 + 占位字（2026-10-27，见 §16.5）"
       },
       {
         "label": "`--login-splash-progress-track` / `--login-splash-progress-fill`",

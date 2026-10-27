@@ -1947,7 +1947,7 @@ The execution rulebook for subsequent desktop / mobile UI updates. Sources: the 
 - **Fills and lines (user ruling 2026-10-22, replaces dual anchoring)**: hover, chip, selected and pressed fills and all borders and dividers are the same ink at low alpha — soft hover 3.5% / 4%, hover and chip 5% / 6%, selected and pressed 8% / 10%, weak tier (file chip, scrollbar hover) 10% / 13%, borders and dividers 8% / 10% (Light black / Dark white). A translucent fill shifts whatever plane it sits on — page, card, popover, glass or wallpaper — by the same step, so page- and card-anchored variants are no longer needed, and in Dark a chip is always lighter than the card beneath it. Borders read softer on wallpaper than the former solid lines; this was accepted with the ruling. A line or fill that sits over a transparent window region (the layout dividers between panes under glass) is laid on the page color first, so the native window material never shows through. The Light switch off-track darkens to `#808080` so it keeps 3:1 on hovered rows. Values: token-decision-table §9.2–§9.3.
 - **Icons on ink**: icons take their tier through `currentColor`, so an icon drawn from several strokes would turn darker (Light) or brighter (Dark) wherever its strokes overlap. In the CINDY family `globals.css` composites each icon as one shape — strokes drawn opaque, the whole icon masked to the ink's alpha — so it reads like a solid icon at reduced opacity; opaque icon colors are unchanged. Lucide icons get this automatically; a hand-drawn single-color icon made of several strokes adds `data-ink-icon`. Don't add it to an SVG whose parts carry their own colors: the mask would fade those parts too.
 - **Twin sync**: every color carried in both hex/rgba and HSL forms (24 pairs) must stay value-identical, translucent tiers included (same alpha in both forms). Pairs follow the tier, not the token name: `text-tertiary-hsl` / `muted-foreground` serve the secondary tier (`text-secondary`), exactly as in Classic. Control outlines such as `chat-input-border-focus` keep their own values and are no longer derived from a text tier.
-- **Exempt families untouched**: `login-*` (60 tokens; since 2026-10-23 its text tokens, and since 2026-10-27 its panel, control, border, primary-button and hover/pressed tokens, take the same values as the CINDY skin, §16.1, but stay protected from theme overrides), `diff-*`, `error-*`, `overlay-*`, semantic status colors, shadows — per §10/§16 and `protected-tokens.ts`.
+- **Exempt families untouched**: `login-*` (59 tokens; since 2026-10-23 its text tokens, and since 2026-10-27 its panel, control, border, primary-button and hover/pressed tokens, take the same values as the CINDY skin, §16.1, but stay protected from theme overrides), `diff-*`, `error-*`, `overlay-*`, semantic status colors, shadows — per §10/§16 and `protected-tokens.ts`.
 - User-tuned one-offs: dark sidebar glass `rgba(5,5,5,0.85)` (2026-08-11); light sidebar glass 85% opacity (2026-08-17, aligned with dark).
 
 ### 15.17 Switch color and motion (owner decisions 2026-09-15 / 2026-09-16)
@@ -2016,7 +2016,6 @@ and media position (`ui/media-scrubber`, seconds in/out). Native media controls 
 | `--login-link-text`（重发链接） | `rgba(0, 0, 0, 0.88)` | `rgba(255, 255, 255, 0.82)` | 墨水正文档 黑 88% / 白 82% |
 | `--login-link-hover` | `rgba(0, 0, 0, 0.70)` | `rgba(255, 255, 255, 0.66)` | 墨水说明档 黑 70% / 白 66% |
 | `--login-link-pressed` | `rgba(0, 0, 0, 0.95)` | `rgba(255, 255, 255, 1.00)` | 墨水强调档 黑 95% / 白 100% |
-| `--login-disabled-button-overlay` | `rgba(0, 0, 0, 0.00)` | `rgba(255, 255, 255, 0.00)` | 透明：禁用主按钮改为控件底 + 占位字（2026-10-27，见 §16.5） |
 | `--login-splash-progress-track` / `--login-splash-progress-fill` | `rgba(0, 0, 0, 0.10)` / `rgba(0, 0, 0, 0.88)` | `rgba(255, 255, 255, 0.13)` / `rgba(255, 255, 255, 0.82)` | 轨 = 墨水弱档 黑 10% / 白 13%；填充 = 墨水正文档 |
 | `--login-loading-ring-track`（loading 环轨道） | `rgba(0, 0, 0, 0.10)` | `rgba(255, 255, 255, 0.13)` | 墨水弱档 黑 10% / 白 13%；登录页 LoginLoadingRing 与 Splash 转圈环共用（Splash 侧自暗色实现 PR 起由字面 rgba 收敛至本 token） |
 | `--login-error-fg` | `#D91F37` | `#D91F37` | 语义豁免不变 |
@@ -2054,7 +2053,7 @@ and media position (`ui/media-scrubber`, seconds in/out). Native media controls 
 
 桌面 `loginDesignTokens.ts`（1819×2098 画布）、手机 `loginSkinLayout.ts`（750 设计 px，键名用 `font` / `radius` 避开 typography 守护扫描）。两端面板内坐标同源同值，手机由外层统一 `transform` 缩放。
 
-**平台差异**：桌面 = Web renderer（Electron，Win / Mac 同套）；手机 = React Native（iOS / Android，含 phone / pad-portrait / pad-landscape）。两端同参数源、同 token 语义（手机 `loginColors` 与桌面 `LOGIN_COLORS` 同名同值），仅实现宿主不同（RN 用 `StyleSheet` + `Animated`，桌面用 CSS + Tailwind）。
+**平台差异**：桌面 = Web renderer（Electron，Win / Mac 同套）；手机 = React Native（iOS / Android，含 phone / pad-portrait / pad-landscape）。两端同几何参数源、同 token 语义（手机 `loginColors` 与桌面 `LOGIN_COLORS` 同名）；色值自 2026-10-23 / 10-27 起桌面已并入墨水口径，手机登录皮暂保留原实色、另行收拢，在此之前两端色值不同。实现宿主也不同（RN 用 `StyleSheet` + `Animated`，桌面用 CSS + Tailwind）。
 
 **移动端 stage 几何（2026-07-27 换品牌簇基准；2026-07-29 修正：功能区落位同步取新稿标注值）**：手机的**品牌簇**（立绘 / SLOGAN / 字标）**与功能区落位 `loginY` 一并取新稿逐字段值**——两者是同一份稿的两半，必须同源。短屏 / 长屏两档之间仍走既有线性插值体系（`loginSkinLayout.resolveLoginStage`），**不另造缩放规则**。下表为设计单位（750 设计px 基准），消费时一律 × `surface.scale`（设计单位 ≠ 物理 pt，见 §16.4「几何」条）：
 
@@ -2231,14 +2230,14 @@ and media position (`ui/media-scrubber`, seconds in/out). Native media controls 
    - **墨水填充控件**（输入框、方式行、返回钮、协议弹窗「不同意」钮）：叠同色墨水加深一档——hover 叠黑 3% / 白 4%，与控件底合成约等于主界面「选中」档 8% / 10%；pressed 叠黑 5% / 白 7%，合成约等于「弱」档 10% / 13%。亮色变深、深色变亮，与主界面菜单 / 列表反馈同向。
    - **反相主按钮与第三方圆钮**（主按钮、「同意」钮、Google / WeChat / SSO 圆钮、回调页 CTA）：叠黑——亮色 hover 20% / pressed 40%（`#3C3F43` → 约 `#303236`，对齐主界面 `accent-hover` `#2E3237`），深色 hover 5% / pressed 10%（`#EEEEEE` → `#E2E2E2` / `#D6D6D6`）。
    - **Apple 圆钮**底色由 Apple 规范决定（亮黑 / 暗白），亮色黑圆叠黑没有反馈，故单独走 `--login-overlay-apple-*`：亮色叠白 8% / 14%，深色叠黑 5% / 10%。
-   - **disabled**：主按钮禁用 = 墨水填充 + 占位档文字，`--login-disabled-button-overlay` 为透明、描边透明；不再「深底叠白 70%」。
+   - **disabled**：主按钮禁用 = 墨水填充 + 占位档文字，描边透明、不叠层；原「深底叠白 70%」及 `--login-disabled-button-overlay` 已退役。
    - **回调页**（`oauthResultPage`，系统浏览器打开，拿不到 renderer token，用内联常量）：页面底、卡片、描边与 CTA 同上取值，CTA 叠层改挂 `background-image`，不压文字。
 2. **`--login-bg-base` 前提变更**：画布底原为「跨主题恒定白 `#EDEDED`」，深色为 `#1F1F1E`（figma 532:585 帧实测）——即 `--login-*` 从「跨主题恒定」改为「随 light / dark 二态」（见 §16.2）。〔2026-10-01〕两态改为与 CINDY 皮肤页底同值 `#F2F2ED` / `#181818`，登录前后背景不再变色；仍为固定值，不随扩展主题。
 3. **`LoginBrandStage` 资产按模式切**：深色画布用**登录专用**白字版字标 / slogan 资产（`assets/login/wordmark-dark*.png` / `slogan-dark*.png`，源自 figma 532:585 `CINDY_Standard_White` 与 SLOGAN `#FBFBFB`，已随暗色实现 PR 新增；**不是** §15.7 的新页横版 `cindy-logo-dark.png`——落位与尺寸不同）；立绘两模式同资产。
 
-**disabled 态**：主按钮 disabled = 墨水填充（`--login-disabled-button-bg`，黑 5% / 白 6%）+ 占位档文字（`--login-disabled-button-text`，黑 32% / 白 30%），描边与叠层透明；与可用态的反相实底拉开明显差距，一眼可辨不可点（2026-10-27 用户裁决；不沿用主界面 Button 的整体 60% 透明度，因为登录页首屏主按钮默认即为禁用态）。
+**disabled 态**：主按钮 disabled = 墨水填充（`--login-disabled-button-bg`，黑 5% / 白 6%）+ 占位档文字（`--login-disabled-button-text`，黑 32% / 白 30%），描边透明（`--login-control-border-disabled`）、不叠层；与可用态的反相实底拉开明显差距，一眼可辨不可点（2026-10-27 用户裁决；不沿用主界面 Button 的整体 60% 透明度，因为登录页首屏主按钮默认即为禁用态）。
 
-**双模式门槛覆盖**：深色须覆盖亮色全部态——控件 default / hover(桌) / focus / filled / active / pressed / disabled / loading / error，全部 11 屏，桌面 Win / Mac + 手机 iOS / Android（phone / pad）两端同 token 同值；`scripts/__fixtures__/login-fidelity/`（待后续补充，当前不存在于仓库中）补深色 fixture，checker 跑深色矩阵。色值以设计稿为唯一基准，1:1 还原，不引入设计稿之外的验收标准。
+**双模式门槛覆盖**：深色须覆盖亮色全部态——控件 default / hover(桌) / focus / filled / active / pressed / disabled / loading / error，全部 11 屏，桌面 Win / Mac + 手机 iOS / Android（phone / pad）。色值以 §16.1 为准（桌面取 CINDY 主界面墨水口径）。桌面组件的亮 / 深与 hover / pressed 用 `pnpm ui:check --page login-skin --case all --theme all` 截图核对（改动时加 `--compare` 出改前 / 改后）；它覆盖真实组件，不覆盖登录画布缩放与品牌层。
 
 **主题跟随（产品逻辑）**：用户**首次**打开 Cindy → **亮色**登录界面（默认）；**第二次起** → 登录界面跟随用户上一次使用的 **light / dark 模式**（登录页只认 light / dark，不随具体扩展主题，见 §16.2）。这需要持久化「上次登录模式」+ 首次默认逻辑，超出纯 token 补范围，是一段状态逻辑。**已落地**：`apps/desktop/src/renderer/hooks/useTheme.ts` 持久化首启标记（`login.firstLaunchLightShown`），bootstrap 阶段由 `initLoginFirstLaunchLightGate` 对真首启整个登录前会话按亮色解析，登录页卸载时经 `endLoginFirstLaunchLightGate` 结束并恢复存储主题，不改用户的 theme 偏好。
 

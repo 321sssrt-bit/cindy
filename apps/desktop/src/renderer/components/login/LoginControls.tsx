@@ -35,9 +35,8 @@ import {
  *
  * 态系(design.md §2):
  * - hover 仅桌面(本文件即桌面端);pressed 双端;态只叠遮罩不改布局(§2.3-1)。
- * - 叠层一律挂伪元素(::after),不侵入图标/文本子节点(§2.3-4);
- *   hover/pressed 叠层为 §2.1 实测参数(rgba 字面值随行注 nodeId,非主题色;
- *   disabled 叠层走 token —— token-decision-table §3 仅 disabled 建 token)。
+ * - 叠层一律挂伪元素(::after),文字与图标 z-[1] 在叠层之上(§2.3-4);
+ *   hover/pressed 叠层全部走 --login-overlay-* token(取值见 DESIGN §16.5)。
  * - 全部叠层/旋转 = opacity/transform,compositor-only(§2.3-3,规则 7);
  *   spinner 动画挂 HTML wrapper,SVG 静止;prefers-reduced-motion 直落终态。
  */
@@ -469,8 +468,7 @@ export function LoginPrimaryButton({
         !inert &&
           'hover:after:opacity-100 hover:after:bg-[var(--login-overlay-button-hover)] active:after:bg-[var(--login-overlay-button-pressed)] active:after:opacity-100',
         loading && 'cursor-default',
-        disabled &&
-          'cursor-not-allowed after:opacity-100 after:[background:var(--login-disabled-button-overlay)]',
+        disabled && 'cursor-not-allowed',
       )}
       style={{
         left: CONTROL.x,
@@ -595,9 +593,10 @@ export function LoginSocialButton({
         overlayBase,
         // hover(仅桌面)/pressed(双端)同主按钮叠黑;Apple 圆钮底色由 Apple 规范定,
         // 亮色黑圆叠黑没有反馈,单独走 login-overlay-apple-*(DESIGN §16.5)。
+        'hover:after:opacity-100 active:after:opacity-100',
         isApple
-          ? 'hover:after:opacity-100 hover:after:bg-[var(--login-overlay-apple-hover)] active:after:bg-[var(--login-overlay-apple-pressed)] active:after:opacity-100'
-          : 'hover:after:opacity-100 hover:after:bg-[var(--login-overlay-button-hover)] active:after:bg-[var(--login-overlay-button-pressed)] active:after:opacity-100',
+          ? 'hover:after:bg-[var(--login-overlay-apple-hover)] active:after:bg-[var(--login-overlay-apple-pressed)]'
+          : 'hover:after:bg-[var(--login-overlay-button-hover)] active:after:bg-[var(--login-overlay-button-pressed)]',
       )}
       style={{
         width: SOCIAL.size,

@@ -298,7 +298,6 @@ export const LOGIN_COLORS = {
   primaryButtonBg: 'var(--login-primary-button-bg)',
   primaryButtonBorder: 'var(--login-primary-button-border)',
   primaryButtonText: 'var(--login-primary-button-text)',
-  disabledOverlay: 'var(--login-disabled-button-overlay)',
   /** disabled 主按钮底/字(两模式同构深底浅字,暗色不反相;figma Disable 态) */
   disabledButtonBg: 'var(--login-disabled-button-bg)',
   disabledButtonText: 'var(--login-disabled-button-text)',

@@ -584,8 +584,8 @@ describe('MakerScheduleRunner background subagent task tracking', () => {
   });
 
   it.each([
-    ...['cancelled', 'failed', 'interrupted', 'aborted'].map(status => ({ source: 'pi', data: { status }, status })),
-    { source: 'codex', data: { cancelled: true }, status: 'cancelled' },
+    ...['cancelled', 'failed', 'interrupted', 'aborted'].map(status => ({ source: 'pi' as const, data: { status }, status })),
+    { source: 'codex' as const, data: { cancelled: true }, status: 'cancelled' },
   ])('does not record $source $status as success when the scheduler signal is still live', async ({ source, data, status }) => {
     const h = createSessionHarness(acceptingSend());
     const { runner, notifier } = createRunnerHarness(h.session);

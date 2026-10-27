@@ -61,7 +61,7 @@ function feedbackAnswer(locale: Locale): string {
         parent: "report",
         props: {
           text: t("让开场十分钟，更好玩", "A better first ten minutes"),
-          style: { fontSize: 25, fontWeight: 650, lineHeight: 1.25 },
+          style: { fontSize: 25, fontWeight: 600, lineHeight: 1.25 },
         },
       },
       {
@@ -191,7 +191,7 @@ function planAnswer(locale: Locale): string {
         parent: "plan",
         props: {
           text: t("下一轮试玩，怎么排？", "Shape the next playtest"),
-          style: { fontSize: 25, fontWeight: 650 },
+          style: { fontSize: 25, fontWeight: 600 },
         },
       },
       {

@@ -6,6 +6,7 @@ import {
   richChart,
   richLabel,
   richResolvedValues,
+  richVisualStyle,
   splitRichAnswer,
 } from "../richAnswer";
 
@@ -66,6 +67,12 @@ describe("shared full-client showcase data", () => {
       ).toEqual(trend);
       expect(richLabel(report.nodes.get("improvement")!, values)).toBe("+24");
       const plan = documentFor(`ui-mock-showcase-plan-${locale}`);
+      for (const doc of [report, plan]) {
+        // Both clients consume normalized styles; unsupported weights lose emphasis.
+        expect(richVisualStyle(doc.nodes.get("heading")!).fontWeight).toBe(
+          "600",
+        );
+      }
       const defaults = richResolvedValues(plan);
       expect(defaults.hours).toBe(36);
       expect(defaults.days).toBe(3);

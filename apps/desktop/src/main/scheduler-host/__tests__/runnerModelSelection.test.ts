@@ -38,6 +38,7 @@ import {
 const mocks = vi.hoisted(() => ({
   createMessage: vi.fn(),
   getSessionRowSnapshot: vi.fn(),
+  getSessionFsSnapshot: vi.fn(),
   ensureDialogueWorkspaceDir: vi.fn(),
   wireSessionToIpc: vi.fn(),
   resolveWorkingDir: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock('../../localDb/ipc/messages.js', () => ({
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
   getSessionRowSnapshot: mocks.getSessionRowSnapshot,
+  getSessionFsSnapshot: mocks.getSessionFsSnapshot,
   touchUserSendInDb: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -112,6 +114,7 @@ function createSessionHarness(): FakeSessionHarness {
   const listeners: Array<(event: AgentEvent) => void> = [];
   const send = vi.fn<SendImpl>(async (_message, opts) => {
     await opts?.onAccepted?.();
+    await opts?.resolveAutoReviewUserIntent?.();
     opts?.onDispatching?.();
     return { accepted: true };
   });
@@ -251,6 +254,8 @@ function createRunnerHarness(
     acquirePendingAgentSwitch?: ConstructorParameters<typeof MakerScheduleRunner>[0]['acquirePendingAgentSwitch'];
     prepareModelPreferences?: ConstructorParameters<typeof MakerScheduleRunner>[0]['prepareModelPreferences'];
     onModelDispatched?: ConstructorParameters<typeof MakerScheduleRunner>[0]['onModelDispatched'];
+    beforeDispatchUserTurn?: ConstructorParameters<typeof MakerScheduleRunner>[0]['beforeDispatchUserTurn'];
+    readAutoReviewHistory?: ConstructorParameters<typeof MakerScheduleRunner>[0]['readAutoReviewHistory'];
     applyPiModelSelectionUnderLock?: ConstructorParameters<typeof MakerScheduleRunner>[0]['applyPiModelSelectionUnderLock'];
     resolveModelSelection?: ConstructorParameters<typeof MakerScheduleRunner>[0]['resolveModelSelection'];
     activeSessions?: Session[];
@@ -295,6 +300,8 @@ function createRunnerHarness(
     acquirePendingAgentSwitch: opts.acquirePendingAgentSwitch,
     prepareModelPreferences: opts.prepareModelPreferences,
     onModelDispatched: opts.onModelDispatched,
+    beforeDispatchUserTurn: opts.beforeDispatchUserTurn,
+    readAutoReviewHistory: opts.readAutoReviewHistory,
     applyPiModelSelectionUnderLock: opts.applyPiModelSelectionUnderLock ?? (async (_id, targetModel, providerId) => {
       await h.session.setModel(targetModel, { providerId });
       return { status: 'applied' as const };
@@ -330,6 +337,7 @@ describe('MakerScheduleRunner model selection', () => {
     mocks.setSessionFastMode.mockReset();
     mocks.isSessionInTurn.mockReturnValue(false);
     mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active' });
+    mocks.getSessionFsSnapshot.mockResolvedValue({ permissionMode: 'ask', planModeEnabled: false });
   });
 
   // Integration: a new automation must pass the remote route to createSession,
@@ -423,6 +431,44 @@ describe('MakerScheduleRunner model selection', () => {
   });
 
   describe('resolved automation selection survives the full fire', () => {
+    // PR #6830 / unit: existing remote cases only checked the initial catalog.
+    // Suspend the selected source during accepted-turn preparation; fire must
+    // fail before vendor dispatch, including for a reused remote task.
+    it.each(['accepted', 'intent'])('rejects a remote source suspended during direct dispatch preparation (%s)', async (stage) => {
+      const h = createSessionHarness();
+      Object.assign(h.session, { agentDeviceId: 'studio' });
+      mocks.getSessionProvider.mockReturnValue('remote-sub');
+      const providers = [{ id: 'remote-sub', name: 'Remote', connected: true,
+        agents: ['claude-code'], routing: { 'claude-code': {} }, suspended: false,
+        models: { 'claude-code': [{ id: h.session.model, name: 'Sonnet' }] },
+      }] as unknown as ProviderView[];
+      const onModelDispatched = vi.fn();
+      h.send.mockImplementation(async (_message, options) => {
+        await options?.onAccepted?.();
+        await options?.resolveAutoReviewUserIntent?.();
+        options?.onDispatching?.();
+        h.emit({ type: 'done', data: {} });
+        return { accepted: true };
+      });
+      const harness = createRunnerHarness(h, { model: h.session.model, workDir: '/work' }, {
+        sessionAlive: true, onModelDispatched,
+        resolveModelSelection: async (choice, location) => {
+          expect(location).toEqual({ agentDeviceId: 'studio' });
+          return resolveScheduledModelSelection(choice, providers);
+        },
+        beforeDispatchUserTurn: async () => { if (stage === 'accepted') providers[0].suspended = true; },
+        readAutoReviewHistory: async () => {
+          if (stage === 'intent') providers[0].suspended = true;
+          return [];
+        },
+      });
+      mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', agentDeviceId: 'studio' });
+      await expect(harness.runner.fire(baseSchedule({ targetSessionId: h.session.id }), createFireContext()))
+        .rejects.toThrow('Session send failed before dispatch');
+      expect(providers[0].suspended).toBe(true);
+      expect(onModelDispatched).not.toHaveBeenCalled();
+    });
+
     // Merge regression, unit: a legacy remote default must not mask an explicit
     // local override. Cover fresh creation and persistent replacement via fire.
     it.each([false, true])('honors local selection over a saved remote default (replacement=%s)', async (replacement) => {
@@ -527,6 +573,7 @@ describe('MakerScheduleRunner model selection', () => {
       mocks.getSessionRowSnapshot.mockResolvedValue({ status: 'active', agentDeviceId: 'relocated' });
       const harness = createRunnerHarness(h, { model: h.session.model, workDir: '/work', sdkSessionId: 'native-history' }, {
         sessionAlive: mode === 'rebuild',
+        resolveModelSelection: async (choice) => choice,
       });
       const opts = await fireToCompletion(harness, h, baseSchedule({
         targetSessionId: h.session.id, persistentSession: true, agentDeviceId: 'original',

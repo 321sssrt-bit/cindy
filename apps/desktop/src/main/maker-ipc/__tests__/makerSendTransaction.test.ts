@@ -359,17 +359,23 @@ describe('MCP App message authorization', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('rechecks card authorization after accepted persistence and blocks vendor dispatch', async () => {
+  // PR #6830 / unit: route validation adds an await after persistence; card
+  // revocation during that await must still block the actual dispatch.
+  it.each(['persistence', 'route'] as const)('rechecks card authorization after %s and blocks vendor dispatch', async (stage) => {
     let visible = true;
     const dispatch = vi.fn();
     const guard = vi.fn(async () => { if (!visible) throw new Error('MCP_APP_CARD_UNAVAILABLE'); });
     const { deps, session } = createDeps({
       prepareProductTurn: () => dispatch,
-      createDbMessage: vi.fn(async () => { visible = false; }),
+      createDbMessage: vi.fn(async () => { if (stage === 'persistence') visible = false; }),
+      assertScheduledDispatchRoute: async () => { if (stage === 'route') visible = false; },
     });
     await expect(createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'App text', undefined, {
       [AUTO_REVIEW_DELEGATED_CONTINUATION]: true,
       [MCP_APP_MESSAGE_GUARD]: guard,
+      ...(stage === 'route' ? {
+        origin: { kind: 'scheduler' as const, scheduleId: 's', scheduleName: 'Follow up', runId: 'r' },
+      } : {}),
       persistUserMessage: { clientId: 'app-input', content: 'App text' },
     })).rejects.toThrow('MCP_APP_CARD_UNAVAILABLE');
     expect(guard).toHaveBeenCalledTimes(2);
@@ -3626,6 +3632,32 @@ describe('session-agent-switch handoff injection', () => {
       await pending;
       expect(vi.mocked(session.send).mock.calls[0]![1]![AUTO_REVIEW_USER_INTENT]).toBe('Do not deploy');
     }
+  });
+
+  // PR #6830 / unit: the accepted queue callback runs before history/vision
+  // preparation. Existing cases changed only permissions. A remote source
+  // suspended during history loading must reject the transaction before vendor send.
+  it('rejects a scheduled remote route disabled after acceptance', async () => {
+    let suspended = false;
+    const vendor = vi.fn();
+    const { deps, session } = createDeps({
+      readAutoReviewHistory: async () => { suspended = true; return []; },
+      assertScheduledDispatchRoute: async (sessionId) => {
+        expect(sessionId).toBe('session-1');
+        if (suspended) throw new Error('REMOTE_AGENT_UNAVAILABLE');
+      },
+    });
+    vi.mocked(session.send).mockImplementation(async (_message, opts) => {
+      await opts?.onAccepted?.();
+      await opts?.resolveAutoReviewUserIntent?.();
+      opts?.onDispatching?.();
+      vendor();
+      return { accepted: true };
+    });
+    await expect(createMakerSendTransaction(deps).sendToAgentAccepted('session-1', 'Follow up', undefined, {
+      origin: { kind: 'scheduler', scheduleId: 's', scheduleName: 'Follow up', runId: 'r' },
+    })).rejects.toThrow('REMOTE_AGENT_UNAVAILABLE');
+    expect(vendor).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('restores scheduled intent from owner history, not the prompt (unavailable=%s)', async (unavailable) => {

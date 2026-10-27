@@ -496,6 +496,26 @@ export class MakerScheduleRunner implements ScheduleRunner {
     return this.deps.checkModelRoute!(agent, model, providerId);
   }
 
+  /** Re-read the execution computer's catalog after dispatch preparation. */
+  private async assertRemoteDispatchRoute(
+    agentDeviceId: string | null | undefined,
+    agentKind: AgentKind,
+    model: string,
+    providerId: string | null,
+  ): Promise<void> {
+    if (!agentDeviceId) return;
+    try {
+      if (!this.deps.resolveModelSelection) throw new Error('Scheduled model selection is not available');
+      await this.deps.resolveModelSelection({
+        agentDeviceId, agentKind, model, providerId, effort: null, fastMode: false,
+      }, { agentDeviceId });
+    } catch (error) {
+      throw new QueuedRouteDisabledError(
+        `schedule remote route unavailable before dispatch: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private async retireHeartbeat(
     schedule: Schedule,
     ctx: FireContext,
@@ -2011,27 +2031,35 @@ export class MakerScheduleRunner implements ScheduleRunner {
       }
       const sendResult = await session.send(outgoingMessage as never, {
         origin,
-        ...(schedule.targetSessionId || schedule.source === 'bot'
+        ...(isHeartbeat || schedule.source === 'bot' || agentDeviceId
           ? {
               resolveAutoReviewUserIntent: async () => {
                 // A teammate routine is judged by the instruction it runs, not by the
                 // owner's unrelated chat history in the teammate's main task.
                 const intent = schedule.source === 'bot'
                   ? routineInstructionFromPrompt(schedule.prompt)
-                  : restoreAutoReviewUserIntent(
+                  : isHeartbeat ? restoreAutoReviewUserIntent(
                     (await this.deps.readAutoReviewHistory?.(session.id).catch(() => [])) ?? [],
-                  );
-                const current = await this.readRoutinePermissions(session.id, session);
-                const expected = routinePermissions ?? heartbeatPermissions;
-                if (
-                  !current ||
-                  current.permissionMode !== expected?.permissionMode ||
-                  current.planMode !== expected?.planMode
-                ) {
-                  throw new RoutineDispatchDeferredError(
-                    'Heartbeat modes changed during preparation',
-                  );
+                  ) : undefined;
+                if (isHeartbeat || schedule.source === 'bot') {
+                  const current = await this.readRoutinePermissions(session.id, session);
+                  const expected = routinePermissions ?? heartbeatPermissions;
+                  if (
+                    !current ||
+                    current.permissionMode !== expected?.permissionMode ||
+                    current.planMode !== expected?.planMode
+                  ) {
+                    throw new RoutineDispatchDeferredError(
+                      'Heartbeat modes changed during preparation',
+                    );
+                  }
                 }
+                // Session invokes this after accepted preparation and the vision
+                // bridge, immediately before its synchronous dispatch boundary.
+                await this.assertRemoteDispatchRoute(
+                  session.agentDeviceId ?? agentDeviceId, effectiveAgentKind, runtimeModel,
+                  getSessionProvider(session.id),
+                );
                 return intent;
               },
             }

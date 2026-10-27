@@ -68,7 +68,7 @@ import { setBotRemoteMessageService } from './botRemoteMessageReceiver.js';
 import { handleListDevices, defaultDeps as deviceDirectoryDeps } from '../device-link/ipc.js';
 import { configureBotAutonomyHost, getBotAutonomyGlance, noteBotAutonomyInputProjection } from '../bot-autonomy/hub.js';
 import { getHostSourceDevice, getSelfDeviceId, remoteBackgroundInvoke, remoteInvoke as invokeBotPeer } from '../device-link/index.js';
-import { readDeviceProviderViews } from '../remote-agent/controller/deviceCatalog.js';
+import { readDeviceProviderViews, readRemoteProviderRoute } from '../remote-agent/controller/deviceCatalog.js';
 import { checkDeviceRoute } from '../remote-agent/controller/deviceRouteCheck.js';
 import { cancelPendingRemoteStart } from '../remote-agent/controller/startRemote.js';
 import { forgetCredentialGrants } from '../remote-agent/executor/credentialGrants.js';
@@ -17996,6 +17996,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     },
     readAutoReviewHistory,
     readScheduledPermissions: getSessionFsSnapshot,
+    assertScheduledDispatchRoute: async (sessionId) => {
+      const session = maker.getSession(sessionId);
+      if (!session) throw new Error('Scheduled session unavailable before dispatch');
+      if (!session.agentDeviceId) return;
+      await readRemoteProviderRoute({
+        agentDeviceId: session.agentDeviceId,
+        agentKind: session.agentKind,
+        model: session.model,
+        providerId: getSessionProvider(sessionId),
+      });
+    },
     getSession: (sessionId) => maker.getSession(sessionId),
     closeSession: (sessionId) => maker.closeSession(sessionId),
     getSessionMeta: (sessionId) => maker.getSessionMeta(sessionId),

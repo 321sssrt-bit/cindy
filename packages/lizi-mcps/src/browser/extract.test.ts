@@ -30,9 +30,9 @@ describe('buildExtractFnSource', () => {
   // separators in executable source. Exercise the generated function as well
   // as its code/data boundary; selector and attribute values must round-trip.
   it('escapes script delimiters and line separators without altering DOM read data', () => {
-    const payload = '</script><script>throw new Error("injected")</script>\u2028\u2029';
+    const payload = '</script><SCRIPT>throw new Error("injected")</SCRIPT>\u2028\u2029';
     const src = buildExtractFnSource({ fields: { value: { selector: payload, attr: payload } } });
-    expect(src).not.toMatch(/<\/?script>|[\u2028\u2029]/u);
+    expect(src).not.toMatch(/<\/?script>|[\u2028\u2029]/iu);
     const received: string[] = [];
     const g = globalThis as unknown as { document?: unknown };
     const previous = g.document;

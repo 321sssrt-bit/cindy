@@ -1182,6 +1182,7 @@
       "done": "Done",
       "running": "Running",
       "networkReconnecting": "({{attempt}}/{{maxAttempts}}) Connection interrupted — reconnecting…",
+      "callingTool": "Calling a tool…",
       "updatingTasks": "Updating tasks",
       "awaitingPermission": "Awaiting permission",
       "awaitingQuestion": "Awaiting your reply",

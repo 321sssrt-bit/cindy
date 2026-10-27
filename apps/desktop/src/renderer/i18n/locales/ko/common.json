@@ -1170,6 +1170,7 @@
       "done": "완료",
       "running": "실행 중",
       "networkReconnecting": "({{attempt}}/{{maxAttempts}}) 연결이 끊어졌습니다. 다시 연결하는 중…",
+      "callingTool": "도구 호출 중…",
       "updatingTasks": "작업 업데이트 중",
       "awaitingPermission": "승인 대기 중",
       "awaitingQuestion": "답장 대기 중",

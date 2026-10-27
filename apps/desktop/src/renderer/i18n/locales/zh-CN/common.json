@@ -1170,6 +1170,7 @@
       "done": "完成",
       "running": "运行中",
       "networkReconnecting": "（{{attempt}}/{{maxAttempts}}）网络连接中断，正在重新连接…",
+      "callingTool": "正在调用工具…",
       "updatingTasks": "正在更新任务",
       "awaitingPermission": "等待授权",
       "awaitingQuestion": "等待你的回复",

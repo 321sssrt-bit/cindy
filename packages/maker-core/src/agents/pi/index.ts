@@ -4727,6 +4727,54 @@ export class PiAgent extends BaseAgent {
         }
         return;
       }
+      if (approval.method === 'input' && approval.title === 'cindy:harness-hook') {
+        // Child bridges raise their internal tool.before / compaction.before
+        // sync hooks on the same extension_ui channel as permissions. They are
+        // not approvals: answer them the way the root session's RPC loop does
+        // (same validity gate, `continue` when hooks are off or this handle has
+        // closed) instead of rendering a `Subagent: tool` card with `{}` input.
+        let request: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(approval.placeholder ?? '{}') as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            request = parsed as Record<string, unknown>;
+          }
+        } catch {
+          // Invalid bridge input preserves the original native policy.
+        }
+        const valid = harnessHooksEnabled && !closed
+          && (request.name === 'compaction.before'
+            || (request.name === 'tool.before' && typeof request.toolName === 'string'));
+        try {
+          const result = valid
+            ? await harnessHookBridge.run({
+              name: request.name as 'tool.before' | 'compaction.before',
+              ...(request.name === 'tool.before' ? {
+                toolName: request.toolName as string,
+                toolUseId: typeof request.toolUseId === 'string' ? request.toolUseId : undefined,
+                input: request.input,
+              } : {}),
+            })
+            : { action: 'continue' as const };
+          // Same fence as the turn-change acknowledgement: park across an
+          // account switch rather than answer for the outgoing account.
+          if (accountBoundaryTeardown) return;
+          const controlled = await publishPiSubagentApproval(status.taskId, {
+            childId: task.childId,
+            approvalId: approval.id,
+            value: JSON.stringify(result),
+            runtimeOwnerId: controlOwnerId,
+          });
+          if (controlled > 0) piSubagentApprovalDeliveries.add(key);
+        } catch (error) {
+          this.deps.logger.warn('PI Subagent harness hook response failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          piSubagentApprovalRequests.delete(key);
+        }
+        return;
+      }
       let toolName = 'tool';
       let input: Record<string, unknown> = {};
       let resolvedWritePath: string | null | undefined;

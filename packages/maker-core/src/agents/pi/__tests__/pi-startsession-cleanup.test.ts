@@ -1532,6 +1532,73 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     await handle.close();
   });
 
+  // #7494: a child's internal `cindy:harness-hook` shares the extension_ui
+  // channel with permissions. It must be answered through the harness hook
+  // bridge, never surfaced as a `Subagent: tool` approval with `{}` input.
+  it('answers a durable Subagent harness hook through the hook bridge instead of an approval prompt', async () => {
+    const runId = '123e4567-e89b-42d3-a456-426614174098';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    // Surface the child's request only after the hook handler is attached, as
+    // in a live session where the handler is wired before tools run.
+    let handlerAttached = false;
+    mockRunDiscovery().mockImplementation(async () => !handlerAttached ? [] : [{
+      version: 1,
+      runId,
+      taskId: 'tool-harness-hook',
+      parentSessionId: 's1',
+      runtimeOwnerId: ownerId(),
+      runnerInstanceId: 'runner-harness-hook',
+      state: 'running',
+      startedAt: 1,
+      updatedAt: 2,
+      tasks: [{
+        childId: `${runId}-1`,
+        sessionId: `${runId}-1`,
+        agent: 'worker',
+        status: 'running',
+        pendingApproval: {
+          id: 'hook-1',
+          method: 'input',
+          title: 'cindy:harness-hook',
+          placeholder: JSON.stringify({
+            name: 'tool.before',
+            toolName: 'bash',
+            toolUseId: 'bash-1',
+            input: { command: 'git status' },
+          }),
+        },
+      }],
+    }]);
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    const hook = vi.fn(async () => ({ action: 'block', reason: 'policy' }) as const);
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setInteractionResolver(resolver);
+    handle.setHarnessHookHandler?.(hook);
+    handlerAttached = true;
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook',
+      'approval',
+      expect.objectContaining({
+        childId: `${runId}-1`,
+        approvalId: 'hook-1',
+        // The bridge forwards only the action; reasons never reach Pi.
+        value: JSON.stringify({ action: 'block' }),
+        runtimeOwnerId: ownerId(),
+      }),
+    ), { timeout: 3_000 });
+    expect(hook).toHaveBeenCalledWith({
+      name: 'tool.before',
+      toolName: 'bash',
+      toolUseId: 'bash-1',
+      input: { command: 'git status' },
+    });
+    expect(resolver).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
   /**
    * The caller-side fence check is not the write. Between them
    * `controlPiSubagentRuns` discovers runs and guards the run directory —

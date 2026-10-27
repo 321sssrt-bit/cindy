@@ -166,6 +166,7 @@ export function currentPowerReleaseGeneration(): number {
  */
 export function disposeVoiceInputAudioModuleForHmr(): Promise<void> {
   powerReleaseGeneration += 1;
+  lastVoiceInputUseAt = undefined;
   keepAlivePowerReleaseUnsubscribe?.();
   keepAlivePowerReleaseUnsubscribe = undefined;
   keepAlivePowerReleaseListening = false;
@@ -209,6 +210,8 @@ let keepAliveIdleDeadlineAt: number | undefined;
 // task switch would light up a fresh 30-minute window and the OS privacy
 // indicator would never go out on a machine the user is merely working in —
 // contradicting the promise in settings.voiceInput.fastActivation.hint.
+// The MediaStream and its use window belong to this capture renderer. Another
+// window's first capture is cold; recording here does not open its microphone.
 let lastVoiceInputUseAt: number | undefined;
 
 function isSpecificMicrophoneDeviceId(deviceId?: string): deviceId is string {
@@ -425,9 +428,8 @@ function ensureKeepAliveDeviceChangeListener(): void {
  * Both mean the user walked away, so holding the capture device buys no
  * latency while still lighting the OS privacy indicator and holding an
  * idle-sleep assertion through coreaudiod. Mirrors the devicechange listener
- * above: one process-wide subscription, never torn down. Installed lazily by
- * whichever capture starts first — the keep-alive session *or* a direct
- * (keepAlive: false) capture, which relies on it just as much.
+ * above: one subscription per module, released on HMR. Installed at the first
+ * use intent or capture start, including direct (keepAlive: false) capture.
  */
 function ensureKeepAlivePowerReleaseListener(): void {
   if (keepAlivePowerReleaseListening) return;
@@ -1018,6 +1020,7 @@ function keepAliveMonotonicNow(): number {
  * after the idle window has released the device; mounting components never does.
  */
 export function noteVoiceInputUse(): void {
+  ensureKeepAlivePowerReleaseListener();
   lastVoiceInputUseAt = keepAliveMonotonicNow();
 }
 

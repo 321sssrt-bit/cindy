@@ -62,10 +62,6 @@ describe('prewarmVoiceInputMicrophoneWithAutomaticFallback', () => {
   let deviceChangeListener: (() => void) | undefined;
 
   beforeEach(() => {
-    // Every case here exercises prewarming for a user who is dictating, so put
-    // the process inside the use window first — mounting alone never opens the
-    // device (see WebMicAudioEngine.keepAliveIdle.test.ts).
-    noteVoiceInputUse();
     track = createFakeTrack();
     getUserMedia = vi.fn(async () => ({
       getAudioTracks: () => [track],
@@ -116,6 +112,9 @@ describe('prewarmVoiceInputMicrophoneWithAutomaticFallback', () => {
       workletReady: Promise.resolve(),
       workletUrl: 'https://app.local/pcm16k-worklet.js',
     });
+    // Establish the renderer before recording intent: it also subscribes to
+    // power releases, even if no microphone has been opened yet.
+    noteVoiceInputUse();
   });
 
   afterEach(async () => {

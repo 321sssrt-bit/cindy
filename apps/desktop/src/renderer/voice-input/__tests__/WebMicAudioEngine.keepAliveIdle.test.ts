@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDefaultVoiceInputSettings, type VoiceInputDataSnapshot } from '../../../shared/voiceInputData';
+import * as mod from '../WebMicAudioEngine';
+import * as pool from '../audioContextPool';
 
 vi.mock('../audioContextPool', () => ({
   PCM16K_WORKLET_NAME: 'pcm16k-worklet',
   prewarmVoiceInputAudio: vi.fn(),
 }));
 
-type EngineModule = typeof import('../WebMicAudioEngine');
 type PowerCallback = (payload: { reason: 'system_suspend' | 'screen_locked' }) => void;
 
 const WORKLET_URL = 'https://app.local/pcm16k-worklet.js';
@@ -33,19 +34,17 @@ function createFakeTrack(): FakeTrack {
 }
 
 /**
- * The keep-alive session is module-level state, so every case re-imports the
- * engine to start from a clean slate. Without this the process-wide power
- * listener flag would leak across cases and silently skip the subscription.
+ * Load the engine once. Exercise its real power release and HMR disposal at
+ * teardown so streams, use windows and subscriptions cannot leak across cases.
  */
 describe('keep-alive microphone idle window', () => {
-  let mod: EngineModule;
   let track: FakeTrack;
   let sink: { connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>; gain: { value: number } };
   let destination: object;
   let powerCallback: PowerCallback | undefined;
   let getUserMedia: ReturnType<typeof vi.fn>;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.useFakeTimers();
     track = createFakeTrack();
     powerCallback = undefined;
@@ -83,8 +82,6 @@ describe('keep-alive microphone idle window', () => {
       port: { close: vi.fn(), postMessage: vi.fn(), onmessage: null },
     })));
 
-    vi.resetModules();
-    const pool = await import('../audioContextPool');
     vi.mocked(pool.prewarmVoiceInputAudio).mockResolvedValue({
       context: {
         currentTime: 0,
@@ -97,11 +94,11 @@ describe('keep-alive microphone idle window', () => {
       workletReady: Promise.resolve(),
       workletUrl: WORKLET_URL,
     });
-    mod = await import('../WebMicAudioEngine');
   });
 
   afterEach(async () => {
-    await mod.disposeKeepAliveVoiceInputMicrophone('test_cleanup');
+    powerCallback?.({ reason: 'screen_locked' });
+    await mod.disposeVoiceInputAudioModuleForHmr();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -164,6 +161,17 @@ describe('keep-alive microphone idle window', () => {
     // indicator — must stay off until the user asks to dictate.
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
 
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it('clears enable intent on a power release before the first capture', async () => {
+    // Settings can enable fast activation before any capture engine is built.
+    // That intent must already observe lock/suspend, or a later chat mount
+    // would open the device after the user has walked away.
+    mod.noteVoiceInputUse();
+    expect(powerCallback).toBeDefined();
+    powerCallback?.({ reason: 'screen_locked' });
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 

@@ -145,6 +145,9 @@ const NATIVE_RUNTIME_DEPS = [
   '@protobufjs/pool',
   '@protobufjs/utf8',
   'long',
+  // turndown keeps this require in the bundled browser recipes. Ship its
+  // dependency-free DOM implementation so packaged startup can resolve it.
+  '@mixmark-io/domino',
   // @parcel/watcher: file-browser 用的 OS 原生 watcher。N-API 模块, 无需
   // electron-rebuild, 但平台特定子包 (@parcel/watcher-{platform}-{arch})
   // 必须跟主包一起进包, 否则运行时 require('@parcel/watcher') 找不到 .node。
@@ -789,9 +792,13 @@ function extraResourcesForTarget(targetPlatform: string): string[] {
     'resources/cindy-version-protocol.json',
     // Input bytes for upgrading retired preset avatars to ordinary managed images.
     'resources/legacy-teammate-avatars',
+    // Bundled preset artwork main draws outside the renderer (Agent Island companion avatars).
+    'resources/companion-preset-avatars',
     'resources/teammate-portrait-gallery.png',
     // Cindy-owned Agent Skills are materialized under userData on startup.
     'resources/system-skills',
+    // Bundled Bot Market teammate packages; packaged builds read them from process.resourcesPath (bot-import/host.ts).
+    'resources/bot-packages',
     'resources/tools',
     'drizzle',
     'resources/cc-manager',
@@ -1973,6 +1980,19 @@ const config: ForgeConfig = {
       buildWindowsGamepadHelper(platform, arch);
       buildWindowsAtomicRenameHelper(platform, arch);
       buildWindowsTaskbarAddon(platform, arch);
+      if (platform === 'darwin') {
+        const trackpadBuild = spawnSync(
+          process.execPath,
+          [
+            path.join(__dirname, 'native/trackpad/build.mjs'),
+            path.join(__dirname, 'resources/tools/trackpad/cindy-trackpad.node'),
+            arch,
+          ],
+          { stdio: 'inherit' },
+        );
+        if (trackpadBuild.error || trackpadBuild.status !== 0)
+          throw new Error('Native trackpad build failed');
+      }
       buildMacVoiceInputModifierShortcutListener(platform, arch);
       buildMacAgentIslandHelper(platform, arch);
       buildMacComputerPermissionGuideHelper(platform, arch);
@@ -2169,12 +2189,6 @@ const config: ForgeConfig = {
         {
           // 右侧栏独立子窗口专用 preload:最小权限 bridge,不加载主 preload 完整桥。
           entry: 'src/preload/sidebarWindowPreload.ts',
-          config: 'vite.preload.config.ts',
-          target: 'preload',
-        },
-        {
-          // 插件面板独立窗口专用 preload:最小权限 bridge。
-          entry: 'src/preload/ghostPanelWindowPreload.ts',
           config: 'vite.preload.config.ts',
           target: 'preload',
         },

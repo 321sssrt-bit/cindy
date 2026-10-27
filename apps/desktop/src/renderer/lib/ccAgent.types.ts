@@ -1,3 +1,4 @@
+import type { AgentRequestReceipt } from '../../shared/forwardedRequest.js';
 import type { ImMessageSource } from '../../shared/imMessageSource';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
 import type { SessionSource } from '../../shared/sessionSource';
@@ -100,11 +101,15 @@ export type StoredMessageOrigin =
  * 只接受 SDK 自己分配的 uuid，所以这是 fork 的唯一主键。
  */
 export interface CcMeta {
+  /** Model boundary recorded by the host when the next input is dispatched. */
+  modelChange?: { fromModel: string; toModel: string; modelOnly: true };
   /** Host-authored official MCP App snapshot; not an assistant prose reply. */
   mcpApp?: boolean;
   botLearning?: import('@cindy/maker-shared/bot-learning').BotLearningReceipt[];
   /** Provider text phase, retained to exclude commentary from notification previews. */
   assistantPhase?: string;
+  /** Exact native sampling attempt that failed before response completion. Original text is retained. */
+  failedSamplingAttempt?: { threadId: string; turnId: string; attempt: number; itemId: string; error?: string };
   uuid?: string;
   parentUuid?: string;
   /** Claude transcript chain parent. Do not confuse with parentUuid, which is parent_tool_use_id. */
@@ -146,7 +151,8 @@ export interface CcMeta {
   /** Host-owned authorization evidence; IPC callers cannot mint or replace it. */
   autoReviewUserText?: string
     | { text: string; acceptedAt: number }
-    | { kind: 'scheduled-continuation' };
+    | { kind: 'scheduled-continuation' }
+    | AgentRequestReceipt;
 
   /**
    * Host-side origin marker（与 delivery 同类，非 SDK 字段）。
@@ -200,6 +206,8 @@ export interface CcMeta {
   sourceGroup?: MessageSourceGroup;
   /** Guest-safe independent assistant delivery; does not seal a model turn. */
   explicitDelivery?: boolean;
+  /** UI-only call transcript. Never replay as model messages or memory. */
+  voiceCall?: import("@cindy/maker-core").VoiceCallRecord;
 
   /** 历史 per-turn USD；新数据以 turnCost 为区域金额事实。 */
   turnCostUsd?: number;
@@ -277,6 +285,8 @@ export interface CcMeta {
    */
   /** Automatic reply to a private Bot message; retained without unread attention. */
   botPrivateReply?: boolean;
+  /** The accepted user input (clientId) the turn that wrote this row answers. */
+  replyToClientId?: string;
   /** Main-owned input receipt, retained for audit; never an authorization grant. */
   botTaskCoordinationInput?: import('../../shared/botTaskCoordination').BotTaskCoordination;
   /** Accepted internal coordination turn, used to suppress successful completion attention. */
@@ -284,6 +294,8 @@ export interface CcMeta {
   /** Turn of a Bot's hidden group-chat lane; the group chat surfaces its result and failures. */
   botGroupLane?: boolean;
   botAuthorization?: import('../../shared/botAuthorization').BotAuthorizationCard;
+  /** Market opening: starter choices rendered as buttons below the message until the user speaks. */
+  botStarterOptions?: string[];
   botDirectMessage?: import('../../shared/botDirectMessage').BotDirectMessageMeta;
 
   /**
@@ -349,7 +361,7 @@ export interface Session {
   totalMoney?: RegionalMoney;
   contextTokens: number;
   contextWindow: number;
-  fastMode: boolean;
+  fastMode: boolean | 'ultrafast';
   /** Host-only temporary route; absent on older Desktop/device-link peers. */
   runtimeGeneration?: number;
   runtimeBaseline?: SessionRuntimeProfileProjection;
@@ -375,11 +387,14 @@ export interface Session {
    * 与 updatedAt 解耦——改 model/effort/title 等字段不会动它。
    */
   userSendAt: string | null;
+  lastActivityAt?: string | null;
   status: SessionStatus;
   /** 当前 session 接的 agent。老 session DEFAULT 'cc'。 */
   agentKind: AgentKind;
   /** 会话来源。scheduler 表示由自动化任务创建；缺失时按 desktop 兼容旧 payload。 */
   source?: SessionSource;
+  /** Host-owned teammate link, also used by the existing history API. Display only. */
+  companion?: { id: string; role: string; channel?: string } | null;
   /** Orca split-session role marker. null/undefined means a regular Maker session. */
   orcaRole?: OrcaRole | null;
   /** fork-session：派生来源会话 id（self-FK，源被删 → SET NULL）。null = 顶层会话。 */
@@ -485,7 +500,7 @@ export interface SessionRuntimeProfileProjection {
   model: string;
   providerId: string | null;
   effort: Effort | null;
-  fastMode: boolean;
+  fastMode: boolean | 'ultrafast';
 }
 
 export interface SessionRuntimePendingProjection {

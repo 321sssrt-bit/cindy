@@ -9,16 +9,21 @@ export interface TelegramTextContent {
 }
 
 const MAX_TEXT = 16_384;
+const MAX_BLOCKS = 500;
+const MAX_COLUMNS = 20;
+// Bot API permits 16 semantic nesting levels. JSON arrays/objects add levels
+// of their own; budget work independently of the visible output length.
+const MAX_DEPTH = 64;
+const MAX_NODES = 32_768 * MAX_DEPTH;
 
 export function telegramMessageText(message: TelegramTextContent): string {
   if (message.text?.trim()) return message.text;
   if (message.caption?.trim()) return message.caption;
   let remaining = MAX_TEXT;
-  let nodes = 2048;
-  function visit(value: unknown, depth = 0, separator = '', childSeparator = ''): string {
-    // Missing optional fields are not nodes in the incoming document.
+  let nodes = MAX_NODES;
+  function visit(value: unknown, depth = 0, separator = ''): string {
+    if (depth > MAX_DEPTH || --nodes < 0 || remaining <= 0) return '';
     if (value === undefined || value === null) return '';
-    if (depth > 20 || --nodes < 0 || remaining <= 0) return '';
     if (typeof value === 'string') {
       const text = value.slice(0, remaining);
       remaining -= text.length;
@@ -26,11 +31,11 @@ export function telegramMessageText(message: TelegramTextContent): string {
     }
     if (Array.isArray(value)) {
       const parts: string[] = [];
-      for (const item of value) {
+      const items = separator === '\n' ? value.slice(0, MAX_BLOCKS) : value;
+      for (const item of items) {
         if (nodes <= 0 || remaining <= 0) break;
-        const text = visit(item, depth + 1, childSeparator);
-        // Empty cells still occupy a column in a table row.
-        if (text || separator === '\t') parts.push(text);
+        const text = visit(item, depth + 1);
+        if (text) parts.push(text);
       }
       return parts.join(separator);
     }
@@ -44,14 +49,44 @@ export function telegramMessageText(message: TelegramTextContent): string {
     if (item.type === 'mathematical_expression') return visit(item.expression, depth + 1);
     if (item.type === 'custom_emoji') return visit(item.alternative_text, depth + 1);
     if (item.type === 'button') return visit(item.button, depth + 1);
-    // https://core.telegram.org/bots/api#richblocktable: cells is a row matrix.
+    // Tables use HTML-style spans: reserve covered columns/rows, including
+    // empty cells, rather than sliding subsequent values into the wrong column.
     if (item.type === 'table') {
-      return [visit(item.cells, depth + 1, '\n', '\t'), visit(item.caption, depth + 1)]
-        .filter(Boolean)
-        .join('\n');
+      const rows: string[] = [];
+      const occupiedUntil: number[] = Array(MAX_COLUMNS).fill(0);
+      if (Array.isArray(item.cells)) {
+        for (const [rowIndex, row] of item.cells.slice(0, MAX_BLOCKS).entries()) {
+          if (nodes <= 0 || remaining <= 0) break;
+          if (!Array.isArray(row)) continue;
+          const cells: string[] = [];
+          for (const cell of row) {
+            while (cells.length < MAX_COLUMNS && occupiedUntil[cells.length] > rowIndex) {
+              cells.push('');
+            }
+            if (cells.length >= MAX_COLUMNS || nodes <= 0 || remaining <= 0) break;
+            const column = cells.length;
+            const span = (key: 'colspan' | 'rowspan', limit: number): number => {
+              const value = cell && typeof cell === 'object' ? cell[key] : undefined;
+              return Number.isInteger(value) && value > 1 ? Math.min(value, limit) : 1;
+            };
+            const columns = span('colspan', MAX_COLUMNS - column);
+            const until = rowIndex + span('rowspan', MAX_BLOCKS - rowIndex);
+            cells.push(visit(cell, depth + 3), ...Array(columns - 1).fill(''));
+            occupiedUntil.fill(until, column, column + columns);
+          }
+          for (let column = cells.length; column < MAX_COLUMNS; column++) {
+            if (occupiedUntil[column] > rowIndex) {
+              while (cells.length <= column) cells.push('');
+            }
+          }
+          rows.push(cells.join('\t'));
+        }
+      }
+      return [rows.join('\n'), visit(item.caption, depth + 1)].filter(Boolean).join('\n');
     }
     if (typeof item.label === 'string' && Array.isArray(item.blocks)) {
-      return [visit(item.label, depth + 1), visit(item.blocks, depth + 1, '\n')]
+      const checkbox = item.has_checkbox === true ? (item.is_checked === true ? '[x]' : '[ ]') : '';
+      return [visit(item.label, depth + 1), checkbox, visit(item.blocks, depth + 1, '\n')]
         .filter(Boolean)
         .join(' ');
     }
@@ -59,6 +94,8 @@ export function telegramMessageText(message: TelegramTextContent): string {
     // their boundaries. Do not return early on text: captions/quotes have credit.
     const parts: string[] = [];
     for (const key of ['text', 'summary', 'blocks', 'items', 'caption', 'credit', 'buttons']) {
+      // Missing optional fields do not consume the traversal budget.
+      if (item[key] === undefined || item[key] === null) continue;
       const separator = key === 'blocks' || key === 'items' || key === 'buttons' ? '\n' : '';
       const text = visit(item[key], depth + 1, separator);
       if (text) parts.push(text);

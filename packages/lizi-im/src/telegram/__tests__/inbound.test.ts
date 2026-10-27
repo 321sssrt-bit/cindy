@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TgMessage } from '../api.js';
-import { detectGroupTrigger, groupWindowEntryOf, laneThreadIdOf, replyContextOf } from '../inbound.js';
+import {
+  detectGroupTrigger,
+  groupWindowEntryOf,
+  laneThreadIdOf,
+  replyContextOf,
+} from '../inbound.js';
 
 const BOT_ID = 999;
 const BOT_USERNAME = 'my_cindy_bot';
@@ -18,23 +23,31 @@ function msg(overrides: Partial<TgMessage> = {}): TgMessage {
 }
 
 describe('detectGroupTrigger', () => {
-  it.each(['Cindy 赞助', 'Cindy 现在也有', 'cindy 帮我看看', 'Cindy', ' Cindy？', '我问过 Cindy 了'])(
-    '仅提到显示名不触发：%s',
+  it.each([
+    'Cindy 赞助',
+    'Cindy 现在也有',
+    'cindy 帮我看看',
+    'Cindy',
+    ' Cindy？',
+    '我问过 Cindy 了',
+  ])('仅提到显示名不触发：%s', (text) => {
+    expect(detectGroupTrigger(msg({ text }), BOT_ID, BOT_USERNAME, 'Cindy')).toBeNull();
+    expect(
+      detectGroupTrigger(msg({ text: undefined, caption: text }), BOT_ID, BOT_USERNAME, 'Cindy'),
+    ).toBeNull();
+  });
+
+  it.each(['@CindyOther', '@Cindy_bot', '@Cindy2'])(
+    '提及以显示名开头的其它账号不触发：%s',
     (text) => {
       expect(detectGroupTrigger(msg({ text }), BOT_ID, BOT_USERNAME, 'Cindy')).toBeNull();
-      expect(
-        detectGroupTrigger(msg({ text: undefined, caption: text }), BOT_ID, BOT_USERNAME, 'Cindy'),
-      ).toBeNull();
     },
   );
 
-  it.each(['@CindyOther', '@Cindy_bot', '@Cindy2'])('提及以显示名开头的其它账号不触发：%s', (text) => {
-    expect(detectGroupTrigger(msg({ text }), BOT_ID, BOT_USERNAME, 'Cindy')).toBeNull();
-  });
-
   it('保留显式 @显示名的兼容入口', () => {
-    expect(detectGroupTrigger(msg({ text: '@Cindy 帮我看看' }), BOT_ID, BOT_USERNAME, 'Cindy'))
-      .toEqual({ text: '帮我看看' });
+    expect(
+      detectGroupTrigger(msg({ text: '@Cindy 帮我看看' }), BOT_ID, BOT_USERNAME, 'Cindy'),
+    ).toEqual({ text: '帮我看看' });
   });
 
   it('@bot 提及触发并剥掉提及', () => {
@@ -251,14 +264,54 @@ describe('replyContextOf', () => {
     expect(replyContextOf(m)).toBeNull();
   });
 
-  it('keeps all 500 short paragraphs without charging absent fields to the node budget', () => {
+  it('keeps 500 paragraphs with 16 levels of inline formatting in replies and history', () => {
     const lines = Array.from({ length: 500 }, (_, i) => `段落 ${i}`);
     const rich = msg({
       text: undefined,
-      rich_message: { blocks: lines.map((text) => ({ type: 'paragraph', text })) },
+      rich_message: {
+        blocks: lines.map((text) => {
+          let formatted: unknown = text;
+          for (let i = 0; i < 16; i++) formatted = { type: 'bold', text: [formatted] };
+          return { type: 'paragraph', text: formatted };
+        }),
+      },
     });
     expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toBe(lines.join('\n'));
     expect(groupWindowEntryOf(rich).text).toBe(lines.join('\n'));
+  });
+
+  it('preserves checkbox state and merged table coordinates in replies and history', () => {
+    const rich = msg({
+      text: undefined,
+      rich_message: {
+        blocks: [
+          {
+            type: 'list',
+            items: [
+              {
+                label: '-',
+                has_checkbox: true,
+                is_checked: true,
+                blocks: [{ type: 'paragraph', text: 'Done' }],
+              },
+              { label: '-', has_checkbox: true, blocks: [{ type: 'paragraph', text: 'Todo' }] },
+              { label: '1.', is_checked: true, blocks: [{ type: 'paragraph', text: 'Plain' }] },
+            ],
+          },
+          {
+            type: 'table',
+            cells: [
+              [{ text: 'A', colspan: 2, rowspan: 2 }, { text: 'C1' }],
+              [{ text: 'C2' }],
+              [{ text: 'A3' }, {}, { text: 'C3' }],
+            ],
+          },
+        ],
+      },
+    });
+    const expected = '- [x] Done\n- [ ] Todo\n1. Plain\nA\t\tC1\n\t\tC2\nA3\t\tC3';
+    expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toBe(expected);
+    expect(groupWindowEntryOf(rich).text).toBe(expected);
   });
 
   it('reports unreadable rich references and bounds deeply nested or long content', () => {
@@ -271,10 +324,12 @@ describe('replyContextOf', () => {
     for (let i = 0; i < 100; i++) nested = { type: 'bold', text: nested };
     rich.rich_message = { blocks: [{ type: 'paragraph', text: nested }] };
     expect(groupWindowEntryOf(rich).text).toBe('');
-    rich.rich_message = { blocks: [
-      ...Array(3000).fill({ type: 'unknown', metadata: 'not-visible' }),
-      { type: 'paragraph', text: 'past budget' },
-    ] };
+    rich.rich_message = {
+      blocks: [
+        ...Array(3000).fill({ type: 'unknown', metadata: 'not-visible' }),
+        { type: 'paragraph', text: 'past budget' },
+      ],
+    };
     expect(groupWindowEntryOf(rich).text).toBe('');
     rich.rich_message = {
       blocks: [{ type: 'paragraph', text: 'x'.repeat(100_000) }],
@@ -289,7 +344,11 @@ describe('replyContextOf', () => {
         text: '昨天的部署日志在这',
       }),
     });
-    expect(replyContextOf(m)).toEqual({ messageId: '1', author: 'Bob', text: '昨天的部署日志在这' });
+    expect(replyContextOf(m)).toEqual({
+      messageId: '1',
+      author: 'Bob',
+      text: '昨天的部署日志在这',
+    });
   });
 
   it('回复 bot 的消息标 isBot', () => {
@@ -299,7 +358,12 @@ describe('replyContextOf', () => {
         text: '已完成',
       }),
     });
-    expect(replyContextOf(m)).toEqual({ messageId: '1', author: 'Cindy', text: '已完成', isBot: true });
+    expect(replyContextOf(m)).toEqual({
+      messageId: '1',
+      author: 'Cindy',
+      text: '已完成',
+      isBot: true,
+    });
   });
 
   it('纯附件回复给类型占位; 正文不可读仍保留原消息 ID', () => {
@@ -319,7 +383,8 @@ describe('replyContextOf', () => {
     expect(replyContextOf(docReply)?.text).toBe('[文件: a.pdf]');
     const empty = msg({ reply_to_message: msg({ message_id: 42, text: undefined }) });
     expect(replyContextOf(empty)).toMatchObject({
-      messageId: '42', text: '[引用消息的正文无法读取]',
+      messageId: '42',
+      text: '[引用消息的正文无法读取]',
     });
     expect(replyContextOf(msg())).toBeNull();
   });

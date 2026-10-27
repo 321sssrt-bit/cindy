@@ -1,3 +1,4 @@
+import { deviceDisplayName } from '@/lib/deviceName';
 import { Button } from '@/components/ui/button';
 import { useModelPickerAgents } from '@/hooks/useAvailableAgents';
 import * as React from 'react';
@@ -16,6 +17,7 @@ import { useDetectCwd } from '@/hooks/useWorktreeQueries';
 import { useAgentCapabilities, type ModelDescriptor } from '@/hooks/useAgentCapabilities';
 import { useProviders } from '@/hooks/useProviders';
 import { useDeviceProviders } from '@/hooks/useDeviceProviders';
+import { useModelRouteDevices } from '@/hooks/useModelRouteDevices';
 import { RemoteSourceMark } from '@/components/icons/RemoteSourceMark';
 import { ModelIconMark } from '@/components/new-chat/ModelSelector';
 import { ModelRouteSelectorContent } from '@/components/new-chat/ModelRouteSelector';
@@ -1124,6 +1126,14 @@ export function ModelEffortChip({
   const localProviders = useProviders();
   const remoteProviders = useDeviceProviders(agentDeviceId || undefined);
   const { providers, loading: providersLoading } = agentDeviceId ? remoteProviders : localProviders;
+  // 触发器的位置说明与统一选择器使用相同候选，沿用设备名称的统一回退规则。
+  const routeDevices = useModelRouteDevices({
+    controlledDeviceId: null,
+    leadAgentDeviceId: agentDeviceId,
+  });
+  const agentDeviceName = agentDeviceId
+    ? deviceDisplayName(agentDeviceId, undefined, routeDevices.devices ?? [])
+    : null;
   const xdConnected = providers.some((p) => p.id === 'xd' && p.connected);
   const availableModels = caps.capabilities?.availableModels;
   const models = useMemo(
@@ -1194,12 +1204,17 @@ export function ModelEffortChip({
     />
   ) : undefined;
 
+  const agentDeviceTitle = agentDeviceName
+    ? t('newChat.modelSelector.trigger.agentDevice', { device: agentDeviceName })
+    : null;
+
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <ChipButton
           icon={agentDeviceId && modelIcon ? <RemoteSourceMark>{modelIcon}</RemoteSourceMark> : modelIcon}
           label={display}
+          title={agentDeviceTitle ? `${display} · ${agentDeviceTitle}` : undefined}
           active={open}
           disabled={disabled}
           className="[&>span:last-of-type]:min-w-[106px] max-w-[240px] px-2"

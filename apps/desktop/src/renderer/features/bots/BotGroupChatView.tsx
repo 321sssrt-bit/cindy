@@ -1,6 +1,4 @@
-import { useSmoothMessageFollow } from '@/components/chat/useSmoothMessageFollow';
 import { RemoveChatFromListButton } from './RemoveChatFromListButton';
-import { useMessageEntrance } from '@/components/chat/useMessageEntrance';
 import { useThreadPanelResize } from './useThreadPanelResize';
 import { cn } from '@/lib/utils';
 /**
@@ -82,7 +80,6 @@ import {
 import { ChatInviteButton, messageReactionRevision } from './ChatServerControls';
 import { animateThreadPanelWidth, ChatThreadPanel } from './ChatThreadPanel';
 import {
-  BotGroupOrganizerTag,
   BotGroupPlanFollowUpRow,
   type BotGroupFollowUpAction,
   type BotGroupPlanCardAction,
@@ -234,7 +231,6 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   const resetHistoryRef = useRef<() => void>(() => {});
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const followMessageBottom = useSmoothMessageFollow(scrollRef, contentRef, state.kind === 'ready');
   const stickToBottomRef = useRef(true);
   const [seenThrough, setSeenThrough] = useState<string | null>(null);
   const readOwner = useRef(getDataOwnerGeneration());
@@ -553,9 +549,10 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   useEffect(() => { if (unreadReceipts) loadRef.current(); }, [unreadReceipts]);
   const messageByIdRef = useRef(new Map<string, BotGroupMessageView>());
   messageByIdRef.current = new Map(realMessages.map((message) => [message.id, message]));
-  const entranceSignature = rows.map(message => adoptedKeysRef.current.get(message.id) ?? message.id).join('\0');
-  const entranceKeys = useMemo(() => entranceSignature ? entranceSignature.split('\0') : [], [entranceSignature]);
-  const enterMessage = useMessageEntrance(entranceKeys, state.kind === 'ready' && !loadingOlder);
+  const lastRealSequence = realMessages[realMessages.length - 1]?.sequence ?? 0;
+  /** Rows after this sequence arrived while the page was open: they fade in. */
+  const enterAfterRef = useRef<number | null>(null);
+  if (enterAfterRef.current === null && state.kind === 'ready') enterAfterRef.current = lastRealSequence;
 
   // Quotes resolve against verified copies only; an unverified original falls back to the snapshot.
   const quoteSources = useMemo(
@@ -719,35 +716,29 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
 
   const settingsLabel = t('bots.groupChat.settings.open');
   const headerStatus = headerGroup ? botGroupHeaderStatus(headerGroup, displayName, t) : null;
-  // A single-speaker group has no organizer: requests queue everyone or the named teammates.
-  const organizerBotId = headerGroup?.singleSpeaker ? null : headerGroup?.organizerBotId ?? null;
   const header = useMemo(() => {
     if (!headerGroup) return null;
-    const names = botGroupMemberNames(members.map((member) => ({ name: botGroupMemberDisplayName(member) })), separator);
+    const shown = direct ? members.filter(member => !member.isSelf) : members;
+    const names = botGroupMemberNames(shown.map((member) => ({ name: botGroupMemberDisplayName(member) })), separator);
+    // A group reads its size, not a roll call (owner request 2026-10-26); the names stay in the
+    // tooltip and the settings drawer. Live activity takes the line over while it lasts.
+    const summary = direct ? names : t('bots.groupChat.memberCount', { count: members.length });
     return (
       <div ref={threadHeaderRef} data-testid="bot-group-content-header" className="flex h-full w-full min-w-0 items-center gap-2 pr-2">
         <button
           type="button"
           onClick={direct ? undefined : openSettings}
           disabled={direct}
+          title={names}
           className="flex min-w-0 items-center gap-2 rounded-xl px-2 py-1 text-left hover:bg-[var(--surface-hover)]"
           style={WINDOW_NO_DRAG_STYLE}
         >
-          <BotGroupAvatarStack members={direct ? members.filter(member => !member.isSelf) : members} />
+          <BotGroupAvatarStack members={shown} />
           <span className="flex min-w-0 flex-col">
             <span className="min-w-0 truncate text-13 font-medium leading-5 text-[var(--text-primary)]">{headerGroup.name}</span>
-            <span className="flex min-w-0 items-center gap-2 text-11 leading-4 text-[var(--text-tertiary)]">
-              <span className="hidden min-w-0 items-center gap-1 truncate sm:flex" title={names}>
-                {(direct ? members.filter(member => !member.isSelf) : members).map((member, index) => (
-                  <Fragment key={member.botId}>
-                    {index > 0 ? <span aria-hidden>{separator}</span> : null}
-                    <span className="shrink-0">{botGroupMemberDisplayName(member)}</span>
-                    {member.botId === organizerBotId ? <BotGroupOrganizerTag /> : null}
-                  </Fragment>
-                ))}
-              </span>
-              {headerStatus ? <BotGroupHeaderStatusText text={headerStatus} /> : null}
-            </span>
+            {headerStatus
+              ? <BotGroupHeaderStatusText text={headerStatus} className="text-11 leading-4" />
+              : <span data-testid="bot-group-header-summary" className="min-w-0 truncate text-11 leading-4 tabular-nums text-[var(--text-tertiary)]">{summary}</span>}
           </span>
         </button>
         <div className="ml-auto flex shrink-0 items-center">
@@ -766,7 +757,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
         </div>
       </div>
     );
-  }, [direct, headerGroup?.name, headerGroup?.id, headerGroup?.serverBacked, headerGroup?.canInvite, members, organizerBotId, headerStatus, openSettings, separator, settingsLabel]);
+  }, [direct, headerGroup?.name, headerGroup?.id, headerGroup?.serverBacked, headerGroup?.canInvite, members, headerStatus, openSettings, separator, settingsLabel, t]);
   useRegisterContentHeader(header);
 
   const running = group?.round.status === 'running';
@@ -787,8 +778,8 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element || prependAnchorRef.current) return;
-    if (stickToBottomRef.current) followMessageBottom();
-  }, [lastRowKey, speakingKey, rows.length, hasControlledBanner, controlledBannerCollapsed, followMessageBottom]);
+    if (stickToBottomRef.current) element.scrollTop = element.scrollHeight;
+  }, [lastRowKey, speakingKey, rows.length, hasControlledBanner, controlledBannerCollapsed]);
 
   // Markdown, code blocks and avatars finish layout after the first paint, and the composer or
   // progress strip may grow: keep a reader who is at the bottom pinned there.
@@ -798,12 +789,12 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
     const content = contentRef.current;
     if (!ready || !scroller || !content || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (stickToBottomRef.current && !prependAnchorRef.current) followMessageBottom();
+      if (stickToBottomRef.current && !prependAnchorRef.current) scroller.scrollTop = scroller.scrollHeight;
     });
     observer.observe(content);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, [ready, followMessageBottom]);
+  }, [ready]);
 
   /** Reads one older page; returns it so 引用 can keep paging toward the original. */
   const loadOlder = async (beforeSequence?: number): Promise<{ messages: BotGroupMessageView[]; hasMore: boolean } | null> => {
@@ -1188,6 +1179,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
   const pendingFor = (planId: string | null) =>
     planId && planPending?.planId === planId ? planPending.action : null;
   const canQuote = !!group.serverBacked && !group.archived && !group.dissolvedAt;
+  const enterAfter = enterAfterRef.current;
 
   return (
     <div ref={threadLayoutRef} className={cn('flex h-full min-w-0 overflow-hidden', threadResize.isDragging && 'select-none [&_*]:cursor-col-resize')}>
@@ -1226,10 +1218,8 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
           stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < STICK_TO_BOTTOM_PX;
           if (stickToBottomRef.current) acknowledgeSoon();
         }}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-clip px-5 pb-4 pt-4"
+        className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-4"
       >
-        {/* Keep presentation movement out of the scroller's overflow range. */}
-        <div className="overflow-clip">
         <div ref={contentRef} className="mx-auto flex w-full max-w-[760px] flex-col">
           {hasMoreBefore ? (
             <div className="mb-2 flex justify-center">
@@ -1294,7 +1284,7 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
                   onChanged={onChanged}
                   highlighted={highlightId === message.id}
                   focusable={jumpTarget === message.id || highlightId === message.id}
-                  entranceRef={node => enterMessage(node, adoptedKeysRef.current.get(message.id) ?? message.id)}
+                  entering={enterAfter !== null && (message.pending === true || message.sequence > enterAfter)}
                   canContinue={message.id === continueId}
                   continuing={continuing}
                   onContinue={onContinue}
@@ -1331,7 +1321,6 @@ function BotGroupChatContent({ groupId, direct }: { groupId: string; direct: boo
             // The progress strip carries a running step's status; only its confirmations stay here.
             ? <BotGroupSpeakerInteraction key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />
             : <BotGroupSpeakingLine key={`${speaker.member.botId}:${speaker.activity}`} speaker={speaker} />))}
-        </div>
         </div>
       </div>
       <div className="relative h-0 shrink-0" inert={newMessageCount <= 0}>

@@ -184,11 +184,13 @@ const PI_NATIVE_APIS = new Set<PiNativeApi>([
  * authenticated loopback proxy replaces it with the real host-owned token and
  * account id before forwarding upstream.
  */
-function piOpenaiProxyPlaceholderJwt(): string {
+function piOpenaiProxyPlaceholderJwt(providerId = 'openai'): string {
   const encode = (value: unknown): string =>
     Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({
-    'https://api.openai.com/auth': { chatgpt_account_id: 'cindy-pi-proxy' },
+    // Pi caches sockets by native session + account id, without comparing headers.
+    // Separate logical accounts must therefore have separate placeholder identities.
+    'https://api.openai.com/auth': { chatgpt_account_id: providerId === 'openai' ? 'cindy-pi-proxy' : `cindy-pi-proxy:${providerId}` },
   })}.`;
 }
 
@@ -727,8 +729,12 @@ export function buildPiSubscriptionNativeProviders(
       retainedProviderId === account.id ? retainedOpenAiModel : null,
     ).providers.find((provider) => provider.sourceProviderId === brand);
     if (!projected) continue;
+    const openaiKeyEnv = brand === 'openai'
+      ? `CINDY_PI_KEY_OPENAI_PROXY_${Buffer.from(account.id).toString('hex').toUpperCase()}` : undefined;
+    if (openaiKeyEnv) env[openaiKeyEnv] = piOpenaiProxyPlaceholderJwt(account.id);
     providers.push({
       ...projected,
+      ...(openaiKeyEnv ? { apiKeyEnvVar: openaiKeyEnv } : {}),
       id: `${brand === 'openai' ? 'openai-codex' : brand}-${account.id}`,
       sourceProviderId: account.id,
       name: account.name,

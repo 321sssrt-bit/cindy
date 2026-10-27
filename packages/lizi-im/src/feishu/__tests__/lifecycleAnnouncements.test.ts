@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IMHost } from '../../types.js';
 import { createFeishuIM, type FeishuIM } from '../index.js';
 import { messages } from '../messages.js';
+import { runInScope } from '../moduleScope.js';
+import { stop } from '../wsClient.js';
 
 type Handlers = Record<string, (data: unknown) => Promise<unknown>>;
 
@@ -130,16 +132,21 @@ describe('Feishu lifecycle announcements across shared-profile instances', () =>
     expect(host.secrets.write).not.toHaveBeenCalled();
   });
 
-  it('secondary still receives and replies, including after reconnect, without an offline-history warning', async () => {
-    const host = makeHost('');
-    const secondary = await connect(host, { ipc: false, shouldAnnounceLifecycle: () => false });
+  it.each(['', 'companion:'])('secondary logical stop and reconnect do not leave an offline-history warning (prefix=%s)', async (secretKeyPrefix) => {
+    const host = makeHost(secretKeyPrefix);
+    const secondary = await connect(host, { secretKeyPrefix, ipc: false, shouldAnnounceLifecycle: () => false });
     const onMessage = vi.fn();
     secondary.onMessage(onMessage);
     await receive(0, 'om_secondary');
     await secondary.sendText('ou_owner', 'secondary reply');
+    // A logical stop reaches announceLifecycle('offline'); reconnect alone does not.
+    await runInScope(secondary.scope, () => stop({ reason: 'test-logical-stop' }));
+    expect(sdk.sockets[0].close).toHaveBeenCalledOnce();
+    expect(secondary.getStatus().kind).toBe('idle');
     await secondary.reconnect();
     await receive(1, 'om_secondary_reconnected');
     expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(sentTexts()).not.toContain(messages.lifecycle.offlineNotice);
     await secondary.dispose();
     expect(sentTexts()).toEqual(['secondary reply']);
     expect(host.secrets.write).not.toHaveBeenCalled();

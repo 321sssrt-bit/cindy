@@ -134,6 +134,7 @@ describeMigrationReplay('migration replay', () => {
     try {
       db.exec('CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)');
       db.exec(readFileSync(path.join(drizzleDir(), '0128_demonic_odin.sql'), 'utf-8'));
+      db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY)");
       db.prepare('INSERT INTO plugin_usage_subjects (id,source_kind,ghost_id,display_name,recording_started_at) VALUES (?,?,?,?,?)')
         .run('subject', 'manual', 'plugin', 'Plugin', 100);
       db.prepare('INSERT INTO plugin_usage_events (call_id,subject_id,history_generation,occurred_at,tool_name) VALUES (?,?,?,?,?)')
@@ -166,8 +167,9 @@ describeMigrationReplay('migration replay', () => {
     try {
       db.exec("CREATE TABLE migration_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE migration_history (seq INTEGER PRIMARY KEY, file_name TEXT NOT NULL, content_hash TEXT NOT NULL, applied_at INTEGER NOT NULL)");
       db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO sessions VALUES ('a', 'Loud', 'active', 1), ('b', 'Archived', 'archived', 2);");
+      db.exec("CREATE TABLE plugin_usage_events (call_id TEXT PRIMARY KEY)");
       const result = runMigrationReplay(db, { drizzleDir: drizzleDir(), currentVersion: 129 });
-      expect(result.applied.map((migration) => migration.seq)).toEqual([130, 131, 132]);
+      expect(result.applied.map((migration) => migration.seq)).toEqual([130, 131, 132, 133, 134]);
       expect(columnNames(db, 'sessions')).toContain('notifications_muted');
       // 存量任务全部回填为「未静音」：升级不能替用户少发提醒。
       expect(db.prepare('SELECT id, notifications_muted FROM sessions ORDER BY id').all()).toEqual([

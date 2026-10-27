@@ -45,6 +45,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { taskCreatorFilterKey } from '@/features/bots/cindyDeviceRoster';
+import type { TaskBotIdentity } from '@/features/bots/botFollowScopes';
 import { createLogger } from '@/lib/logger';
 import { isDataOwnerPushStampCurrent } from '@/contexts/dataOwnerGeneration';
 import type { DataOwnerPushStamp } from '../../../../shared/dataOwnerPush';
@@ -55,6 +57,10 @@ import {
 } from '../../../../shared/sidebarSettings';
 
 import {
+  loadCreators,
+  persistCreators,
+  nextCreatorsAfterToggle,
+  type FilterCreators,
   loadStatus,
   loadProjects,
   loadVendor,
@@ -120,6 +126,10 @@ export {
 export interface UseSidebarFilterReturn {
   /** Status 维度（默认 'active'）。 */
   status: FilterStatus;
+  creators: FilterCreators;
+  creatorOptions: readonly TaskBotIdentity[];
+  toggleCreator: (key: string) => void;
+  setCreatorsAll: () => void;
   /** Project 维度。'all' = 全部；string[] = 仅显示其中的 normalized workingDir。 */
   projects: FilterProjects;
   /** projects === 'all' 时返回 null，方便 render 阶段做"是否在集合内"判定。 */
@@ -214,6 +224,7 @@ function isExactOwnerStampCurrent(
 export function useSidebarFilter(
   hiddenProjectKeys: ReadonlySet<string>,
   initialSnapshot: SidebarSettingsSnapshot,
+  creatorOptions: readonly TaskBotIdentity[] = [],
 ): UseSidebarFilterReturn {
   const ownerId = initialSnapshot.dataOwnerId;
   const ownerStamp = useMemo<DataOwnerPushStamp>(
@@ -226,6 +237,31 @@ export function useSidebarFilter(
   const [loadedPinned] = useState(() => loadManualPinnedOrder(initialSnapshot));
   const [status, setStatusState] = useState<FilterStatus>(() => loadStatus());
   const [projects, setProjectsState] = useState<FilterProjects>(() => loadProjects(ownerId));
+  const [storedCreators, setCreators] = useState<FilterCreators>(() => loadCreators(ownerId));
+  const normalizeCreators = useCallback((selected: FilterCreators): FilterCreators => {
+    if (selected === 'all') return selected;
+    const aliases = new Map(creatorOptions.flatMap(bot => (bot.filterMemberKeys ?? [])
+      .map(member => [member, taskCreatorFilterKey(bot)] as const)));
+    const next = [...new Set(selected.map(key => aliases.get(key) ?? key))];
+    return next.length === selected.length && next.every((key, i) => key === selected[i]) ? selected : next;
+  }, [creatorOptions]);
+  const creators = useMemo(() => normalizeCreators(storedCreators), [normalizeCreators, storedCreators]);
+  useEffect(() => {
+    if (creators === storedCreators) return;
+    setCreators(creators);
+    persistCreators(creators, ownerId);
+  }, [creators, storedCreators, ownerId]);
+  const toggleCreator = useCallback((key: string) => {
+    setCreators(previous => {
+      const next = nextCreatorsAfterToggle(normalizeCreators(previous), key);
+      persistCreators(next, ownerId);
+      return next;
+    });
+  }, [ownerId, normalizeCreators]);
+  const setCreatorsAll = useCallback(() => {
+    setCreators('all');
+    persistCreators('all', ownerId);
+  }, [ownerId]);
   const [vendor, setVendorState] = useState<FilterVendor>(() => loadVendor());
   const [lastActivity, setLastActivityState] = useState<FilterLastActivity>(() =>
     loadLastActivity(),
@@ -524,6 +560,8 @@ export function useSidebarFilter(
       persistProjects('all', ownerId);
       return 'all';
     });
+    setCreators('all');
+    persistCreators('all', ownerId);
     setVendorState('all');
     persistVendor('all');
     setLastActivityState('all');
@@ -602,11 +640,15 @@ export function useSidebarFilter(
   );
 
   const isSessionContentFiltered =
-    status !== 'active' || projects !== 'all' || vendor !== 'all' || lastActivity !== 'all';
+    status !== 'active' || projects !== 'all' || vendor !== 'all' || lastActivity !== 'all' || creators !== 'all';
 
   const isFilterActive = isSessionContentFiltered || groupBy !== 'project' || sortBy !== 'recency';
 
   return {
+    creators,
+    creatorOptions,
+    toggleCreator,
+    setCreatorsAll,
     status,
     projects,
     projectsAsSet,

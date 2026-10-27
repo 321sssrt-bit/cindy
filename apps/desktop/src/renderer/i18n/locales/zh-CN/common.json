@@ -9196,6 +9196,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "归属 {{names}}",
+      "createdMark": "由 {{names}} 创建",
       "followingMark": "{{names}}在跟进这个任务"
     },
     "glance": {
@@ -12989,7 +12991,7 @@
       "selectFolderFailed": "选择目录失败，请重试",
       "projectsToggleExpand": "展开所有项目任务",
       "projectsToggleCollapse": "收起所有项目任务",
-      "filterAria": "侧边栏显示设置（状态：{{status}}，Harness：{{vendor}}，最近活跃：{{lastActivity}}，分组：{{groupBy}}，排序：{{sortBy}}，项目：{{projects}}）",
+      "filterAria": "侧边栏显示设置（状态：{{status}}，Harness：{{vendor}}，最近活跃：{{lastActivity}}，分组：{{groupBy}}，排序：{{sortBy}}，项目：{{projects}}，伙伴：{{creators}}）",
       "organizeSidebar": "侧边栏显示设置",
       "filterAllText": "全部",
       "filterSelectedProjects": "已选 {{count}} 个",
@@ -13054,6 +13056,9 @@
       "filterProjectOrderTip": {
         "custom": "用鼠标拖动项目行调整顺序，组内任务仍按上面的排序"
       },
+      "filterCreatorsHeading": "伙伴",
+      "filterCreatorsAny": "不限来源",
+      "filterSelectedCreators": "已选 {{count}} 位",
       "filterProjectsHeading": "项目",
       "filterAllProjects": "所有项目",
       "filterHeading": "筛选",

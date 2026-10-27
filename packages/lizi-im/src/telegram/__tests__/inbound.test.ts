@@ -165,7 +165,7 @@ describe('detectGroupTrigger', () => {
 describe('replyContextOf', () => {
   // Regression: rich bot replies have no text/caption. Exercise the production
   // reply/window projections; prior tests only used ordinary messages (unit).
-  it('preserves rich reply paragraphs, links and tables in references and history', () => {
+  it('preserves canonical rich blocks in references and history', () => {
     const rich = msg({
       text: undefined,
       rich_message: {
@@ -180,14 +180,40 @@ describe('replyContextOf', () => {
           },
           {
             type: 'table',
-            rows: [{ cells: [{ text: '城市' }, { text: '税率' }] }],
+            cells: [
+              [
+                { text: '城市', align: 'left', valign: 'top' },
+                { text: '税率', align: 'left', valign: 'top' },
+              ],
+              [
+                { align: 'left', valign: 'top' },
+                { text: '7%', align: 'left', valign: 'top' },
+              ],
+            ],
+            caption: '表格说明',
           },
-          { type: 'list', items: [{ blocks: [{ type: 'paragraph', text: '注释' }] }] },
-          { type: 'photo', caption: '图注', file_id: 'not-visible' },
+          {
+            type: 'details',
+            summary: ['折叠', { type: 'bold', text: '标题' }],
+            blocks: [{ type: 'paragraph', text: '详情' }],
+          },
+          { type: 'list', items: [{ label: '1.', blocks: [{ type: 'paragraph', text: '注释' }] }] },
+          {
+            type: 'photo',
+            caption: { text: '图注', credit: '作者' },
+            photo: [{ file_id: 'not-visible' }],
+          },
+          { type: 'pullquote', text: '引文', credit: '出处' },
+          { type: 'buttons', buttons: [{ text: '按钮', callback_data: 'not-visible' }] },
+          {
+            type: 'paragraph',
+            text: { type: 'button', button: { text: '行内按钮', callback_data: 'not-visible' } },
+          },
         ],
       },
     });
-    const expected = '示例城市税率 7%\n来源 (https://example.com/tax)\n城市\t税率\n注释\n图注';
+    const expected =
+      '示例城市税率 7%\n来源 (https://example.com/tax)\n城市\t税率\n\t7%\n表格说明\n折叠标题\n详情\n1. 注释\n图注\n作者\n引文\n出处\n按钮\n行内按钮';
     expect(replyContextOf(msg({ reply_to_message: rich }))?.text).toBe(expected);
     expect(groupWindowEntryOf(rich).text).toBe(expected);
   });
@@ -211,6 +237,11 @@ describe('replyContextOf', () => {
     let nested: unknown = 'too deep';
     for (let i = 0; i < 100; i++) nested = { type: 'bold', text: nested };
     rich.rich_message = { blocks: [{ type: 'paragraph', text: nested }] };
+    expect(groupWindowEntryOf(rich).text).toBe('');
+    rich.rich_message = { blocks: [
+      ...Array(3000).fill({ type: 'unknown', metadata: 'not-visible' }),
+      { type: 'paragraph', text: 'past budget' },
+    ] };
     expect(groupWindowEntryOf(rich).text).toBe('');
     rich.rich_message = {
       blocks: [{ type: 'paragraph', text: 'x'.repeat(100_000) }],

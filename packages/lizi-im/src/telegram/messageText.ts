@@ -15,7 +15,7 @@ export function telegramMessageText(message: TelegramTextContent): string {
   if (message.caption?.trim()) return message.caption;
   let remaining = MAX_TEXT;
   let nodes = 2048;
-  function visit(value: unknown, depth = 0, separator = ''): string {
+  function visit(value: unknown, depth = 0, separator = '', childSeparator = ''): string {
     if (depth > 20 || --nodes < 0 || remaining <= 0) return '';
     if (typeof value === 'string') {
       const text = value.slice(0, remaining);
@@ -26,8 +26,9 @@ export function telegramMessageText(message: TelegramTextContent): string {
       const parts: string[] = [];
       for (const item of value) {
         if (nodes <= 0 || remaining <= 0) break;
-        const text = visit(item, depth + 1);
-        if (text) parts.push(text);
+        const text = visit(item, depth + 1, childSeparator);
+        // Empty cells still occupy a column in a table row.
+        if (text || separator === '\t') parts.push(text);
       }
       return parts.join(separator);
     }
@@ -38,13 +39,26 @@ export function telegramMessageText(message: TelegramTextContent): string {
       const url = visit(item.url, depth + 1);
       return url && url !== label ? `${label} (${url})` : label || url;
     }
-    if (item.text !== undefined) return visit(item.text, depth + 1);
     if (item.type === 'mathematical_expression') return visit(item.expression, depth + 1);
     if (item.type === 'custom_emoji') return visit(item.alternative_text, depth + 1);
-    // Nested blocks, lists, tables and media captions. Unknown fields are ignored.
+    if (item.type === 'button') return visit(item.button, depth + 1);
+    // https://core.telegram.org/bots/api#richblocktable: cells is a row matrix.
+    if (item.type === 'table') {
+      return [visit(item.cells, depth + 1, '\n', '\t'), visit(item.caption, depth + 1)]
+        .filter(Boolean)
+        .join('\n');
+    }
+    if (typeof item.label === 'string' && Array.isArray(item.blocks)) {
+      return [visit(item.label, depth + 1), visit(item.blocks, depth + 1, '\n')]
+        .filter(Boolean)
+        .join(' ');
+    }
+    // RichText stays inline; block collections, captions and credits retain
+    // their boundaries. Do not return early on text: captions/quotes have credit.
     const parts: string[] = [];
-    for (const key of ['blocks', 'items', 'rows', 'cells', 'caption', 'credit']) {
-      const text = visit(item[key], depth + 1, key === 'cells' ? '\t' : '\n');
+    for (const key of ['text', 'summary', 'blocks', 'items', 'caption', 'credit', 'buttons']) {
+      const separator = key === 'blocks' || key === 'items' || key === 'buttons' ? '\n' : '';
+      const text = visit(item[key], depth + 1, separator);
       if (text) parts.push(text);
     }
     return parts.join('\n');

@@ -120,6 +120,28 @@ describe('versioned cache with the Expo adapter', () => {
 });
 
 describe('bounded temporary media downloads', () => {
+  it('reports an over-limit download after cancelling and cleaning its temporary file', async () => {
+    io.resumable.mockReturnValue(new Promise(() => {}));
+    const onTooLarge = vi.fn();
+    const read = vi.fn(async () => 'unexpected');
+    const result = withDownloadedRemoteMediaFile(
+      'https://example.com/large.txt',
+      'text/plain',
+      8,
+      read,
+      new AbortController().signal,
+      onTooLarge,
+    );
+    await vi.waitFor(() => expect(io.resumable).toHaveBeenCalledOnce());
+    io.progress({ totalBytesWritten: 9 });
+    expect(await result).toBeNull();
+    expect(onTooLarge).toHaveBeenCalledOnce();
+    expect(read).not.toHaveBeenCalled();
+    expect(io.cancel).toHaveBeenCalled();
+    expect(io.deleteAsync).toHaveBeenCalled();
+    expect(io.remove).toHaveBeenCalledOnce();
+  });
+
   it('keeps a preview copy alive after transport staging expires, until its owner releases it', async () => {
     const { recordPeerMedia, releasePeerMedia } = await import('@/device-link/peerFileRegistry');
     const dispose = vi.fn();

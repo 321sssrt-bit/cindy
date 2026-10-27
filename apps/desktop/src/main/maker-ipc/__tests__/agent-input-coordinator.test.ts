@@ -589,19 +589,19 @@ describe('queued welcome dispatch receipts', () => {
 
   it('rejects when Stop wins before provider dispatch', async () => {
     const { h, dispatch } = setup();
-    let release!: () => void;
     const vendorStart = vi.fn();
     h.sendToAgent.mockImplementation(async (sid, _message, _create, opts) => {
       await persistQueuedUserMessage(sid, opts);
       vendorStart();
       return sendSuccess();
     });
-    h.beforeDispatchUserTurn.mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+    h.beforeDispatchUserTurn.mockImplementation((_sid, _item, signal) => new Promise<void>(resolve => {
+      signal!.addEventListener('abort', () => resolve(), { once: true });
+    }));
     const result = dispatch('welcome');
     await flush();
     expect(h.beforeDispatchUserTurn).toHaveBeenCalledOnce();
     h.coordinator.stop('welcome-session');
-    release();
     await expect(result).resolves.toBe(false);
     expect(vendorStart).not.toHaveBeenCalled();
   });
@@ -2532,7 +2532,7 @@ describe('AgentInputCoordinator send transaction', () => {
       h.coordinator.onTurnEvent(sid, 'done');
       await flush();
       expect(h.beforeDispatchUserTurn).toHaveBeenLastCalledWith(sid,
-        expect.objectContaining({ clientId: 'internal', botTaskCoordination: internal.botTaskCoordination }));
+        expect.objectContaining({ clientId: 'internal', botTaskCoordination: internal.botTaskCoordination }), expect.any(AbortSignal));
       expect(h.sendToAgent).toHaveBeenCalledTimes(2);
       expect(h.coordinator.isActiveTaskCoordination(sid)).toBe(true);
     },
@@ -3567,7 +3567,7 @@ describe('AgentInputCoordinator send transaction', () => {
     h.coordinator.enqueue(sid, item);
     await flush();
 
-    expect(h.beforeDispatchUserTurn).toHaveBeenCalledWith(sid, expect.objectContaining(item));
+    expect(h.beforeDispatchUserTurn).toHaveBeenCalledWith(sid, expect.objectContaining(item), expect.any(AbortSignal));
     expect(events).toEqual([
       'before-dispatch:start',
       'before-dispatch:end',

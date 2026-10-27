@@ -68,10 +68,11 @@ describe("shared full-client showcase data", () => {
       expect(richLabel(report.nodes.get("improvement")!, values)).toBe("+24");
       const plan = documentFor(`ui-mock-showcase-plan-${locale}`);
       for (const doc of [report, plan]) {
-        // Both clients consume normalized styles; unsupported weights lose emphasis.
-        expect(richVisualStyle(doc.nodes.get("heading")!).fontWeight).toBe(
-          "600",
-        );
+        // DESIGN §3: both clients render the same supported title size and weight.
+        expect(richVisualStyle(doc.nodes.get("heading")!)).toMatchObject({
+          fontSize: 24,
+          fontWeight: "600",
+        });
       }
       const defaults = richResolvedValues(plan);
       expect(defaults.hours).toBe(36);

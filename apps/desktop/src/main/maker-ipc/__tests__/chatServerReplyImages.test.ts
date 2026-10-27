@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 const f = vi.hoisted(() => ({ realpath: vi.fn(), stat: vi.fn(), canRead: vi.fn(), resolve: vi.fn(), materialize: vi.fn(), db: {} }));
 vi.mock('node:fs/promises', () => ({ default: { stat: f.stat, realpath: f.realpath } }));
 vi.mock('../../cindy-media/taskImageDelivery.js', () => ({ materializeTaskImageTextResult: f.materialize }));
@@ -105,6 +106,40 @@ describe('generated reply image attachments', () => {
     expect(importImage).toHaveBeenCalledExactlyOnceWith(sourcePath);
     expect(result.attachments.map(image => image.url)).toEqual([url]);
     expect(result.text).toBe(component + '\nAgain');
+  });
+  // #7492 P1: file URLs were skipped with a successful empty delivery. Exercise
+  // the public prepare entry and real Markdown importer; only byte/ledger boundaries are fakes.
+  it.each(['encoded', 'literal spaces', 'localhost'])('imports a component file URL with %s through the existing checks', async form => {
+    const sourcePath = path.resolve('fixture', '图片 [copy] #1 %.png');
+    const fileUrl = pathToFileURL(sourcePath).href;
+    const src = form === 'literal spaces' ? fileUrl.replace(/%20/g, ' ')
+      : form === 'localhost' ? fileUrl.replace('file:///', 'file://localhost/') : fileUrl;
+    const importImage = vi.fn().mockResolvedValue(url);
+    f.materialize.mockImplementation(async (_session, text) => materializeTaskImageMarkdown(text, { importImage }));
+    const result = await prepareChatReplyImages(rich({ kind: 'image', props: { src } }) + `\n![Again](${url})`, 'lane', vi.fn());
+    expect(importImage).toHaveBeenCalledExactlyOnceWith(sourcePath);
+    expect(result.attachments).toEqual([expect.objectContaining({ url, sourcePaths: [sourcePath], category: 'image' })]);
+    expect(f.canRead).toHaveBeenCalledExactlyOnceWith('a'.repeat(64), 'lane', f.db);
+  });
+  it.each([
+    'file://attacker/share/image.png', 'file:////attacker/share/image.png',
+    'file:///image%2Fescape.png', 'file:///image%ZZ.png', 'file:///image%00.png',
+    'file://user:pass@localhost/image.png', 'file:relative.png',
+    'file:///image.png?remoteHostId=other', 'file:///image.png#fragment',
+  ])('refuses an unsafe or malformed component file URL before any file access: %s', async src => {
+    await expect(prepareChatReplyImages(rich({ kind: 'image', props: { src } }), 'lane', vi.fn()))
+      .rejects.toThrow('ATTACHMENT_UNAVAILABLE');
+    expect(f.realpath).not.toHaveBeenCalled();
+    expect(f.materialize).not.toHaveBeenCalled();
+    expect(f.stat).not.toHaveBeenCalled();
+  });
+  it('rejects an imported component file URL when the existing task ledger denies the blob', async () => {
+    const sourcePath = path.resolve('fixture', 'private image.png');
+    f.materialize.mockImplementation(async (_session, text) => materializeTaskImageMarkdown(text, { importImage: async () => url }));
+    f.canRead.mockResolvedValue(false);
+    await expect(prepareChatReplyImages(rich({ kind: 'image', props: { src: pathToFileURL(sourcePath).href } }), 'lane', vi.fn()))
+      .rejects.toThrow('ATTACHMENT_UNAVAILABLE');
+    expect(f.stat).not.toHaveBeenCalled();
   });
   it('keeps literal path characters from injecting extra image references during import', async () => {
     const sourcePath = path.resolve('fixture', 'literal &<>.png') + `\n![](${other})`;

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { RichAnswerStream, splitRichAnswer, richString } from '@cindy/maker-shared/rich-answer';
 import { BOT_GROUP_ATTACHMENTS_MAX } from '../../shared/botGroupChat.js';
 import { parseBlobUrl, resolveSafe } from '../cindy-media/blobStore.js';
@@ -14,6 +15,21 @@ import { isNetworkOrDevicePath } from './chatServerReplyAttachments.js';
 const imageLabel = (image: { alt: string }) => image.alt.replace(/[\\`*_{}[\]<>#!|]/g, '\\$&');
 
 type ReplyImageReference = { url: string; start: number; identifier?: string };
+
+/** Normalize only local file URLs; the existing importer still owns file authority. */
+function componentImageSource(src: string): string {
+  if (!/^file:/i.test(src)) return src;
+  try {
+    const url = new URL(src);
+    if (!/^file:\//i.test(src) || !['', 'localhost'].includes(url.hostname)
+      || url.username || url.password || url.search || url.hash) throw new Error('invalid file URL');
+    const local = fileURLToPath(url);
+    if (!path.isAbsolute(local) || isNetworkOrDevicePath(local) || local.includes('\0')) throw new Error('invalid local path');
+    return local;
+  } catch {
+    throw new Error('ATTACHMENT_UNAVAILABLE');
+  }
+}
 
 /** Collect final rendered references in display order, keeping Markdown scopes independent.
  * The Markdown AST still owns reference definitions and code-example exclusion; the
@@ -32,7 +48,7 @@ function replyImageReferences(text: string): ReplyImageReference[] {
       if (!node) return;
       if (node.kind === 'image') {
         const src = richString(node, 'src');
-        if (src) images.push({ url: src, start: part.key });
+        if (src) images.push({ url: componentImageSource(src), start: part.key });
       }
       node.children.forEach(visit);
     };

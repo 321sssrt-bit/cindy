@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
 import {
   REMOTE_RESOURCE_CHANGED_CHANNEL,
   parseRemoteResourceChangedPayload,
@@ -83,7 +82,6 @@ export function RemotePluginPage({
   onSelectCatalogTab?: (tab: 'plugins' | 'skills') => void;
 }) {
   const { t, i18n } = useTranslation();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { confirm } = useConfirmDialog();
   const [snapshot, setSnapshot] = useState<PluginManagementSnapshot | null>(null);
   const [project, setProject] = useState<PluginManagementProject | null>(null);
@@ -411,11 +409,11 @@ export function RemotePluginPage({
       projectReadStatus,
     ],
   );
-  const selectMarket = useCallback(async (pluginId: string) => {
+  const selectMarket = async (item: PluginMarketItem) => {
     const revision = ++detailRevision.current;
     try {
       const detail = parsePluginManagementDetail(
-        await invoke('market-detail', { pluginId }),
+        await invoke('market-detail', { pluginId: item.pluginId }),
       );
       if (writable() && revision === detailRevision.current) {
         setSelected(null);
@@ -424,7 +422,7 @@ export function RemotePluginPage({
     } catch {
       if (writable() && revision === detailRevision.current) setStatus('readFailed');
     }
-  }, [invoke, writable]);
+  };
   const install = async (item: PluginMarketItem) => {
     if (!writable() || operation.current || preparing.current) return;
     preparing.current = true;
@@ -487,16 +485,6 @@ export function RemotePluginPage({
     }
   };
   const busy = !online || unsupported || preparingUi || !!operation.current;
-  useEffect(() => {
-    const pluginId = searchParams.get('market');
-    if (!pluginId || !active || busy || !snapshot || !writable()) return;
-    // Keep the selected computer and use its existing read/approval flow. An
-    // offline target retains the query until its catalogue is available again.
-    const next = new URLSearchParams(searchParams);
-    next.delete('market');
-    setSearchParams(next, { replace: true });
-    void selectMarket(pluginId);
-  }, [active, busy, snapshot, searchParams, setSearchParams, selectMarket, writable]);
   const effectiveGhost = (item: InstalledGhost): InstalledGhost =>
     project
       ? {
@@ -893,7 +881,7 @@ export function RemotePluginPage({
                             item={item}
                             busy={busy}
                             onSelect={() => {
-                              void selectMarket(item.pluginId);
+                              void selectMarket(item);
                             }}
                             onInstall={
                               item.installState === 'conflict'

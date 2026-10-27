@@ -2190,6 +2190,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       // the exact-message soft rewind; do not roll back ambiguous send errors.
       if (
         (err instanceof RoutineDispatchDeferredError ||
+          err instanceof QueuedRouteDisabledError ||
           err instanceof ScheduledDispatchStoppedError) &&
         acceptedMessageClientId
       ) {

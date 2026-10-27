@@ -37,6 +37,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   createMessage: vi.fn(),
+  rewindPersistedUserMessageAfterClear: vi.fn(),
   getSessionRowSnapshot: vi.fn(),
   getSessionFsSnapshot: vi.fn(),
   ensureDialogueWorkspaceDir: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock('../../maker-host/session-effort-store.js', () => ({
 
 vi.mock('../../localDb/ipc/messages.js', () => ({
   createMessage: mocks.createMessage,
+  rewindPersistedUserMessageAfterClear: mocks.rewindPersistedUserMessageAfterClear,
 }));
 
 vi.mock('../../localDb/ipc/sessions.js', () => ({
@@ -331,6 +333,7 @@ describe('MakerScheduleRunner model selection', () => {
     setCodexAppliedCustomProviderRoutes([]);
     vi.clearAllMocks();
     mocks.createMessage.mockResolvedValue(undefined);
+    mocks.rewindPersistedUserMessageAfterClear.mockResolvedValue(undefined);
     mocks.backfillSessionMeta.mockResolvedValue(undefined);
     mocks.resolveWorkingDir.mockResolvedValue({ ok: true, path: '/work' });
     mocks.getSessionProvider.mockReturnValue(null);
@@ -433,7 +436,8 @@ describe('MakerScheduleRunner model selection', () => {
   describe('resolved automation selection survives the full fire', () => {
     // PR #6830 / unit: existing remote cases only checked the initial catalog.
     // Suspend the selected source during accepted-turn preparation; fire must
-    // fail before vendor dispatch, including for a reused remote task.
+    // fail before vendor dispatch, including for a reused remote task. A rejected
+    // accepted prompt must be rewound by its exact ID, while fire still fails.
     it.each(['accepted', 'intent'])('rejects a remote source suspended during direct dispatch preparation (%s)', async (stage) => {
       const h = createSessionHarness();
       Object.assign(h.session, { agentDeviceId: 'studio' });
@@ -467,6 +471,11 @@ describe('MakerScheduleRunner model selection', () => {
         .rejects.toThrow('Session send failed before dispatch');
       expect(providers[0].suspended).toBe(true);
       expect(onModelDispatched).not.toHaveBeenCalled();
+      expect(mocks.createMessage).toHaveBeenCalledOnce();
+      const acceptedClientId = mocks.createMessage.mock.calls[0][1].clientId;
+      expect(acceptedClientId).toEqual(expect.any(String));
+      expect(mocks.rewindPersistedUserMessageAfterClear)
+        .toHaveBeenCalledExactlyOnceWith(h.session.id, acceptedClientId);
     });
 
     // Merge regression, unit: a legacy remote default must not mask an explicit

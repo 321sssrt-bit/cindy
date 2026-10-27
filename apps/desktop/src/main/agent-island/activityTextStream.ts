@@ -1,4 +1,4 @@
-import { richAnswerText } from '@cindy/maker-shared/rich-answer';
+import { richAnswerText, splitRichAnswer } from '@cindy/maker-shared/rich-answer';
 
 export const AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH = 280;
 
@@ -145,8 +145,10 @@ function appendRawPreview(
     if (metrics) metrics.normalizationCodeUnits += 1;
     const codeUnit = chunk[index] ?? '';
     if (/\s/.test(codeUnit)) {
-      if (state.rawPreview) state.rawPreviewHasPendingWhitespace = true;
-      if (codeUnit === '\n' || codeUnit === '\r') state.rawPreviewHasPendingNewline = true;
+      if (state.rawPreview) {
+        state.rawPreviewHasPendingWhitespace = true;
+        if (codeUnit === '\n' || codeUnit === '\r') state.rawPreviewHasPendingNewline = true;
+      }
       continue;
     }
 
@@ -240,9 +242,21 @@ function releaseStructuredParserState(state: ActivityTextStreamState): void {
 function rawPreviewText(state: ActivityTextStreamState): string {
   // A fence header may itself arrive in several deltas. Do not leave that
   // temporary header as the last visible activity when the rich block is empty.
-  const source = state.rawPreview.replace(/(^|\n)(`{1,3}|~{1,3})([^\n]*)$/, (line, _boundary, _fence, language: string) =>
-    'cindy-ui'.startsWith(language.trim()) ? '' : line,
-  );
+  let source = state.rawPreview;
+  const tail = source.match(/(^|\n)(`+|~+)([^\n]*)$/);
+  if (tail && 'cindy-ui'.startsWith(tail[3].trim())) {
+    const start = tail.index! + tail[1].length;
+    const opening = tail[2][0].repeat(Math.max(3, tail[2].length)) + 'cindy-ui\n';
+    // Let the shared fence parser distinguish a new opening from an ordinary
+    // closing fence or an example nested inside a larger code fence.
+    const candidate = source.slice(0, start) + opening;
+    // A bare fence after prose is ambiguous (it may close an inline example).
+    // Wait for a language prefix before hiding it; an answer-start fence is safe.
+    if ((tail[3].trim() || start === 0)
+      && splitRichAnswer(candidate).some(part => part.kind === 'rich' && part.key === start)) {
+      source = source.slice(0, start);
+    }
+  }
   return normalizePlainActivityText(richAnswerText(source));
 }
 

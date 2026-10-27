@@ -962,6 +962,41 @@ describe('Agent Island display state', () => {
       .toMatchObject({ compactDetail: '网络检查完成', phase: 'completed' });
   });
 
+  // Review regression: a removed/emptied rich node must retract this message's
+  // streamed line from both the activity log and active/queued preview (unit tier).
+  it.each([
+    { operation: 'remove', queued: false, streamed: true },
+    { operation: 'remove', queued: true, streamed: false },
+    { operation: 'patch', queued: false, streamed: false },
+    { operation: 'patch', queued: true, streamed: true },
+  ])('retracts an empty rich preview (%j)', ({ operation, queued, streamed }) => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 's1' };
+    if (queued) applyAgentIslandUserPrompt(state, meta, '检查网络', 1_000);
+    else applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const prefix = '```cindy-ui\n'
+      + '{"version":1,"seq":1,"op":"create","id":"a","kind":"text","props":{"text":"临时结果"}}\n';
+    applyAgentIslandEvent(state, meta, textDeltaEvent(prefix), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_150).sessions[0]?.activityLines)
+      .toContainEqual(expect.objectContaining({ text: '临时结果' }));
+    const update = JSON.stringify({ seq: 2, op: operation, id: 'a',
+      ...(operation === 'patch' ? { props: { text: '' } } : {}) }) + '\n```';
+    if (streamed) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(update), 1_200);
+      const during = buildAgentIslandDisplayState(state, 1_250).sessions[0];
+      expect(JSON.stringify(during)).not.toContain('临时结果');
+    }
+    applyAgentIslandEvent(state, meta, finalTextEvent(prefix + update), 1_300);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_400);
+    for (const time of [1_450, 4_000]) {
+      const completed = buildAgentIslandDisplayState(state, time).sessions[0];
+      expect(JSON.stringify(completed)).not.toContain('临时结果');
+      expect(completed?.activityLines).toContainEqual(expect.objectContaining({
+        kind: 'status', text: DEFAULT_AGENT_ISLAND_STRINGS.done,
+      }));
+    }
+  });
+
   it('keeps generic running status behind assistant text in compact detail', () => {
     const state = createAgentIslandState();
 

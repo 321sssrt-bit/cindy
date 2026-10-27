@@ -100,6 +100,22 @@ describe('Agent Island activity text stream', () => {
     expect(normalizeActivityText(code)).toBe(legacyNormalizeActivityText(code));
   });
 
+  // Review regressions: only unfinished rich opening fences may be hidden.
+  // Ordinary closing fences and inline/quoted examples must survive every delta.
+  it.each(['`', '~'])('preserves %s code fences and examples during streaming', (fenceCharacter) => {
+    const fence = fenceCharacter.repeat(3);
+    expectEveryStreamingStepToMatchLegacyNormalization([`${fence}json\n`, ...`{"status":"ok"}\n${fence}`]);
+    const quoted = `${fenceCharacter.repeat(4)}markdown\n${fence}cindy-ui\n{}\n${fence}\n${fenceCharacter.repeat(4)}`;
+    const stream = createActivityTextStreamState();
+    expect(appendActivityTextStream(stream, quoted)).toBe(legacyNormalizeActivityText(quoted));
+  });
+
+  it('does not turn leading whitespace into a line break inside an inline example', () => {
+    const inline = '\n示例 ```cindy-ui\n{}\n```';
+    const stream = createActivityTextStreamState();
+    expect(appendActivityTextStream(stream, inline)).toBe(normalizeActivityText(inline));
+  });
+
   it('hides a truncated rich operation until the full final text is available', () => {
     const source = '```cindy-ui\n'
       + JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'answer', kind: 'text',

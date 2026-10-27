@@ -22,9 +22,13 @@ export interface RemoteDeviceUsageMirror<T> {
 
 export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
   invokeChannel: string | null;
+  /** Optional reader for an existing channel with a legacy fallback. */
+  read?: (deviceId: string, providerId?: string) => Promise<unknown>;
+  /** Only visible, mounted consumers poll; all consumers still share the entry. */
+  refreshIntervalMs?: number;
   decodeRead?: (value: unknown) => T | null | undefined;
   invokeArgs?: unknown[];
-  pushChannel: string;
+  pushChannel: string | null;
   defaultProviderId?: string;
   providerPushChannel?: string;
 }): RemoteDeviceUsageMirror<T> {
@@ -36,6 +40,7 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
     refreshQueued: boolean;
     /** Last time a read or push settled this entry; 0 = never. */
     settledAt: number;
+    requestedAt: number;
     owner: ReturnType<typeof getDataOwnerGeneration>;
     listeners: Set<() => void>;
   };
@@ -56,6 +61,7 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
         pending: false,
         refreshQueued: false,
         settledAt: 0,
+        requestedAt: 0,
         owner: cacheOwner,
         listeners: new Set(),
       };
@@ -70,7 +76,7 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
     for (const notify of entry.listeners) notify();
   }
   function request(deviceId: string, providerId?: string, queueIfPending = false): void {
-    if (!cfg.invokeChannel) return;
+    if (!cfg.invokeChannel && !cfg.read) return;
     const entry = entryFor(deviceId, providerId);
     if (entry.pending) {
       if (queueIfPending) entry.refreshQueued = true;
@@ -82,8 +88,11 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
     // Keep the legacy builtin call shape; scoped reads must explicitly name their provider.
     if (providerId && providerId !== cfg.defaultProviderId) args.push(providerId);
     entry.pending = true;
-    void window.electronAPI.deviceLink
-      .invoke(deviceId, cfg.invokeChannel, args)
+    entry.requestedAt = Date.now();
+    const reading = cfg.read
+      ? cfg.read(deviceId, providerId ?? cfg.defaultProviderId)
+      : window.electronAPI.deviceLink.invoke(deviceId, cfg.invokeChannel!, args);
+    void reading
       .then((value) => {
         if (!isDataOwnerGenerationCurrent(entry.owner) || entry.revision !== revision) return;
         // Older hosts may ignore new optional arguments. Never accept their builtin snapshot
@@ -132,8 +141,26 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
         entry.settledAt > 0 &&
         Date.now() - entry.settledAt < MOUNT_REUSE_MS;
       entry.listeners.add(notify);
-      if (!settled) request(deviceId, providerId);
-      const off = window.electronAPI.deviceLink.onRemotePush((push, ownerStamp) => {
+      const visible = () => document.visibilityState !== 'hidden';
+      if (!settled && (!cfg.refreshIntervalMs || visible())) request(deviceId, providerId);
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const poll = () => {
+        if (!isDataOwnerGenerationCurrent(entry.owner) || !visible()) return;
+        if (Date.now() - entry.requestedAt >= cfg.refreshIntervalMs!) request(deviceId, providerId);
+      };
+      const watchVisibility = () => {
+        clearInterval(timer);
+        timer = undefined;
+        if (visible()) {
+          poll();
+          timer = setInterval(poll, cfg.refreshIntervalMs);
+        }
+      };
+      if (cfg.refreshIntervalMs) {
+        watchVisibility();
+        document.addEventListener('visibilitychange', watchVisibility);
+      }
+      const off = cfg.pushChannel ? window.electronAPI.deviceLink.onRemotePush((push, ownerStamp) => {
         if (
           push.deviceId !== deviceId ||
           !isDataOwnerGenerationCurrent(entry.owner) ||
@@ -157,8 +184,10 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
         if (value !== null && !isSnapshotShape(value)) return;
         entry.unsupportedUntil = 0;
         apply(entry, value as T | null);
-      });
+      }) : () => {};
       return () => {
+        clearInterval(timer);
+        if (cfg.refreshIntervalMs) document.removeEventListener('visibilitychange', watchVisibility);
         entry.listeners.delete(notify);
         off();
       };

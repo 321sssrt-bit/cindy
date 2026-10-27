@@ -1574,6 +1574,36 @@ describe('paginated Codex rollout adoption (#7436)', () => {
     return { ...f, parent, localParent, parentContents, childContents, sourceChild };
   }
 
+  // #7458 review, unit: an existing SQLite pointer can select a custom source
+  // outside discovery. Previously copying the child lost that source on retry.
+  it.each([false, true])('imports ancestry from a custom state-pointed root (interrupted: %s)', async interrupted => {
+    const f = ancestorHistory();
+    const customHome = path.join(rootDir, 'custom-history');
+    fs.renameSync(externalHome, customHome);
+    const sourceChild = path.join(customHome, path.relative(externalHome, f.sourceChild));
+    const parent = path.join(customHome, path.relative(externalHome, f.parent));
+    const targetHome = path.join(targetUserData, 'codex-home');
+    const dbPath = createStateDb(targetHome);
+    insertThread(dbPath, threadId, sourceChild, { updatedAt: 2000 });
+    if (interrupted) {
+      fs.unlinkSync(parent);
+      await expect(prepareExternalCodexSessionForResume(threadId)).rejects.toThrow('missing paginated');
+      const db = new Database(dbPath, { readonly: true });
+      try { expect((db.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(threadId) as { rollout_path: string }).rollout_path).not.toBe(sourceChild); }
+      finally { db.close(); }
+      fs.writeFileSync(parent, f.parentContents);
+    }
+    const prepared = await prepareExternalCodexSessionForResume(threadId);
+    expect(path.basename(prepared!)).toBe(path.basename(f.canonical));
+    expect(fs.readFileSync(prepared!, 'utf8')).toBe(f.childContents);
+    expect(fs.readFileSync(path.join(targetHome, path.relative(customHome, parent)), 'utf8')).toBe(f.parentContents);
+    fs.appendFileSync(prepared!, 'new local turn\n');
+    expect(await prepareExternalCodexSessionForResume(threadId)).toBe(prepared);
+    expect(fs.readFileSync(sourceChild, 'utf8')).toBe(f.childContents);
+    expect(fs.readFileSync(parent, 'utf8')).toBe(f.parentContents);
+    expect(fs.readFileSync(prepared!, 'utf8')).toContain('new local turn');
+  });
+
   it.each(['missing', 'truncated', 'cycle', 'conflict'] as const)(
     'blocks %s ancestry without replacing the selected history or index', async fault => {
       const f = ancestorHistory();
@@ -1698,7 +1728,7 @@ describe('paginated Codex rollout adoption (#7436)', () => {
       expect(await f.locations.prepareResume(threadId, legacy)).toBe(f.canonical);
     }
     expect(legacy).not.toHaveBeenCalled();
-    expect(await f.locations.read(threadId)).toBe(f.canonical);
+    expect(await f.locations.read(threadId)).toBe(f.broken);
     expect(f.readState()).toEqual({ ...before, rollout_path: f.canonical });
     expect(fs.readFileSync(f.canonical, 'utf8')).toBe(f.contents);
     expect(fs.readFileSync(f.broken, 'utf8')).toBe(f.contents);

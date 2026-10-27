@@ -4,7 +4,7 @@
  * filename/ordinal contract. Opt-in runtime tier, isolated homes + loopback model:
  * CINDY_CODEX_TEST_BINARY=<bundled binary> vitest run <this file>.
  * Separate from unit tests because this starts real processes and a local server.
- * Windows 0.159.2: 7.94s including collection, 4.61s for all five native cases.
+ * Windows 0.159.2: 6.31s test body for all six native cases (runtime tier).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,7 +26,7 @@ vi.mock('../logger.js', () => ({ createLogger: () => ({ debug() {}, info() {}, w
 const binary = process.env.CINDY_CODEX_TEST_BINARY;
 const logger: Logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child: () => logger };
 
-it.skipIf(!binary).each(['import', 'indexed', 'indexed-reverted', 'lineage', 'indexed-lineage'] as const)(
+it.skipIf(!binary).each(['import', 'indexed', 'indexed-reverted', 'lineage', 'indexed-lineage', 'custom-lineage'] as const)(
   'resumes paginated history and completes the next native turn: %s', async mode => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-paginated-native-'));
     fixture.userData = path.join(root, 'cindy');
@@ -115,6 +115,19 @@ it.skipIf(!binary).each(['import', 'indexed', 'indexed-reverted', 'lineage', 'in
       await target.ensureStarted();
       // Initialize the native schema without sending a model request.
       await target.request('thread/start', { cwd: root, model: 'gpt-5.4', modelProvider: 'probe', ephemeral: true });
+      if (mode === 'custom-lineage') {
+        // Existing state can reference history outside every discovery candidate.
+        process.env.CODEX_HOME = path.join(root, 'unrelated-home');
+        const sourceDbName = fs.readdirSync(sourceHome).find(name => /^state_\d+\.sqlite$/.test(name))!;
+        const targetDbName = fs.readdirSync(targetHome).find(name => /^state_\d+\.sqlite$/.test(name))!;
+        const sourceDb = new Database(path.join(sourceHome, sourceDbName), { readonly: true });
+        const targetDb = new Database(path.join(targetHome, targetDbName));
+        try {
+          const row = sourceDb.prepare('SELECT * FROM threads WHERE id = ?').get(id) as Record<string, unknown>;
+          const columns = Object.keys(row);
+          targetDb.prepare(`INSERT INTO threads (${columns.map(column => `"${column}"`).join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...columns.map(column => row[column]));
+        } finally { sourceDb.close(); targetDb.close(); }
+      }
       let prepared = await prepareExternalCodexSessionForResume(id);
       expect(path.basename(prepared!)).toBe(filename);
       if (mode.startsWith('indexed')) {

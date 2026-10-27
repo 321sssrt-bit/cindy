@@ -645,6 +645,11 @@ async function prepareExternalCodexSessionStorage(threadId: string): Promise<str
         if (!adopted) {
           throw resumePreparationBlocked(threadId, 'external rollout changed during private adoption');
         }
+        // Save the exact source before SQLite stops pointing at it. A custom
+        // history root need not be discoverable, including after a failed retry.
+        if (readPaginatedBase(threadId, adopted.path)) {
+          rememberCodexHistorySource(threadId, targetHome, adopted.path, targetRollout);
+        }
         if (handoffThreadToCopiedRollout(
           targetDbPath,
           threadId,
@@ -1296,6 +1301,20 @@ export async function prepareCodexRolloutForResume(
   return repairCodexRolloutPath(threadId, rolloutPath, sqliteHome);
 }
 
+function rememberCodexHistorySource(threadId: string, targetHome: string, rolloutPath: string, sourcePath: string): void {
+  const file = `${rolloutPath}.source.json`;
+  const contents = JSON.stringify({ sourceHome: historyHomeForRollout(sourcePath), rootLine: readFirstLineSync(rolloutPath) });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, contents, { flag: 'wx', mode: 0o600 });
+    try { fs.linkSync(temporary, file); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    if (!readPrivateNonEmptyRolloutSnapshot(targetHome, file) || fs.readFileSync(file, 'utf8') !== contents) {
+      throw resumePreparationBlocked(threadId, 'conflicting paginated history source');
+    }
+  } finally { fs.rmSync(temporary, { force: true }); }
+}
+
 async function ensureCodexHistoryAncestors(threadId: string, rolloutPath: string, verifyExternalSource: boolean): Promise<void> {
   const targetHome = historyHomeForRollout(rolloutPath);
   const rootSnapshot = readPrivateNonEmptyRolloutSnapshot(targetHome, rolloutPath);
@@ -1321,7 +1340,22 @@ async function ensureCodexHistoryAncestors(threadId: string, rolloutPath: string
       searchedSource = true;
       // Anchor recovery to the exact imported child's immutable metadata and
       // rollout identity. Never pick a similarly named thread or reimport its tail.
-      const homes = discoverExternalCodexHomesSync().filter(home => !samePath(home, targetHome)
+      const sourceFile = `${rolloutPath}.source.json`;
+      let candidates: string[];
+      if (fs.existsSync(sourceFile)) {
+        if (!readPrivateNonEmptyRolloutSnapshot(targetHome, sourceFile)) {
+          throw resumePreparationBlocked(threadId, 'unsafe paginated history source');
+        }
+        const saved: unknown = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+        if (!isRecord(saved) || typeof saved.sourceHome !== 'string' || !path.isAbsolute(saved.sourceHome)
+          || saved.rootLine !== rootLine) {
+          throw resumePreparationBlocked(threadId, 'invalid paginated history source');
+        }
+        candidates = [saved.sourceHome];
+      } else {
+        candidates = discoverExternalCodexHomesSync();
+      }
+      const homes = candidates.filter(home => !samePath(home, targetHome)
         && files(home).some(file => path.basename(file) === originalCodexRolloutName(rolloutPath)
           && !!readPrivateNonEmptyRolloutSnapshot(home, file) && readFirstLineSync(file) === rootLine));
       if (homes.length > 1) throw resumePreparationBlocked(threadId, 'ambiguous paginated history source');

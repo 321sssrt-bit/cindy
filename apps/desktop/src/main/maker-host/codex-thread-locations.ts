@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -20,16 +19,14 @@ export class CodexThreadLocations {
     if (!this.repairRollout) return value;
     const sqliteHome = value.sqliteHome ?? historyHomeForRollout(value.path);
     const repaired = await this.repairRollout(value.threadId, value.path, sqliteHome);
-    if (repaired === value.path) {
-      const current = await this.readLocation(value.threadId);
-      if (current?.path !== value.path || current.sqliteHome !== value.sqliteHome) {
-        throw new Error('Codex thread location changed during history repair');
-      }
-      return value;
+    const current = await this.readLocation(value.threadId);
+    if (current?.path !== value.path || current.sqliteHome !== value.sqliteHome) {
+      throw new Error('Codex thread location changed during history repair');
     }
-    const next = { ...value, path: repaired };
-    await this.writeLocation(next, value);
-    return next;
+    // Repair retains the old name as a hard link. Return the native name without
+    // writing a stale index over another process's archive/account update.
+    // The normal native thread-started callback records its resulting location.
+    return { ...value, path: repaired };
   }
 
   private file(threadId: string): string {
@@ -119,7 +116,7 @@ export class CodexThreadLocations {
     await this.writeLocation({ threadId, path: rolloutPath, sqliteHome });
   }
 
-  private async writeLocation(value: ThreadLocation, expected?: ThreadLocation): Promise<void> {
+  private async writeLocation(value: ThreadLocation): Promise<void> {
     const file = this.file(value.threadId);
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = `${file}.${randomUUID()}.tmp`;
@@ -127,19 +124,7 @@ export class CodexThreadLocations {
       await fs.writeFile(temporary, JSON.stringify(value), {
         mode: 0o600,
       });
-      if (expected) {
-        // Do not yield between rechecking the index and publishing the repair:
-        // an archive/model switch may have recorded a new location while the
-        // temporary file was being written. SQLite promotion is retryable.
-        const current = JSON.parse(readFileSync(file, 'utf8')) as ThreadLocation;
-        if (current.threadId !== expected.threadId || current.sqliteHome !== expected.sqliteHome
-          || (current.path !== expected.path && current.path !== value.path)) {
-          throw new Error('Codex thread location changed during history repair');
-        }
-        renameSync(temporary, file);
-      } else {
-        await fs.rename(temporary, file);
-      }
+      await fs.rename(temporary, file);
     } finally {
       await fs.rm(temporary, { force: true });
     }

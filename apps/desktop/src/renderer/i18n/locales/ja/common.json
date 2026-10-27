@@ -9571,6 +9571,8 @@
         "viewProcess": "経過を見る",
         "hideProcess": "経過を閉じる",
         "stop": "停止",
+        "stopping": "停止中…",
+        "queued": "開始待ち…",
         "stopMine": "自分の依頼を停止",
         "stopAll": "すべて停止",
         "stopAllHint": "他の人の依頼も含みます"
@@ -10626,7 +10628,9 @@
       "suggestion2": "2. {{service}} オープンプラットフォームで自分専用の App を別途作成し、同僚と分けて使用する。",
       "dismiss": "閉じる",
       "createOwnApp": "自分の App を作成 ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ {{count}} 件の添付ファイルを送信できませんでした：{{names}}",
+    "unnamedAttachment": "名前のない添付ファイル"
   },
   "markdown": {},
   "diffPanel": {
@@ -16313,6 +16317,7 @@
     "save": "ルーティンを保存",
     "deleteConfirm": "このルーティンを削除し、待機中の実行をキャンセルしますか？",
     "keep": "ルーティンを残す",
+    "openTask": "セッションを開く",
     "history": "実行履歴",
     "noRuns": "このルーティンはまだ実行されていません。",
     "field": "フィールド",
@@ -16344,6 +16349,10 @@
       "not-equals": "一致しない"
     },
     "quiet": "確認で変化がなければ通知しない",
+    "sessionMode": "実行セッション",
+    "sessionModePersistent": "永続セッション（文脈を保持）",
+    "sessionModeFresh": "トリガーごとに新規作成（文脈を分離）",
+    "sessionModeHint": "永続セッションは同じルーティン会話を続けます。新規作成ではトリガーごとに独立した会話を作成して閉じます。",
     "quietHint": "変化や問題のみ報告します。リマインダーや定時送信ではオフにできます。",
     "checkCommand": "事前確認コマンド",
     "checkHint": "任意。コンピューターで先に確認します。終了コード 2 は今回の実行をスキップし、0 は続行します。エラーは報告されます。空欄で解除します。",

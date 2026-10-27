@@ -22,11 +22,13 @@ function useModelRouteOptions(
   });
   const remoteAgent = locations.devices ? {
     devices: locations.devices,
-    selectedDeviceId: agentDeviceId ?? null,
+    selectedDeviceId: locations.leadAgentDeviceId,
     homeDeviceId: deviceId,
     deviceModelMemory: agentDeviceModelMemoryAccessors,
   } : undefined;
   return {
+    // Read the selected, readable execution location while retaining the home catalog.
+    deviceId: locations.devices ? locations.leadAgentDeviceId ?? deviceId : deviceId,
     remoteAgent,
     // Keep remote preferences separate from the task host's model memory.
     modelMemory: modelMemory ?? (remoteAgent?.selectedDeviceId
@@ -39,12 +41,12 @@ function useModelRouteOptions(
 export function ModelRouteSelector({ agentDeviceId, sshRemote, deviceId, ...props }:
   Omit<ComponentProps<typeof ModelSelector>, 'remoteAgent'> & ModelRouteContext) {
   const options = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote }, props.modelMemory);
-  return <ModelSelector {...props} deviceId={deviceId} {...options} />;
+  return <ModelSelector {...props} {...options} />;
 }
 
 /** The same selector inside an existing popover; callbacks retain the full selection. */
 export function ModelRouteSelectorContent({ agentDeviceId, sshRemote, deviceId, ...props }:
   Omit<ComponentProps<typeof ModelSelectorContent>, 'remoteAgent'> & ModelRouteContext) {
   const options = useModelRouteOptions({ deviceId, agentDeviceId, sshRemote }, props.modelMemory);
-  return <ModelSelectorContent {...props} deviceId={deviceId} {...options} />;
+  return <ModelSelectorContent {...props} {...options} />;
 }

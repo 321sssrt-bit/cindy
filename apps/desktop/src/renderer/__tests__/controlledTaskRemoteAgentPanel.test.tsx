@@ -160,7 +160,8 @@ vi.mock('@/hooks/useRemoteClaudeSubscriptionUsage', () => ({
   useRemoteClaudeSubscriptionUsage: () => null,
 }));
 vi.mock('@/hooks/useModelRouteDevices', () => ({
-  useModelRouteDevices: () => ({
+  useModelRouteDevices: ({ leadAgentDeviceId }: { leadAgentDeviceId?: string | null }) => ({
+    leadAgentDeviceId: leadAgentDeviceId ?? null,
     devices: [{ deviceId: 'memory-device', name: 'Remote' }],
   }),
 }));

@@ -17,7 +17,7 @@ export default {
   real: 'Automation ModelEffortChip, unified model picker, selection callback, source icons, themes and translations',
   notCovered: 'Live device/share discovery, authorization, persistence and task execution; catalog hooks use fixture snapshots',
   stubs: {
-    'src/renderer/hooks/useModelRouteDevices': `const devices = [{ deviceId: 'shared:fixture', name: 'Shared Anthropic' }]; export const useModelRouteDevices = () => ({ devices });`,
+    'src/renderer/hooks/useModelRouteDevices': `const devices = [{ deviceId: 'shared:fixture', name: 'Shared Anthropic' }]; export const useModelRouteDevices = ({ leadAgentDeviceId }) => ({ devices, leadAgentDeviceId: leadAgentDeviceId ?? null });`,
     'src/renderer/hooks/useProviders': { partial: `const snapshot = ${snapshot}; export const useProviders = () => snapshot;` },
     'src/renderer/hooks/useDeviceProviders': { partial: `const snapshot = ${snapshot}; export const useDeviceProviders = () => snapshot;` },
     'src/renderer/hooks/useDevicesProviders': { partial: `const snapshot = ${snapshot}; const devices = new Map([['shared:fixture', snapshot]]); export const useDevicesProviders = () => devices;` },

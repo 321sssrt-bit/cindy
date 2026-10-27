@@ -1572,16 +1572,20 @@ describe('Chat Server result delivery and refresh', () => {
     expect(deps.dispatch).toHaveBeenCalledOnce();
   });
 
-  // bot-group-chat.md §3: a companion may answer in several Threads at once.
-  it('shows a companion running in two Threads as one speaker', async () => {
+  // bot-group-chat.md §3: a companion may answer in several Threads at once;
+  // each execution keeps its identity so the UI can stop/open the exact task.
+  it('shows a companion running in two Threads as two execution speakers', async () => {
     fixture.handle.mockImplementation(route => {
       if (route.endsWith('/executions')) return { body: [{ ...execution, status: 'running' },
         { ...execution, id: '50000000-0000-4000-8000-000000000099', status: 'running' }] };
       return response(route);
     });
     const result = await service.getGroup(roomId);
-    expect(result).toMatchObject({ ok: true, group: { round: { status: 'running', speakers: [{ activity: 'reply' }] } } });
-    expect(result.ok && result.group.round.speakers).toHaveLength(1);
+    expect(result).toMatchObject({ ok: true, group: { round: { status: 'running', speakers: [
+      { activity: 'reply', executionId: execution.id, executionStatus: 'running' },
+      { activity: 'reply', executionId: '50000000-0000-4000-8000-000000000099', executionStatus: 'running' },
+    ] } } });
+    expect(result.ok && result.group.round.speakers).toHaveLength(2);
   });
 
   it.each(['IMAGE_INPUT_UNSUPPORTED', 'private token and path'])('projects a failed execution from its visible source with a safe code %s', async code => {

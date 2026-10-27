@@ -77,7 +77,7 @@ export interface StartSchedulerDeps {
   getMainWindow: () => BrowserWindow | null;
   feishuIm: FeishuIM;
   logger: Logger;
-  beforeDispatchUserTurn?: (sessionId: string) => void | Promise<void>;
+  beforeDispatchUserTurn?: (sessionId: string, signal?: AbortSignal) => void | Promise<void>;
   onUndispatchedUserTurn?: (sessionId: string) => void;
 }
 

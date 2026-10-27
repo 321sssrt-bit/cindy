@@ -9571,6 +9571,8 @@
         "viewProcess": "과정 보기",
         "hideProcess": "과정 접기",
         "stop": "중지",
+        "stopping": "중지 중…",
+        "queued": "시작 대기 중…",
         "stopMine": "내 요청 중지",
         "stopAll": "모두 중지",
         "stopAllHint": "다른 사람의 요청도 포함"
@@ -10626,7 +10628,9 @@
       "suggestion2": "2. {{service}} 오픈 플랫폼에서 자신만의 별도 App을 만들어 동료와 각자 사용합니다.",
       "dismiss": "무시",
       "createOwnApp": "내 App 만들기 ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ 첨부 파일 {{count}}개를 보내지 못했습니다: {{names}}",
+    "unnamedAttachment": "이름 없는 첨부 파일"
   },
   "markdown": {},
   "diffPanel": {
@@ -16313,6 +16317,7 @@
     "save": "루틴 저장",
     "deleteConfirm": "이 루틴을 삭제하고 대기 중인 실행을 취소할까요?",
     "keep": "루틴 유지",
+    "openTask": "세션 열기",
     "history": "실행 기록",
     "noRuns": "이 루틴은 아직 실행되지 않았습니다.",
     "field": "필드",
@@ -16344,6 +16349,10 @@
       "not-equals": "같지 않음"
     },
     "quiet": "확인 결과 변화가 없으면 알리지 않기",
+    "sessionMode": "실행 세션",
+    "sessionModePersistent": "영구 세션 (문맥 유지)",
+    "sessionModeFresh": "트리거마다 새로 만들기 (문맥 분리)",
+    "sessionModeHint": "영구 세션은 하나의 루틴 대화를 이어 갑니다. 새로 만들기는 트리거마다 독립 대화를 만들고 닫습니다.",
     "quietHint": "변화나 문제만 보고합니다. 리마인더와 예약 메시지는 이 옵션을 끌 수 있습니다.",
     "checkCommand": "사전 확인 명령",
     "checkHint": "선택 사항입니다. 컴퓨터에서 먼저 확인합니다. 종료 코드 2는 이번 실행을 건너뛰고, 0은 계속합니다. 오류는 보고됩니다. 비우면 제거됩니다.",

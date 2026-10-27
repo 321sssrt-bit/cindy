@@ -107,11 +107,11 @@ describe('sessionService.get in-flight deduplication', () => {
 
 describe('sessionService.patchMeta routing', () => {
   beforeEach(() => {
-    vi.resetModules();
     stickyOrigin.get.mockReturnValue(null);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     stickyOrigin.get.mockReturnValue(null);
   });
 

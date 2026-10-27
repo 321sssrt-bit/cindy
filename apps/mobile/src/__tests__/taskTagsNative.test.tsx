@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   onMove: null as null | ((sources: number[], destination: number) => void),
   textField: null as any,
   announce: vi.fn(),
+  sortingChanged: vi.fn(),
 }));
 
 vi.mock('react-native', () => ({
@@ -31,8 +32,8 @@ vi.mock('@/session/ComposerNativeSection', () => ({
   ),
 }));
 vi.mock('@/session/ComposerNativeRow', () => ({
-  ComposerNativeRow: ({ title, onPress, onOptions, testID, disabled }: any) => (
-    <div>
+  ComposerNativeRow: ({ title, onPress, onOptions, testID, disabled, modifiers }: any) => (
+    <div data-modifiers={JSON.stringify(modifiers)}>
       <button data-testid={testID} disabled={disabled} onClick={onPress}>
         {title}
       </button>
@@ -149,7 +150,7 @@ const baseState = (over: Record<string, unknown> = {}): any => ({
 let root: ReturnType<typeof createRoot>;
 let node: HTMLDivElement;
 const render = (state: any) =>
-  act(async () => root.render(<NativeTaskTagsExpanded state={state} />));
+  act(async () => root.render(<NativeTaskTagsExpanded state={state} onSortingChange={h.sortingChanged} />));
 const press = (testID: string) =>
   act(async () => node.querySelector<HTMLButtonElement>(`[data-testid="${testID}"]`)!.click());
 
@@ -158,6 +159,7 @@ beforeEach(() => {
   h.onMove = null;
   h.textField = null;
   h.announce.mockClear();
+  h.sortingChanged.mockClear();
   node = document.createElement('div');
   root = createRoot(node);
 });
@@ -238,15 +240,11 @@ const modifiers = () =>
 it('disables native deletion in both modes and exposes edit mode only when sorting', async () => {
   const state = baseState();
   await render(state);
-  expect(modifiers()).toContainEqual({
-    environment: { key: 'editMode', value: 'inactive' },
-  });
+  expect(h.sortingChanged).toHaveBeenLastCalledWith(false);
   expect(modifiers().filter((m: any) => m.deleteDisabled)).toHaveLength(3);
   expect(node.textContent).toContain('taskTags.reorderFooter');
   await press('taskTags.reorder');
-  expect(modifiers()).toContainEqual({
-    environment: { key: 'editMode', value: 'active' },
-  });
+  expect(h.sortingChanged).toHaveBeenLastCalledWith(true);
   expect(modifiers().filter((m: any) => m.deleteDisabled)).toHaveLength(3);
   expect(modifiers().filter((m: any) => m.moveDisabled === false)).toHaveLength(3);
   expect(node.textContent).toContain('taskTags.reorderDone');
@@ -256,9 +254,7 @@ it('disables native deletion in both modes and exposes edit mode only when sorti
   await press('taskTags.tag.a');
   expect(state.onToggle).not.toHaveBeenCalled();
   await press('taskTags.reorder');
-  expect(modifiers()).toContainEqual({
-    environment: { key: 'editMode', value: 'inactive' },
-  });
+  expect(h.sortingChanged).toHaveBeenLastCalledWith(false);
   expect(node.querySelector('[data-testid="taskTags.tag.a.options"]')).not.toBeNull();
   expect(node.querySelector('[data-testid="taskTags.add"]')).not.toBeNull();
 });
@@ -266,13 +262,14 @@ it('disables native deletion in both modes and exposes edit mode only when sorti
 it('blocks moves while saving or offline, and restores sorting after the lock clears', async () => {
   const state = baseState();
   await render(state);
+  const move = h.onMove!;
   await press('taskTags.reorder');
   await render({ ...state, disabled: true });
   expect(modifiers().filter((m: any) => m.moveDisabled === true)).toHaveLength(3);
-  act(() => h.onMove!([0], 3));
+  act(() => move([0], 3));
   expect(state.onMove).not.toHaveBeenCalled();
   await render(state);
-  act(() => h.onMove!([0], 3));
+  act(() => move([0], 3));
   expect(state.onMove).toHaveBeenCalledWith(0, 2);
 });
 
@@ -284,9 +281,7 @@ it('resets sorting after leaving the list and keeps an exit when the catalog shr
   expect(node.textContent).toContain('taskTags.reorderDone');
   await render({ ...state, page: 'edit' });
   await render(state);
-  expect(modifiers()).toContainEqual({
-    environment: { key: 'editMode', value: 'inactive' },
-  });
+  expect(h.sortingChanged).toHaveBeenLastCalledWith(false);
 });
 
 it('allows finishing sorting while offline without enabling writes or re-entry', async () => {
@@ -298,7 +293,7 @@ it('allows finishing sorting while offline without enabling writes or re-entry',
     node.querySelector<HTMLButtonElement>('[data-testid="taskTags.reorder"]')!;
   expect(reorderButton().disabled).toBe(false);
   await press('taskTags.reorder');
-  expect(modifiers()).toContainEqual({ environment: { key: 'editMode', value: 'inactive' } });
+  expect(h.sortingChanged).toHaveBeenLastCalledWith(false);
   expect(reorderButton().disabled).toBe(true);
   expect(node.querySelector<HTMLButtonElement>('[data-testid="taskTags.tag.a"]')!.disabled).toBe(true);
   act(() => h.onMove!([0], 3));

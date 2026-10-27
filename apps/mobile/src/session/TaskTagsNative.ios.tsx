@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import {
   Button,
   Circle,
-  Group,
   HStack,
   Image,
   List,
@@ -23,7 +22,6 @@ import {
   contentShape,
   deleteDisabled,
   disabled,
-  environment,
   font,
   foregroundStyle,
   frame,
@@ -41,7 +39,7 @@ import { iconSize, useTheme } from '@/theme';
 import { ComposerNativeSection as Section } from './ComposerNativeSection';
 import { ComposerNativeRow } from './ComposerNativeRow';
 import type { TaskTagsExpandedState } from './TaskTags';
-import type { NativeTagSwatchProps } from './TaskTagsNative';
+import type { NativeTagSwatchProps, NativeTaskTagsExpandedProps } from './TaskTagsNative';
 import { TAG_SWATCH, taskTagMoveTarget } from './taskTagsNativePage';
 
 /** One drawn swatch for every tag surface; the outline only rescues white tags. */
@@ -247,9 +245,16 @@ function TagForm({ state }: { state: TaskTagsExpandedState }) {
 }
 
 /** SwiftUI rendering of the expanded tag pages: list, add / edit, delete confirmation. */
-export function NativeTaskTagsExpanded({ state }: { state: TaskTagsExpandedState }) {
+export function NativeTaskTagsExpanded({ state, onSortingChange }: NativeTaskTagsExpandedProps) {
   const { t } = useTranslation();
   const [sorting, setSorting] = useState(false);
+  const latest = useRef({ sorting, state });
+  latest.current = { sorting, state };
+  // SwiftUI requires editMode on the enclosing Form/List, not on its row group.
+  useEffect(() => {
+    onSortingChange?.(sorting);
+    return () => onSortingChange?.(false);
+  }, [sorting, onSortingChange]);
   useEffect(() => {
     if (state.page !== 'list') setSorting(false);
   }, [state.page]);
@@ -291,43 +296,42 @@ export function NativeTaskTagsExpanded({ state }: { state: TaskTagsExpandedState
           <ProgressView />
         </Section>
       ) : state.tags.length ? (
-        <Group modifiers={[environment('editMode', sorting ? 'active' : 'inactive')]}>
-          <Section
-            footer={
-              state.tags.length > 1 ? (
-                <Note text={t(sorting ? 'taskTags.reorderHint' : 'taskTags.reorderFooter')} />
-              ) : undefined
-            }
+        <Section
+          footer={
+            state.tags.length > 1 ? (
+              <Note text={t(sorting ? 'taskTags.reorderHint' : 'taskTags.reorderFooter')} />
+            ) : undefined
+          }
+        >
+          <List.ForEach
+            onMove={(sources, destination) => {
+              const { sorting, state } = latest.current;
+              if (!sorting || state.disabled) return;
+              const from = sources[0];
+              if (from === undefined) return;
+              state.onMove(from, taskTagMoveTarget(from, destination));
+            }}
           >
-            <List.ForEach
-              onMove={(sources, destination) => {
-                if (!sorting || state.disabled) return;
-                const from = sources[0];
-                if (from === undefined) return;
-                state.onMove(from, taskTagMoveTarget(from, destination));
-              }}
-            >
-              {state.tags.map((tag) => (
-                <Group
-                  key={tag.id}
-                  modifiers={[deleteDisabled(true), moveDisabled(state.disabled || !sorting)]}
-                >
-                  <ComposerNativeRow
-                    leading={<NativeTagSwatch {...tag} selected={false} size={TAG_SWATCH.row} />}
-                    title={tag.name}
-                    selected={tag.selected}
-                    disabled={state.disabled || sorting}
-                    onPress={() => state.onToggle(tag.id)}
-                    onOptions={sorting ? undefined : () => state.onEdit(tag.id)}
-                    optionsIcon={<Image size={iconSize.lg} systemName="pencil" />}
-                    optionsLabel={t('taskTags.editLabel', { name: tag.name })}
-                    testID={`taskTags.tag.${tag.id}`}
-                  />
-                </Group>
-              ))}
-            </List.ForEach>
-          </Section>
-        </Group>
+            {/* A transparent Group adds a nested native ForEach and prevents row moves. */}
+            {state.tags.map((tag) => (
+              <ComposerNativeRow
+                key={tag.id}
+                modifiers={[deleteDisabled(true), moveDisabled(state.disabled || !sorting)]}
+                leading={<NativeTagSwatch {...tag} selected={false} size={TAG_SWATCH.row} />}
+                title={tag.name}
+                selected={tag.selected}
+                disabled={state.disabled}
+                onPress={() => {
+                  if (!latest.current.sorting) latest.current.state.onToggle(tag.id);
+                }}
+                onOptions={sorting ? undefined : () => state.onEdit(tag.id)}
+                optionsIcon={<Image size={iconSize.lg} systemName="pencil" />}
+                optionsLabel={t('taskTags.editLabel', { name: tag.name })}
+                testID={`taskTags.tag.${tag.id}`}
+              />
+            ))}
+          </List.ForEach>
+        </Section>
       ) : !state.message ? (
         <Section>
           <Note text={t('taskTags.empty')} />

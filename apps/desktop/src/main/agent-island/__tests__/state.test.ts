@@ -941,6 +941,62 @@ describe('Agent Island display state', () => {
     expect(display.sessions[0]?.compactDetail).toBe('我已经完成了第一步，并且正在继续处理后续内容。');
   });
 
+  // Unit regression: the real display builder must use readable rich-answer activity
+  // both during output and after done, not expose the component transport in the island.
+  it('shows readable rich answers in running and completed companion cards', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 's1', companion: { name: '电脑管家', hue: 'blue' as const, glyph: '电', glyphIsInitial: true } };
+    const source = '```cindy-ui\n'
+      + '{"version":1,"seq":1,"op":"create","id":"answer","kind":"text","props":{"text":"网络检查完成"}}\n```';
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    for (const character of source) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(character), 1_050);
+      const preview = buildAgentIslandDisplayState(state, 1_060).sessions[0]?.compactDetail ?? '';
+      expect(preview).not.toMatch(/cindy|version|seq|create|props|`/);
+    }
+    applyAgentIslandEvent(state, meta, finalTextEvent(source), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0])
+      .toMatchObject({ compactDetail: '网络检查完成', phase: 'running' });
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_300);
+    expect(buildAgentIslandDisplayState(state, 1_400).sessions[0])
+      .toMatchObject({ compactDetail: '网络检查完成', phase: 'completed' });
+  });
+
+  // Review regression: a removed/emptied rich node must retract this message's
+  // streamed line from both the activity log and active/queued preview (unit tier).
+  it.each([
+    { operation: 'remove', queued: false, streamed: true },
+    { operation: 'remove', queued: true, streamed: false },
+    { operation: 'patch', queued: false, streamed: false },
+    { operation: 'patch', queued: true, streamed: true },
+  ])('retracts an empty rich preview (%j)', ({ operation, queued, streamed }) => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 's1' };
+    if (queued) applyAgentIslandUserPrompt(state, meta, '检查网络', 1_000);
+    else applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const prefix = '```cindy-ui\n'
+      + '{"version":1,"seq":1,"op":"create","id":"a","kind":"text","props":{"text":"临时结果"}}\n';
+    applyAgentIslandEvent(state, meta, textDeltaEvent(prefix), 1_100);
+    expect(buildAgentIslandDisplayState(state, 1_150).sessions[0]?.activityLines)
+      .toContainEqual(expect.objectContaining({ text: '临时结果' }));
+    const update = JSON.stringify({ seq: 2, op: operation, id: 'a',
+      ...(operation === 'patch' ? { props: { text: '' } } : {}) }) + '\n```';
+    if (streamed) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(update), 1_200);
+      const during = buildAgentIslandDisplayState(state, 1_250).sessions[0];
+      expect(JSON.stringify(during)).not.toContain('临时结果');
+    }
+    applyAgentIslandEvent(state, meta, finalTextEvent(prefix + update), 1_300);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_400);
+    for (const time of [1_450, 4_000]) {
+      const completed = buildAgentIslandDisplayState(state, time).sessions[0];
+      expect(JSON.stringify(completed)).not.toContain('临时结果');
+      expect(completed?.activityLines).toContainEqual(expect.objectContaining({
+        kind: 'status', text: DEFAULT_AGENT_ISLAND_STRINGS.done,
+      }));
+    }
+  });
+
   it('keeps generic running status behind assistant text in compact detail', () => {
     const state = createAgentIslandState();
 

@@ -10616,9 +10616,9 @@
           "createLink": "Create one on {{service}} Open Platform",
           "credentialsHint": "After creating the app, copy its App ID and App Secret from Credentials & Basic Info and enter them here.",
           "stepsLabel": "View setup steps",
-          "stepCreate": "Create a custom app on the Open Platform and add the bot capability.",
+          "stepCreate": "Create a custom app on the Open Platform and add the bot capability. In Permissions, confirm that reading direct messages (im:message.p2p_msg:readonly) and sending messages as the app (im:message:send_as_bot) are enabled. Receiving group @mentions also requires im:message.group_at_msg:readonly.",
           "stepCredentials": "Open Credentials & Basic Info in your app and copy the App ID and App Secret.",
-          "stepConnect": "Enter the credentials below and click “Connect {{service}}”.",
+          "stepConnect": "Enter the credentials below and click “Connect {{service}}” to establish a connection. In Events & Callbacks on the Open Platform, select the long connection subscription mode and add the Receive message event (im.message.receive_v1). Publish the app version, wait for approval if required, then send the bot a message to verify it works.",
           "confirm": "Connect {{service}}"
         },
         "wecom": {

@@ -10581,9 +10581,9 @@
           "createLink": "前往{{service}}开放平台创建",
           "credentialsHint": "创建后，从「凭证与基础信息」复制 App ID 和 App Secret，回到这里填写。",
           "stepsLabel": "查看配置步骤",
-          "stepCreate": "在开放平台创建企业自建应用，并添加机器人能力。",
+          "stepCreate": "在开放平台创建企业自建应用并添加机器人能力。在「权限管理」确认已开通读取单聊消息（im:message.p2p_msg:readonly）和以应用身份发消息（im:message:send_as_bot）权限；接收群聊 @ 消息还需 im:message.group_at_msg:readonly。",
           "stepCredentials": "打开应用的「凭证与基础信息」，复制 App ID 和 App Secret。",
-          "stepConnect": "将凭证填入下方，点击「连接{{service}}」。",
+          "stepConnect": "将凭证填入下方，点击「连接{{service}}」建立连接。回到开放平台「事件与回调」，将订阅方式设为「使用长连接接收事件」，并添加「接收消息」（im.message.receive_v1）事件。完成版本发布，需审核时等待通过，再给机器人发消息验证。",
           "confirm": "连接{{service}}"
         },
         "wecom": {

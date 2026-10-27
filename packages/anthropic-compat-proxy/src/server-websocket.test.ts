@@ -603,7 +603,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(await failed).toBe('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
   });
 
-  it('clears a cancelled handshake deadline without starting another request', async () => {
+  it('clears a FIN-cancelled handshake deadline without starting another request', async () => {
     const deadlines = captureHandshakeDeadlines();
     const cleared = vi.spyOn(globalThis, 'clearTimeout');
     const upstream = createServer();
@@ -630,7 +630,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
       await vi.waitFor(() => expect(requestCount).toBe(1));
       expect(deadlines()).toHaveLength(1);
       const deadline = deadlines()[0];
-      client.destroy();
+      client.end();
       await vi.waitFor(() => expect(cleared).toHaveBeenCalledWith(deadline.timer));
       await vi.waitFor(() => expect(upstreamEnded).toBe(true));
       deadline.fire();

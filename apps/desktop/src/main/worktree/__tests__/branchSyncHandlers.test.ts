@@ -4,22 +4,26 @@
  * option-shaped ref, credential URL in failure. Tier: unit, injected identity.
  */
 import path from 'node:path';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createBranchSyncHandlers } from '../branchSyncHandlers';
 import { GitExecError } from '../gitExec';
 const calls = vi.hoisted(() => ({ status: vi.fn(), sync: vi.fn() }));
 vi.mock('../branchSync', () => ({ readBranchSyncStatus: calls.status, syncBranch: calls.sync }));
 const assertSender = vi.fn();
 const remote = vi.fn();
+const scope = vi.fn(() => 'owner:1:device-a');
 const handlers = createBranchSyncHandlers({
   assertTrustedAppRendererEvent: assertSender,
   isDeviceLinkInvoke: remote,
+  getCallerScope: scope,
 });
 const req = { baseRepo: path.resolve('/repo'), branch: 'main' };
 beforeEach(() => {
   vi.resetAllMocks();
   remote.mockReturnValue(false);
+  scope.mockReturnValue('owner:1:device-a');
 });
+afterEach(() => vi.useRealTimers());
 it('rejects an untrusted frame before reading or mutating any repository', () => {
   assertSender.mockImplementation(() => {
     throw new Error('[PERMISSION_DENIED] Untrusted frame');
@@ -56,4 +60,70 @@ it('returns a readable reason without leaking Git credentials or output', async 
   );
   await expect(handlers.sync({}, req)).rejects.toThrow('branch-sync:auth');
   await expect(handlers.sync({}, req)).rejects.not.toThrow('secret');
+});
+
+// Regression: a healthy download outlives the 90s device-link invoke. Exercise
+// the real IPC handlers with fake time; previous cases only await final replies.
+// Minimum input: one pending sync and continuations from two controller scopes.
+it('waits across multiple bounded replies without rerunning Git, scoped to owner, device and repository', async () => {
+  vi.useFakeTimers();
+  let finish!: (value: { updated: number }) => void;
+  calls.sync.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const initial = handlers.sync({}, { ...req, waitForResult: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const pending = await initial;
+  expect(pending).toMatchObject({ pending: true });
+  if (!('operationId' in pending)) throw new Error('expected continuation');
+  const continuation = { ...req, waitForResult: true, operationId: pending.operationId };
+  for (const other of ['owner:1:device-b', 'owner:2:device-a']) {
+    scope.mockReturnValue(other);
+    expect(() => handlers.sync({}, continuation)).toThrow('branch-sync:changed');
+  }
+  scope.mockReturnValue('owner:1:device-a');
+  expect(() => handlers.sync({}, { ...continuation, branch: 'other' })).toThrow(
+    'branch-sync:changed',
+  );
+  for (let i = 0; i < 10; i++) {
+    const next = handlers.sync({}, continuation);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await next).toEqual(pending);
+  }
+  finish({ updated: 2 });
+  expect(await handlers.sync({}, continuation)).toEqual({ updated: 2 });
+  expect(calls.sync).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(() => handlers.sync({}, continuation)).toThrow('branch-sync:changed');
+  expect(calls.sync).toHaveBeenCalledTimes(1);
+});
+
+it('retains a sanitized failure for continuations without unhandled rejections or a second fetch', async () => {
+  vi.useFakeTimers();
+  let fail!: (error: Error) => void;
+  calls.sync.mockReturnValue(
+    new Promise((_, reject) => {
+      fail = reject;
+    }),
+  );
+  const initial = handlers.sync({}, { ...req, waitForResult: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const pending = await initial;
+  if (!('operationId' in pending)) throw new Error('expected continuation');
+  fail(
+    new GitExecError({
+      args: ['fetch'],
+      exitCode: null,
+      stdout: '',
+      stderr: 'secret',
+      timedOut: true,
+    }),
+  );
+  await expect(
+    handlers.sync({}, { ...req, waitForResult: true, operationId: pending.operationId }),
+  ).rejects.toThrow('branch-sync:timeout');
+  expect(calls.sync).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
 });

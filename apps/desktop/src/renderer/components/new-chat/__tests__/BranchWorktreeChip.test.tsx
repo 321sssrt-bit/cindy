@@ -80,6 +80,25 @@ afterEach(() => {
 });
 const branchButton = () => screen.getByRole('button', { name: 'newChat.branchChip.label' });
 const refreshButton = () => screen.getByRole('button', { name: /newChat.branchSync.action/ });
+// Regression: remote Git continues after the old 90s request budget; follow the
+// operation handle rather than repeating the mutation. Unit tier, real hook/UI.
+it('continues waiting for the same remote fetch and shows its final result', async () => {
+  const operationId = '8a7768e7-e652-4458-9c15-96af310bc9cb';
+  const replies = [{ pending: true, operationId }, { pending: true, operationId }, { status: baseStatus, updated: 3 }];
+  invoke.mockImplementation(async (_device, channel) => channel === 'worktree:sync-branch' ? replies.shift() : baseStatus);
+  render(<BranchWorktreeChip {...props} deviceId="remote-a" />);
+  await screen.findByRole('button', { name: /newChat.branchSync.action/ });
+  fireEvent.click(refreshButton());
+  await screen.findByRole('button', { name: /newChat.branchSync.updated/ });
+  const writes = invoke.mock.calls.filter((call) => call[1] === 'worktree:sync-branch');
+  expect(writes.map((call) => call[2])).toEqual([
+    [{ baseRepo: '/repo', branch: 'main', waitForResult: true }],
+    [{ baseRepo: '/repo', branch: 'main', waitForResult: true, operationId }],
+    [{ baseRepo: '/repo', branch: 'main', waitForResult: true, operationId }],
+  ]);
+  expect(mocks.toast).not.toHaveBeenCalled();
+});
+
 it('shares counts with the selected row and keeps full remote refs distinct during keyboard search', async () => {
   render(<BranchWorktreeChip {...props} />);
   await waitFor(() => expect(status).toHaveBeenCalledOnce());
@@ -213,7 +232,7 @@ it('routes to the selected device and discards a late status from the previous b
   fireEvent.click(refreshButton());
   await waitFor(() =>
     expect(invoke).toHaveBeenLastCalledWith('pc', 'worktree:sync-branch', [
-      { baseRepo: '/repo', branch: 'next' },
+      { baseRepo: '/repo', branch: 'next', waitForResult: true },
     ]),
   );
   expect(status).not.toHaveBeenCalled();

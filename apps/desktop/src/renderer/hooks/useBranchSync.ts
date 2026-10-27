@@ -4,6 +4,7 @@ import {
   BRANCH_SYNC_ERROR_PREFIX,
   type BranchSyncStatus,
   type BranchSyncResult,
+  type BranchSyncReply,
 } from '../../shared/worktreeBranchSync';
 import { extractIpcError } from '@/utils/ipcError';
 import { toast } from '@/lib/toast';
@@ -32,8 +33,12 @@ export function useBranchSync(
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const doneTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const invoke = useCallback(
-    (sync: boolean) => {
-      const req = { baseRepo: baseRepo!, branch };
+    (sync: boolean, operationId?: string) => {
+      const req = {
+        baseRepo: baseRepo!,
+        branch,
+        ...(sync ? { waitForResult: true, ...(operationId ? { operationId } : {}) } : {}),
+      };
       if (deviceId)
         return window.electronAPI.deviceLink.invoke(
           deviceId,
@@ -105,7 +110,12 @@ export function useBranchSync(
     const id = ++request.current;
     setSnapshot((old) => ({ ...old, key, busy: true, error: undefined, result: undefined }));
     try {
-      const result = (await invoke(true)) as BranchSyncResult;
+      let reply = (await invoke(true)) as BranchSyncReply;
+      while ('pending' in reply) {
+        if (currentKey.current !== key || id !== request.current) return;
+        reply = (await invoke(true, reply.operationId)) as BranchSyncReply;
+      }
+      const result = reply;
       if (currentKey.current !== key || id !== request.current) return;
       if (result.status.blocked) toast.warning(blockedHint(result.status));
       setSnapshot({

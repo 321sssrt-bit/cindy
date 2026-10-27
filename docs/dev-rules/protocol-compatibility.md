@@ -69,8 +69,18 @@ Server 保留原市场资源 ID 和不可变旧 Release；无能力声明的客�
 仅拉取确认远程分支不存在后，在本次胶囊选择内置灰；换分支或重新挂载即重新判断。
 同步仅由用户点击触发，按配置的 tracking remote/ref（否则 origin 同名分支）拉取一个显式
 refspec，再按需快进本地分支。
-设备互联对单次同步预留 90 秒（网络 Git 30 秒及清理、本地探测），失败不重放写请求、
-不重置 peer 或 relay；创建和发送不等待同步，不改用其它源引用。手机本轮不提供入口。
+手动 fetch 使用 `--progress`，连续 60 秒没有新增对象、接收字节或解包进度才超时；
+重复进度行与普通输出不续期。本地探测仍有 5 秒上限，超时沿用整棵进程树清理。
+单次命令用 `-c fetch.unpackLimit=1` 让小批对象也经过会报告字节进度的 `index-pack`，
+避免单个大对象被 `unpack-objects` 静默接收时误判停滞；不修改用户 Git 配置。
+新版控制端在 `worktree:sync-branch` 请求追加可选 `waitForResult: true`，被控端至多等待
+10 秒，未完成时返回 `{ pending: true, operationId }`。后续请求带同一 `operationId`，
+只等待原操作，绝不重新 fetch；句柄绑定账号代次、控制设备、仓库和分支，完成后保留 5 分钟。
+未知、过期或不匹配的句柄报 `branch-sync:changed`，不自动重新执行。每次 invoke 仍沿用
+90 秒传输预算，不修改共享链路的超时、重试或恢复策略；两个控制端的句柄互不通用。
+旧控制端不传新字段，新被控端仍返回原终态；新控制端连接旧被控端时接受原终态，沿用旧端
+Git 超时。长下载的完整体验需要两端更新。失败不重放写请求、不重置 peer 或 relay；
+创建和发送不等待同步，不改用其它源引用。手机本轮不提供入口。无服务端或数据库变更。
 实现见 `apps/desktop/src/main/worktree/branchSync.ts`；真实 Git 回归在
 `branchSync.git-integration.test.ts`。
 

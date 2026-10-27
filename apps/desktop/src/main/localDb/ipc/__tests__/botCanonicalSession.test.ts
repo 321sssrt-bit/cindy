@@ -1006,6 +1006,55 @@ describe('Bot canonical Session lifecycle', () => {
     });
   });
 
+  // cloud-companions.md §3.1 (2026-10-26): a companion taken over from another computer may share its
+  // name with a different companion already here; the two stay independent.
+  describe('cloud take-over next to a same-named local companion', () => {
+    const names = () => h.sqlite!.prepare("SELECT id FROM bot_profiles WHERE display_name = 'Release Bot' ORDER BY id").pluck().all();
+
+    it('creates the copy without the name check', async () => {
+      const { createBotProfile } = await import('../bots');
+      const created = await createBotProfile({ id: 'import_other', name: 'release bot' }, { allowSameName: true });
+      expect(created.id).toBe('import_other');
+      await createBotProfile({ id: 'import_third', name: 'Release Bot' }, { allowSameName: true });
+      expect(names()).toEqual(['bot-1', 'import_third']);
+    });
+
+    it('still refuses a same-named ordinary creation', async () => {
+      const { createBotProfile } = await import('../bots');
+      await expect(createBotProfile({ id: 'import_other', name: 'Release Bot' })).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      await expect(createBotProfile({ id: 'import_other', name: 'Release Bot' }, { templateId: undefined })).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      expect(names()).toEqual(['bot-1']);
+    });
+
+    it('does not let a renderer or model body switch the name check off', async () => {
+      const { createBotProfile } = await import('../bots');
+      for (const flag of ['allowSameName', 'allowDuplicateName']) {
+        await expect(invoke('local-db:bots:create', { id: 'import_other', name: 'Release Bot', [flag]: true }))
+          .rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+        await expect(createBotProfile({ id: 'import_other', name: 'Release Bot', [flag]: true })).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      }
+      expect(names()).toEqual(['bot-1']);
+    });
+
+    it('keeps the default Cindy unique for a take-over', async () => {
+      const { createBotProfile } = await import('../bots');
+      await invoke('local-db:bots:create', { id: 'local-cindy', name: 'Cindy', templateId: 'cindy' });
+      await expect(createBotProfile({ id: 'import_cindy', name: 'Cindy 2' }, { templateId: 'cindy', allowSameName: true }))
+        .rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      expect(h.sqlite!.prepare("SELECT COUNT(*) FROM bot_profiles WHERE id = 'import_cindy'").pluck().get()).toBe(0);
+    });
+
+    it('takes over an existing copy whose cloud name now matches another local companion', async () => {
+      await invoke('local-db:bots:create', { id: 'import_copy', name: 'Copy' });
+      await expect(updateStoredBotProfile({ id: 'import_copy', name: 'Release Bot' })).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      await expect(invoke('local-db:bots:update', { id: 'import_copy', name: 'Release Bot', allowSameName: true }))
+        .rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
+      const updated = await updateStoredBotProfile({ id: 'import_copy', name: 'Release Bot' }, undefined, undefined, { allowSameName: true });
+      expect(updated.name).toBe('Release Bot');
+      expect(names()).toEqual(['bot-1', 'import_copy']);
+    });
+  });
+
   it('allows profile edits while an existing companion retries only its portrait', async () => {
     await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
@@ -10266,6 +10315,59 @@ describe('Bot self control uses the same profile authority as settings', () => {
 
 
 describe('Teammate model selection shares profile persistence and route reconciliation', () => {
+  // #7177, DB tier: older clients leave an unversioned automation baseline
+  // after a permanent choice. Existing cases only change the saved model.
+  // Exercise the real IPC/transaction and cold send preparation: accepting the
+  // already-saved choice must fence the old restore without editing the choice.
+  it('accepts the saved permanent choice over a legacy baseline after restart', async () => {
+    const created = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const sessionId = created.session.id as string;
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    const legacy = JSON.stringify({ scopeId: 'legacy', agentKind: 'codex', model: 'old-model',
+      providerId: 'removed-provider', effort: 'medium', fastMode: false });
+    h.sqlite!.prepare('UPDATE sessions SET scheduled_model_baseline = ? WHERE id = ?').run(legacy, sessionId);
+    const readBaseline = () => h.sqlite!.prepare('SELECT scheduled_model_baseline FROM sessions WHERE id = ?')
+      .pluck().get(sessionId) as string | null;
+    await invoke('local-db:bots:update', { id: 'bot-1', acceptSavedModelSelectionVersion: before.currentVersion });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.currentVersion).toBe(before.currentVersion + 1);
+    expect(JSON.parse(readBaseline()!)).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    const chain = await modelSettings.readEffectiveBotModelChain(after.capabilities);
+    const restoreOld = vi.fn(async () => { throw new Error('removed provider must not be restored'); });
+    const cold = createBotModelRouteReconciler({ ownerEpoch: () => h.ownerScopeKey,
+      read: async () => ({ chain, current: { agentKind: 'codex', model: 'old-model', providerId: 'removed-provider',
+        effort: 'medium', fastMode: false }, hasRuntimeOverride: false, scheduledModelBaseline: readBaseline() }),
+      apply: async () => { throw new Error('route not ready'); },
+      onSelectionAccepted: async (id, expected) => h.sqlite!.prepare(
+        'UPDATE sessions SET scheduled_model_baseline = NULL WHERE id = ? AND scheduled_model_baseline IS ?',
+      ).run(id, expected ?? null).changes === 1,
+    });
+    const scope = createScheduledModelScope({ read: async () => ({ profile: {
+      agentKind: 'codex', model: 'old-model', providerId: 'removed-provider', effort: 'medium', fastMode: false,
+    }, baseline: readBaseline() }), write: async () => {}, apply: restoreOld, isBusy: () => false, createId: () => 'unused' });
+    await scope.restore(sessionId);
+    expect(restoreOld).not.toHaveBeenCalled();
+    await expect(cold(sessionId)).rejects.toThrow('route not ready');
+    expect(JSON.parse(readBaseline()!)).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    const applied: unknown[] = [];
+    const ready = createBotModelRouteReconciler({ ownerEpoch: () => h.ownerScopeKey,
+      read: async () => ({ chain, current: { agentKind: 'codex', model: 'old-model', providerId: 'removed-provider',
+        effort: 'medium', fastMode: false }, hasRuntimeOverride: false, scheduledModelBaseline: readBaseline() }),
+      apply: async (_id, route) => { applied.push(route); },
+      onSelectionAccepted: async (id, expected) => h.sqlite!.prepare(
+        'UPDATE sessions SET scheduled_model_baseline = NULL WHERE id = ? AND scheduled_model_baseline IS ?',
+      ).run(id, expected ?? null).changes === 1,
+    });
+    await ready(sessionId);
+    expect(applied).toEqual([expect.objectContaining({ model: chain[0]!.model, providerId: chain[0]!.providerId })]);
+    expect(readBaseline()).toBeNull();
+    await expect(invoke('local-db:bots:update', { id: 'bot-1', acceptSavedModelSelectionVersion: before.currentVersion }))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+  });
+
   // #6895 P1: the previous crash test stopped at the profile commit. A subsequent
   // automation could recreate A before runtime refresh. DB tier: exercise the
   // real save transaction, send locks, reconciler and baseline writer in both
@@ -10467,6 +10569,32 @@ describe('Teammate model selection shares profile persistence and route reconcil
       service: createBotCapabilityService(capabilityDeps),
       id: JSON.stringify(['pi', 'xd', model.id]), model };
   }
+
+  // #7177, DB tier: an explicit same-value tool selection must reach the
+  // acceptance transaction; a plain metadata edit must retain the old scope.
+  it('reaccepts the same model through the teammate tool without treating a rename as recovery', async () => {
+    const { service, sessionId, id } = await setupModelControl();
+    const modelChain = [{ id, effort: 'low', fastMode: false }];
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: 1, modelChain }))
+      .toMatchObject({ ok: true });
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    const legacy = JSON.stringify({ scopeId: 'legacy', agentKind: 'codex', model: 'old-model',
+      providerId: 'removed-provider', effort: 'medium', fastMode: false });
+    h.sqlite!.prepare('UPDATE sessions SET scheduled_model_baseline = ? WHERE id = ?').run(legacy, sessionId);
+    const readBaseline = () => h.sqlite!.prepare('SELECT scheduled_model_baseline FROM sessions WHERE id = ?')
+      .pluck().get(sessionId) as string;
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: before.currentVersion, name: 'New name' }))
+      .toMatchObject({ ok: true });
+    expect(readBaseline()).toBe(legacy);
+    const renamed = await invoke('local-db:bots:get', 'bot-1');
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: renamed.currentVersion, modelChain }))
+      .toMatchObject({ ok: true });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.name).toBe('New name');
+    expect(JSON.parse(readBaseline())).toMatchObject({ pendingBotProfileVersion: after.currentVersion });
+    expect(after.currentVersion).toBe(renamed.currentVersion + 1);
+  });
 
   // DB regression: a per-teammate reset follows the teammate default even if
   // the new-task composer changes later; previously the two were coupled.

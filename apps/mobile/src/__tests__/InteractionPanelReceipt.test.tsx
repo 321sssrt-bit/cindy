@@ -938,7 +938,7 @@ it('opens only the target computer desktop without resolving or authorizing the 
   await click('interaction.pluginSetup.remoteDesktop');
   await click('interaction.pluginSetup.remoteDesktop');
   expect(push).toHaveBeenCalledTimes(1);
-  expect(push).toHaveBeenLastCalledWith({ pathname: '/devices/desktop/[deviceId]', params: { deviceId: 'd1', deviceName: 'd1' } });
+  expect(push).toHaveBeenLastCalledWith({ pathname: '/devices/desktop/[deviceId]', params: { deviceId: 'd1', deviceName: 'another computer' } });
   expect(resolveInteraction).not.toHaveBeenCalled(); expect(invoke).not.toHaveBeenCalled();
   expect(host.querySelector('input')).toBeNull();
   forwardNavigationLock.reset();

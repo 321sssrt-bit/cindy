@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c6f6396e-82bf-4b09-b43a-38145f9bdf25",
+  "id": "84f21dac-eba7-41de-8850-0e3f81ef2927",
   "prevId": "b05d3986-bbff-4d57-bb16-d71d46d827bd",
   "tables": {
     "account_usage_snapshots": {
@@ -3866,6 +3866,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "entry_kind": {
+          "name": "entry_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'tool'"
+        },
         "session_id": {
           "name": "session_id",
           "type": "text",
@@ -5421,14 +5429,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "notifications_muted": {
-          "name": "notifications_muted",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         },
         "summary": {
           "name": "summary",

@@ -1,10 +1,11 @@
 /**
  * 测试价值
- * - 生产入口与可观察结果：listWorkerAgentLocations() 列出同账号可执行电脑与 active 分享，不含本机
- * - Bug／规则依据：makecindy/cindy#7452 SC1，与 list_available_models 的 locations 同源
- * - 现有覆盖缺口：原实现是 register.ts 内部闭包，抽出后无行为测试
- * - 最小失败输入：本机/离线设备、paused 分享、设备列表抛错
+ * - 生产入口与可观察结果：位置读取和插件模型缓存使用真实 listWorkerAgentLocations；完整读取后显示远程电脑，失败时省略 locations，恢复后可重读
+ * - Bug／规则依据：makecindy/cindy#7452 SC1；makecindy/cindy#7472 Greptile 失败位置缓存；plugin-agent-models.md §4.0.3a
+ * - 现有覆盖缺口：现有用例只验证读取函数的降级列表，没有验证插件缓存不会保存该降级结果
+ * - 最小失败输入：handleListDevices 首次拒绝、随后返回一台远程电脑；同时有一个 active 分享
  * - tier：unit
+ * - 实测耗时：4.54 s（单文件红测，macOS arm64）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceLinkDeviceView } from '../../../shared/deviceLinkIpc.js';
@@ -30,6 +31,7 @@ vi.mock('../../device-link/providerShareGuest.js', () => ({
 }));
 
 import { listWorkerAgentLocations } from '../workerAgentLocations.js';
+import { createGhostAgentModelsCache } from '../../cindy-brain/ghostAgentModels.js';
 
 function device(overrides: Partial<DeviceLinkDeviceView>): DeviceLinkDeviceView {
   return {
@@ -83,5 +85,22 @@ describe('listWorkerAgentLocations', () => {
     await expect(listWorkerAgentLocations()).resolves.toEqual([
       { agentDeviceId: 'share:s1', name: 'Claude API · Ann' },
     ]);
+  });
+
+  it('does not cache fallback locations after a failed device read and recovers on retry', async () => {
+    const cache = createGhostAgentModelsCache();
+    io.handleListDevices
+      .mockRejectedValueOnce(new Error('cloud down'))
+      .mockResolvedValueOnce({ devices: [device({})] });
+    io.getReceivedShares.mockReturnValue([
+      { shareId: 's1', status: 'active', providerLabel: 'Claude API', owner: { displayName: 'Ann' } },
+    ]);
+
+    await expect(cache.locations('owner', listWorkerAgentLocations)).resolves.toBeUndefined();
+    await expect(cache.locations('owner', listWorkerAgentLocations)).resolves.toEqual([
+      { agentDeviceId: 'mac-mini', name: 'Mac mini' },
+      { agentDeviceId: 'share:s1', name: 'Claude API · Ann' },
+    ]);
+    expect(io.handleListDevices).toHaveBeenCalledTimes(2);
   });
 });

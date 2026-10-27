@@ -272,7 +272,7 @@ export interface MakerScheduleRunnerDeps {
   notifier: Notifier;
   logger: Logger;
   readAutoReviewHistory?: (sessionId: string) => Promise<AutoReviewHistoryMessage[]>;
-  beforeDispatchUserTurn?: (sessionId: string) => void | Promise<void>;
+  beforeDispatchUserTurn?: (sessionId: string, signal?: AbortSignal) => void | Promise<void>;
   onUndispatchedUserTurn?: (sessionId: string) => void;
   /** Saved quota waits deduplicate by schedule even when each fire creates a new task. */
   findUsageLimitWait?: (scheduleId: string) => Promise<string | null>;
@@ -2046,7 +2046,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
           }
         },
         planMode: routinePermissions?.planMode ?? heartbeatPermissions?.planMode ?? false,
-        onAccepted: async () => {
+        onAccepted: async (signal) => {
           // createSession 之后到真正 dispatch 之间仍会 await 模型切换、baseline
           // 等准备工作。复用 desktop session 时不能在这些准备阶段把用户正在跑的
           // turn 误标成 headless；只在本轮 send 真正跨过接受边界后 acquire。
@@ -2087,7 +2087,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
             }
           }
           if (this.deps.beforeDispatchUserTurn) {
-            await this.deps.beforeDispatchUserTurn(session.id);
+            await this.deps.beforeDispatchUserTurn(session.id, signal);
             baselineStarted = true;
           }
           if (ctx.canDispatch && !ctx.canDispatch()) {

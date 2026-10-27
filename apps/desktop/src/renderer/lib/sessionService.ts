@@ -216,6 +216,7 @@ export async function update(
      * 此处仅落盘,使跨重启可恢复(host 加载时回填 session-provider-store)。
      */
     providerId?: string | null;
+    notificationsMuted?: boolean;
   },
 ): Promise<Session> {
   return wrap(window.electronAPI.localDb.sessions.update(id, patch));
@@ -238,6 +239,12 @@ export async function patchMeta(
     notificationsMuted?: boolean;
   },
 ): Promise<Session> {
+  // 「消息免打扰」是**本机**属性（提醒由任务所在的那台设备发出，菜单也对 device-link
+  // 任务隐藏），不随 sticky origin 隧道：被控端 patch-meta 的 allowlist 不收这个字段，
+  // 隧道过去只会抛 INVALID_PARAMS，让开关白回滚一次。
+  if (patch.notificationsMuted !== undefined) {
+    return update(sessionId, { notificationsMuted: patch.notificationsMuted });
+  }
   // Metadata writes must stay pinned to the last known device while the
   // relay's session mirror is being rebuilt. Otherwise an archived remote
   // task's auto-unarchive can fall through to the controller's local DB.

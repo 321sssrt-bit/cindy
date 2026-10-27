@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { ScriptTarget, transpileModule } from 'typescript';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow } from 'electron';
 import { SESSION_ACTIVITY_CHANNEL } from '@cindy/device-link';
 import type { AgentEvent, InteractionRequest } from '@cindy/maker-core';
@@ -7092,6 +7092,11 @@ describe('会话关闭原因决定条目去留', () => {
 });
 
 describe('Agent Island device sessions', () => {
+  // 有的用例会按 id 把静音索引指到某个任务；失败时也要还原，避免污染后面的用例。
+  afterEach(() => {
+    mocks.isSessionNotificationsMutedSync.mockReturnValue(false);
+  });
+
   function deviceSession(
     phase: 'running' | 'needs-interaction' | 'completed' | 'error',
     sessionId = 'remote-1',
@@ -7135,6 +7140,27 @@ describe('Agent Island device sessions', () => {
       SESSION_ACTIVITY_CHANNEL,
       expect.objectContaining({ sessionId: 'remote-1' }),
     );
+  });
+
+  it('本机同 id 任务被静音时不吞掉其它设备投影来的任务', async () => {
+    const { AgentIslandService } = await import('../service.js');
+    const published: AgentIslandDisplayState[] = [];
+    const publish = vi.fn((display: AgentIslandDisplayState) => {
+      published.push(display);
+      return true;
+    });
+    const service = new AgentIslandService({
+      getMainWindow: () => null,
+      nativeHost: { failed: false, publish, playSound: () => true },
+    });
+    syncEnabledForTest(service, publish);
+
+    // 还原/复制过的库里可能留着同 id 的本地任务行；那一行的静音标记属于另一条任务，
+    // 不能压掉其它设备发来的卡片与提示音。
+    mocks.isSessionNotificationsMutedSync.mockImplementation((id: string) => id === 'remote-1');
+    service.setDeviceSessions([deviceSession('needs-interaction')]);
+
+    expect(published.at(-1)?.sessions.map((session) => session.sessionId)).toEqual(['remote-1']);
   });
 
   it('keeps first-seen remote tasks silent when they arrive before the island setting syncs', async () => {

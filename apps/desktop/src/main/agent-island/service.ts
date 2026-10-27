@@ -2002,11 +2002,13 @@ export class AgentIslandService {
    * 切换、索引重载、直接改库都能自愈，不靠某一条写库路径记得来登记。
    */
   private syncDisplaySuppression(): void {
-    for (const sessionId of this.state.sessions.keys()) {
+    for (const [sessionId, session] of this.state.sessions) {
+      // 静音标记属于本机那行任务：其它设备投影进来的条目（sourceDeviceId 非空）可能与它
+      // 同 id（还原/复制过的库），不能拿本机标记去压远端的卡片与提示音。
       setAgentIslandSessionDisplaySuppressed(
         this.state,
         sessionId,
-        isSessionNotificationsMutedSync(sessionId),
+        session.sourceDeviceId === null && isSessionNotificationsMutedSync(sessionId),
       );
     }
   }

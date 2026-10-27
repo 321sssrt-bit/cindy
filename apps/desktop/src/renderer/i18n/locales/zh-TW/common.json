@@ -13397,6 +13397,14 @@
         "description": "將恢復此對話群組內 {{count}} 個已歸檔任務。恢復後將從「已歸檔」列表移除，並回到「活躍」列表。",
         "empty": "此對話群組內沒有可恢復的任務"
       },
+      "automationArchiveAll": {
+        "description": "將歸檔此自動化產生的 {{count}} 個任務。自動化仍會按排程執行。",
+        "descriptionWithSkip": "將歸檔此自動化產生的 {{count}} 個任務，略過{{skip}}的任務。自動化仍會按排程執行。",
+        "allPinnedOrRunning": "此自動化的任務全部已置頂或正在執行，無可歸檔項目",
+        "allPinned": "此自動化的任務全部已置頂，不會歸檔",
+        "allRunning": "此自動化的任務全部正在執行，暫無可歸檔項目",
+        "empty": "此自動化沒有可歸檔的任務"
+      },
       "archiveAll": {
         "title": "歸檔全部任務",
         "confirm": "歸檔全部",
@@ -13406,6 +13414,7 @@
         "skipRunning": "{{count}} 個執行中",
         "skipPinned": "{{count}} 個已置頂",
         "skipSeparator": "、",
+        "skipped": "已略過{{skip}}的任務",
         "archived_one": "已歸檔 {{count}} 個任務",
         "archived_other": "已歸檔 {{count}} 個任務",
         "partialFailure": "已歸檔 {{ok}} 個，{{fail}} 個失敗，請重試",

@@ -13397,6 +13397,14 @@
         "description": "이 대화 그룹의 보관된 세션 {{count}}개를 복원합니다. 복원 후 '보관됨' 목록에서 '활성' 목록으로 이동합니다.",
         "empty": "이 대화 그룹에 복원할 수 있는 세션이 없습니다"
       },
+      "automationArchiveAll": {
+        "description": "이 자동화가 만든 세션 {{count}}개를 보관합니다. 자동화는 계속 예정대로 실행됩니다.",
+        "descriptionWithSkip": "이 자동화가 만든 세션 {{count}}개를 보관하며, {{skip}} 세션은 건너뜁니다. 자동화는 계속 예정대로 실행됩니다.",
+        "allPinnedOrRunning": "이 자동화의 세션이 모두 고정되었거나 실행 중이므로 보관할 항목이 없습니다",
+        "allPinned": "이 자동화의 세션이 모두 고정되어 있어 보관하지 않습니다",
+        "allRunning": "이 자동화의 세션이 모두 실행 중이므로 지금은 보관할 항목이 없습니다",
+        "empty": "이 자동화에는 보관할 세션이 없습니다"
+      },
       "archiveAll": {
         "title": "모든 세션 보관",
         "confirm": "모두 보관",
@@ -13406,6 +13414,7 @@
         "skipRunning": "{{count}}개 실행 중",
         "skipPinned": "{{count}}개 고정됨",
         "skipSeparator": ", ",
+        "skipped": "{{skip}} 세션을 건너뛰었습니다",
         "archived_one": "{{count}}개 세션을 보관했습니다",
         "archived_other": "{{count}}개 세션을 보관했습니다",
         "partialFailure": "{{ok}}개 보관, {{fail}}개 실패. 다시 시도하세요",

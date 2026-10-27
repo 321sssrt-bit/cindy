@@ -13451,6 +13451,14 @@
         "description": "Restore {{count}} archived sessions in this chat group? They will move from Archived to Active.",
         "empty": "No archived sessions in this chat group can be restored"
       },
+      "automationArchiveAll": {
+        "description": "Archive {{count}} sessions created by this automation. The automation will continue to run as scheduled.",
+        "descriptionWithSkip": "Archive {{count}} sessions created by this automation, skipping {{skip}} sessions. The automation will continue to run as scheduled.",
+        "allPinnedOrRunning": "All sessions from this automation are pinned or running. Nothing to archive.",
+        "allPinned": "All sessions from this automation are pinned. Nothing to archive.",
+        "allRunning": "All sessions from this automation are running. Nothing to archive yet.",
+        "empty": "This automation has no sessions to archive."
+      },
       "archiveAll": {
         "title": "Archive all sessions",
         "confirm": "Archive all",
@@ -13460,6 +13468,7 @@
         "skipRunning": "{{count}} running",
         "skipPinned": "{{count}} pinned",
         "skipSeparator": ", ",
+        "skipped": "Skipped {{skip}} sessions",
         "archived_one": "Archived {{count}} session",
         "archived_other": "Archived {{count}} sessions",
         "partialFailure": "Archived {{ok}}, {{fail}} failed, please retry",

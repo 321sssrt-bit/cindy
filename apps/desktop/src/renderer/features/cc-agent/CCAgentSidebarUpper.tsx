@@ -991,8 +991,8 @@ function ExpandedView({
     };
   }, []);
 
-  const handleScheduleAction = useCallback(
-    async (group: AutomationSessionGroup, action: AutomationScheduleAction) => {
+  const handleAutomationScheduleAction = useCallback(
+    async (group: AutomationSessionGroup, action: Exclude<AutomationScheduleAction, 'archive-all'>) => {
       // 远程分组的操作发到任务所属电脑执行；本机分组仍走本机 IPC。
       const deviceId = group.deviceLinkDeviceId;
       const invokeSchedule = <T,>(channel: string, localCall: () => Promise<T>, id: string) =>
@@ -3593,6 +3593,14 @@ function ExpandedView({
     viewedSessionId,
     navigate,
   });
+
+  const handleScheduleAction = useCallback(
+    (group: AutomationSessionGroup, action: AutomationScheduleAction) =>
+      action === 'archive-all'
+        ? archiveSessionGroup({ kind: 'automation', group, scheduleSessionIndex })
+        : handleAutomationScheduleAction(group, action),
+    [archiveSessionGroup, handleAutomationScheduleAction, scheduleSessionIndex],
+  );
   const handleArchiveAllInProject = useCallback(
     (project: ProjectNode) => archiveSessionGroup({ kind: 'project', project }),
     [archiveSessionGroup],

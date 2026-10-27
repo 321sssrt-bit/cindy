@@ -198,7 +198,7 @@ describe('collab send outcome semantics', () => {
   // Unit: exercise the real provider callback with the existing media importer
   // as its boundary. Missing sent-image previews and stale-task publication were
   // not covered by the channel transport tests.
-  it.each(['ready', 'unavailable', 'non-image', 'remote'] as const)('prepares outbound chat images with task ownership: %s', async (state) => {
+  it.each(['ready', 'unavailable', 'non-image', 'unsupported-image', 'remote'] as const)('prepares outbound chat images with task ownership: %s', async (state) => {
     mockState.publishImage.mockReset().mockResolvedValue(state === 'unavailable'
       ? { ok: false, errorCode: 'MEDIA_PUBLISH_FAILED' }
       : { ok: true, url: `cindy-media://blobs/${'a'.repeat(64)}.png` });
@@ -206,16 +206,20 @@ describe('collab send outcome semantics', () => {
     createDesktopMcpProviders({
       botCapabilities, getMakerMemoryManager: vi.fn(), lspPool: {} as never,
       pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
-      invokeRemote: vi.fn(), getLiveSessionGrantState: () => live ? {} as never : null,
+      invokeRemote: vi.fn(), getLiveSessionGrantState: () => ({
+        permissionMode: 'auto', remoteHostId: null, isCurrent: () => live,
+      }),
     });
     const prepare = mockState.capturedProvidersConfig!.prepareOutboundImage as NonNullable<CreateLiziMcpProvidersOptions['prepareOutboundImage']>;
-    const source = path.join(path.sep, 'task', state === 'non-image' ? 'report.pdf' : 'photo.png');
+    const source = path.join(path.sep, 'task', state === 'non-image' ? 'report.pdf'
+      : state === 'unsupported-image' ? 'photo.BMP' : 'photo.png');
     const prepared = await prepare(source, { agentKind: 'codex', workingDir: path.dirname(source),
       sessionId: 'image-task', sessionInstanceId: 'runtime', ...(state === 'remote' ? { remoteHostId: 'ssh-host' } : {}) });
-    if (state === 'non-image' || state === 'remote') {
+    if (state === 'non-image' || state === 'remote' || state === 'unsupported-image') {
       expect(mockState.publishImage).not.toHaveBeenCalled();
       expect(prepared.path).toBe(source);
       expect(prepared.url).toBeUndefined();
+      if (state === 'unsupported-image') expect(prepared.errorCode).toBe('IMAGE_PREVIEW_UNSUPPORTED');
       return;
     }
     expect(mockState.publishImage).toHaveBeenCalledWith(source,
@@ -227,6 +231,30 @@ describe('collab send outcome semantics', () => {
     } else expect(prepared).toMatchObject({ path: source, errorCode: 'MEDIA_PUBLISH_FAILED' });
     prepared.assertCurrent!();
     live = false;
+    expect(prepared.assertCurrent).toThrow('SESSION_SCOPE_CHANGED');
+  });
+
+  // The live authority API returns a fresh snapshot on every call. Reacquiring
+  // one after I/O would silently authorize a new permission/Plan generation.
+  it('pins the permission generation before image preparation first yields', async () => {
+    let generation = 0;
+    mockState.publishImage.mockReset().mockResolvedValue({ ok: false, errorCode: 'PERMISSION_DENIED' });
+    createDesktopMcpProviders({
+      botCapabilities, getMakerMemoryManager: vi.fn(), lspPool: {} as never,
+      pluginRegistry: { isEnabled: () => true, getPlugins: () => [] } as never,
+      invokeRemote: vi.fn(), getLiveSessionGrantState: () => {
+        const captured = generation;
+        return { permissionMode: 'auto', remoteHostId: null, isCurrent: () => captured === generation };
+      },
+    });
+    const prepare = mockState.capturedProvidersConfig!.prepareOutboundImage as NonNullable<CreateLiziMcpProvidersOptions['prepareOutboundImage']>;
+    const preparing = prepare(path.join(path.sep, 'task', 'photo.png'), {
+      agentKind: 'codex', workingDir: path.join(path.sep, 'task'),
+      sessionId: 'image-task', sessionInstanceId: 'runtime',
+    });
+    generation++;
+    const prepared = await preparing;
+    expect(mockState.publishImage.mock.calls[0]![2].isCurrent()).toBe(false);
     expect(prepared.assertCurrent).toThrow('SESSION_SCOPE_CHANGED');
   });
 

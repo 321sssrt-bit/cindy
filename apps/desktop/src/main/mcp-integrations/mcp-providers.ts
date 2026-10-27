@@ -338,9 +338,14 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
   const prepareOutboundImage = async (sourcePath: string, context: LiziMcpSessionContext): Promise<PreparedOutboundImage> => {
     const owner = getActiveAppSession();
     const scope = readChannelToolScope(context);
-    const { mimeForExt, resolveSafe } = await import('../cindy-media/blobStore.js');
-    if (!mimeForExt(extname(sourcePath).toLowerCase())?.startsWith('image/')) return { path: sourcePath };
     const { sessionId, sessionInstanceId, workingDir } = context;
+    // Keep the original permission/Plan generation across all preparation I/O.
+    const grant = sessionId && sessionInstanceId
+      ? deps.getLiveSessionGrantState?.(sessionId, sessionInstanceId) : null;
+    const { mimeForExt, resolveSafe } = await import('../cindy-media/blobStore.js');
+    const ext = extname(sourcePath).toLowerCase();
+    const supportedImage = mimeForExt(ext)?.startsWith('image/');
+    if (!supportedImage && ext !== '.bmp') return { path: sourcePath };
     if (!sessionId || !sessionInstanceId || !workingDir || context.remoteHostId) {
       return { path: sourcePath, errorCode: 'IMAGE_PREVIEW_UNAVAILABLE' };
     }
@@ -348,10 +353,11 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
       const current = getActiveAppSession();
       return !isAppSessionBoundaryPending()
         && current.dataOwnerId === owner.dataOwnerId && current.generation === owner.generation
-        && !!deps.getLiveSessionGrantState?.(sessionId, sessionInstanceId)
+        && !!grant && grant.isCurrent?.() !== false
         && (!scope || readChannelToolScope(context) === scope);
     };
     const assertCurrent = () => { if (!isCurrent()) throw new Error('SESSION_SCOPE_CHANGED'); };
+    if (!supportedImage) return { path: sourcePath, errorCode: 'IMAGE_PREVIEW_UNSUPPORTED', assertCurrent };
     try {
       const { publishImage } = await import('../cindy-media/publishImage.js');
       const image = await publishImage(sourcePath, { sessionId, workingDir }, {

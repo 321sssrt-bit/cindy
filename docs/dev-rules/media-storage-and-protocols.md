@@ -284,6 +284,9 @@
   个人 IM 与官方 hook 的工具媒体收集器跳过自动转发，该标记不影响聊天展示。
   `sendFileWithImagePreview` 为具名发送工具提供共用适配；已接飞书／Lark 的 `send_file`、
   `send_file_to_user`，微信 `send_file_to_user`，Telegram `send_media` 的本地 `photo`。
+  预览沿用媒体仓支持的 PNG / JPEG / GIF / WebP；渠道可发但媒体仓尚不支持的 BMP
+  仍按原渠道发送，并返回 `imagePreviewError: IMAGE_PREVIEW_UNSUPPORTED`，不静默当作普通文件。
+  权限／Plan 的当前性判据在首次异步操作前捕获，入仓与发送前均校验同一代次。
   普通文件、Telegram URL / file_id 与任意底层 `call_api` 保持既有行为，不推测媒体字节。
   新字段为可选返回字段，旧工具和未注入宿主回调的调用保持原样，旧客户端仍识别既有图片字段。
   预览准备失败不把渠道发送成功改报失败：结果保留真实回执并附 `imagePreviewError`；渠道发送

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import {
@@ -21,7 +21,9 @@ import {
   accessibilityLabel,
   buttonStyle,
   contentShape,
+  deleteDisabled,
   disabled,
+  environment,
   font,
   foregroundStyle,
   frame,
@@ -247,6 +249,10 @@ function TagForm({ state }: { state: TaskTagsExpandedState }) {
 /** SwiftUI rendering of the expanded tag pages: list, add / edit, delete confirmation. */
 export function NativeTaskTagsExpanded({ state }: { state: TaskTagsExpandedState }) {
   const { t } = useTranslation();
+  const [sorting, setSorting] = useState(false);
+  useEffect(() => {
+    if (state.page !== 'list') setSorting(false);
+  }, [state.page]);
   // The failure text arrives asynchronously and focus does not move to it, so a footer
   // alone is silent in VoiceOver; the React Native panel exposed it as an alert.
   useEffect(() => {
@@ -270,42 +276,64 @@ export function NativeTaskTagsExpanded({ state }: { state: TaskTagsExpandedState
   if (state.page === 'add' || state.page === 'edit') return <TagForm state={state} />;
   return (
     <>
+      {!state.loading && (sorting || state.tags.length > 1) ? (
+        <Section>
+          <ComposerNativeRow
+            title={t(sorting ? 'taskTags.reorderDone' : 'taskTags.reorder')}
+            disabled={state.disabled}
+            onPress={() => setSorting((value) => !value)}
+            testID="taskTags.reorder"
+          />
+        </Section>
+      ) : null}
       {state.loading ? (
         <Section>
           <ProgressView />
         </Section>
       ) : state.tags.length ? (
-        <Section footer={<Note text={t('taskTags.reorderFooter')} />}>
-          <List.ForEach
-            onMove={(sources, destination) => {
-              const from = sources[0];
-              if (from === undefined) return;
-              state.onMove(from, taskTagMoveTarget(from, destination));
-            }}
+        <Group modifiers={[environment('editMode', sorting ? 'active' : 'inactive')]}>
+          <Section
+            footer={
+              state.tags.length > 1 ? (
+                <Note text={t(sorting ? 'taskTags.reorderHint' : 'taskTags.reorderFooter')} />
+              ) : undefined
+            }
           >
-            {state.tags.map((tag) => (
-              <Group key={tag.id} modifiers={[moveDisabled(state.disabled)]}>
-                <ComposerNativeRow
-                  leading={<NativeTagSwatch {...tag} selected={false} size={TAG_SWATCH.row} />}
-                  title={tag.name}
-                  selected={tag.selected}
-                  disabled={state.disabled}
-                  onPress={() => state.onToggle(tag.id)}
-                  onOptions={() => state.onEdit(tag.id)}
-                  optionsIcon={<Image size={iconSize.lg} systemName="pencil" />}
-                  optionsLabel={t('taskTags.editLabel', { name: tag.name })}
-                  testID={`taskTags.tag.${tag.id}`}
-                />
-              </Group>
-            ))}
-          </List.ForEach>
-        </Section>
+            <List.ForEach
+              onMove={(sources, destination) => {
+                if (!sorting || state.disabled) return;
+                const from = sources[0];
+                if (from === undefined) return;
+                state.onMove(from, taskTagMoveTarget(from, destination));
+              }}
+            >
+              {state.tags.map((tag) => (
+                <Group
+                  key={tag.id}
+                  modifiers={[deleteDisabled(true), moveDisabled(state.disabled || !sorting)]}
+                >
+                  <ComposerNativeRow
+                    leading={<NativeTagSwatch {...tag} selected={false} size={TAG_SWATCH.row} />}
+                    title={tag.name}
+                    selected={tag.selected}
+                    disabled={state.disabled || sorting}
+                    onPress={() => state.onToggle(tag.id)}
+                    onOptions={sorting ? undefined : () => state.onEdit(tag.id)}
+                    optionsIcon={<Image size={iconSize.lg} systemName="pencil" />}
+                    optionsLabel={t('taskTags.editLabel', { name: tag.name })}
+                    testID={`taskTags.tag.${tag.id}`}
+                  />
+                </Group>
+              ))}
+            </List.ForEach>
+          </Section>
+        </Group>
       ) : !state.message ? (
         <Section>
           <Note text={t('taskTags.empty')} />
         </Section>
       ) : null}
-      {state.canAdd ? (
+      {state.canAdd && !sorting ? (
         <Section>
           <ComposerNativeRow
             leading={<Image size={iconSize.lg} systemName="plus" />}

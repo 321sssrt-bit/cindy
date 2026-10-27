@@ -3670,3 +3670,25 @@ worker 的任务，按最近更新取前 200 条；伙伴行 `revision` 追加�
 旧控制端按未知 rel 忽略，`conversation` 仍是第一条链接，打开聊天不变；新控制端连接旧 Host
 时没有该链接，任务行不显示标记。Mobile 读取的链接上限由 64 放宽到 256 以容纳这组链接。
 不增加 IPC channel、请求参数、数据库字段、push 类型或 Mobile 原生配置。
+
+## macOS 原生触控板输入
+
+本机聚焦的浏览器／插件页可在顶层 HTML 声明
+`<meta name="cindy-native-trackpad" content="touch">`，并用 `data-cindy-trackpad`
+标记接收触摸的平面元素。宿主将 AppKit 的两指位置映射为该元素的浏览器触摸事件；
+鼠标位置是落指中心，两轴按触控板物理比例等比映射，按原始抬指／取消结束。
+映射使用画面长边作为统一距离基准，避免竖屏窄边压缩平移；落指间距与后续位移
+使用同一比例，未裁切时保持缩放比例、旋转角度和静止手指的位置，不单独加速双指中心。
+触点在元素边缘停止，越界位移不累计；反向移动立即响应，不要求先退回越界距离。
+不新增 preload、renderer IPC 或远程请求；插件沙箱仍为零桥，归属与聚焦检查沿用宿主。
+后台窗口、第三指、页面导航、失焦会取消触摸；原生模块不可用或已有调试会话时保留原输入。
+旧宿主忽略 meta／属性，继续 wheel 兼容路径；手机、Windows、Linux 不接收本机 AppKit 数据。
+AppKit 鼠标位置固定使用窗口内容坐标；嵌入侧栏须先扣除宿主内对应 webview 的位置，
+并分别处理宿主与 guest 缩放，再在 guest 内命中检测。独立窗口没有这个偏移，
+不能单独替代开发版实际侧栏的输入验收。
+
+`data-cindy-trackpad="contacts"` 可选整帧输入：元素收到 `cindy-trackpad` DOM
+事件，`detail={phase,touches:[{id,x,y}]}`；坐标相对该元素所属 frame 的 viewport，
+phase 为 begin/change/end/cancel，touches 是仍按下的全部触点。整帧原子投递，避免
+Chromium 把双指拆成单指前奏及等待触摸 ACK。空属性仍投递标准 Touch/Pointer 事件；
+旧宿主按旧路径工作，插件仍保留标准触摸处理。只有宿主向页面投递数据，没有反向特权桥。

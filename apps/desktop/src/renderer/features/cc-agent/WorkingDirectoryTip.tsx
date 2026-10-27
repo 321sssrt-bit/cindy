@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 
 import { Tip } from '@/components/ui/tooltip';
 import { useDeviceLinkDeviceList } from '@/features/device-link/useDeviceLinkDeviceList';
+import { deviceDisplayName } from '@/lib/deviceName';
 
 interface Props {
   path: string | null | undefined;
@@ -15,7 +16,11 @@ export function WorkingDirectoryTip({ path, deviceId, deviceName, remoteHostId, 
   const devices = useDeviceLinkDeviceList();
   // The directory belongs to the task's computer, even if its Agent runs elsewhere.
   const directoryDeviceName = deviceId
-    ? devices?.find((device) => device.deviceId === deviceId)?.name || deviceName || deviceId
+    ? deviceDisplayName(
+        deviceId,
+        devices?.find((device) => device.deviceId === deviceId)?.name || deviceName,
+        devices ?? [],
+      )
     : null;
 
   return (

@@ -148,6 +148,12 @@ export default {
       assert.ok(text.includes('图片说明保留') && text.includes('图片标题保留'));
       assert.ok(text.includes('🖼'), 'an undescribed image has a neutral placeholder');
       assert.ok(!text.includes('cindy-media://') && !text.includes('/private/tmp/fixture-image.png'));
+      for (const kind of ['image', 'video', 'audio']) {
+        const url = `https://example.test/public-${kind}`;
+        const link = timeline.getByRole('link', { name: url, exact: true });
+        assert.equal(await link.count(), 1, 'public media keep an actionable web link');
+        assert.equal(await link.getAttribute('href'), url);
+      }
       return;
     }
     const input = page.locator('textarea');

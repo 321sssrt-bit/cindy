@@ -833,6 +833,7 @@ export function MyPluginsPage({
             <h3 className="text-13 font-medium leading-5 text-[var(--text-secondary)]">{t(`${copy}.releaseNotes`)}</h3>
             <p className="select-text whitespace-pre-wrap break-words text-14 leading-6 text-[var(--text-primary)]">{currentUpdateDraft.prepared.releaseNotes}</p>
           </> : null}
+          {!updateBlocker && currentUpdateDraft.prepared.preflight?.actions.canSubmit ? <p className="text-13 leading-5 text-[var(--text-secondary)]">{t(`${copy}.versionConsumedHint`)}</p> : null}
           {updateBlocker ? <p role="status" className="text-13 leading-5 text-[var(--text-secondary)]">{t(`${copy}.errors.${updateBlocker.code}`, { defaultValue: t(`${copy}.errors.PRECONDITION_FAILED`) })}</p> : null}
         </> : <p role={currentUpdateDraft?.error ? 'alert' : 'status'} className="text-13 leading-5 text-[var(--text-secondary)]">{t(currentUpdateDraft?.error ?? `${copy}.preparing`)}</p> : null}
       </section>

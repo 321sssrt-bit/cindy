@@ -2,7 +2,7 @@
  * worktree-parallel-sessions: git CLI 包装。
  *
  * 职责:
- *   - 用 child_process.execFile 调用 git, 保留 stderr/stdout/exitCode
+ *   - POSIX 用 detached spawn、Windows 用 execFile 调用 git，保留 stderr/stdout/exitCode
  *   - 自动处理 dubious-ownership: 若 stderr 含 "dubious ownership", 提取路径,
  *     幂等地 `git config --global --add safe.directory <path>`(已存在则不重复添加),
  *     重试**一次**原命令
@@ -12,7 +12,7 @@
  * 这里只把 raw stderr/code/cause 暴露出去。
  */
 
-import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process';
+import { execFile, spawn, type ChildProcess, type ExecFileOptions } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { assertGitDirectoryReady, currentOperationBudget, quarantineGitDirectory } from '../utils/operationBudget';
@@ -225,6 +225,44 @@ function pidMayBeAliveForGit(pid: number): boolean {
   }
 }
 
+/** execFile drops detached; POSIX must use spawn to actually own a process group. */
+function execDetachedGit(
+  file: string,
+  args: string[],
+  options: ExecFileOptions,
+  callback: (error: NodeJS.ErrnoException | null, stdout: string, stderr: string) => void,
+): ChildProcess {
+  const child = spawn(file, args, { cwd: options.cwd, env: options.env, detached: true });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  let done = false;
+  const finish = (error: NodeJS.ErrnoException | null) => {
+    if (done) return;
+    done = true;
+    callback(error, Buffer.concat(stdout).toString('utf8'), Buffer.concat(stderr).toString('utf8'));
+  };
+  for (const [stream, chunks] of [[child.stdout, stdout], [child.stderr, stderr]] as const) {
+    let size = 0;
+    stream?.on('data', (chunk: Buffer) => {
+      if (done) return;
+      size += chunk.length;
+      if (size > (options.maxBuffer ?? 16 * 1024 * 1024)) {
+        finish(Object.assign(new Error('Git output exceeded maxBuffer'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+  }
+  child.once('error', finish);
+  child.once('close', (code, signal) => {
+    finish(code === 0 && signal === null ? null : Object.assign(
+      new Error(`Git exited with ${signal ?? code}`),
+      { code, signal },
+    ) as unknown as NodeJS.ErrnoException);
+  });
+  return child;
+}
+
 /**
  * 执行一次 git, 不做 dubious-ownership 自动重试(底层用)。
  */
@@ -266,8 +304,7 @@ function execFileOnce(
       fn();
     };
 
-    // ExecFileOptions 类型没收录 detached,但 execFile 运行时把 options 原样传给
-    // spawn,detached 照常生效——用交叉类型补上缺口。
+    // POSIX uses spawn through execDetachedGit; execFile does not forward detached.
     const spawnOptions: ExecFileOptions & { detached: boolean } = {
       cwd,
       // 防止超大输出炸内存。listBranches/listFiles 这类正常情况远低于此。
@@ -293,7 +330,7 @@ function execFileOnce(
 
     let child: ChildProcess;
     try {
-      child = execFile(
+      child = (process.platform === 'win32' ? execFile : execDetachedGit)(
         'git',
         [...args],
         spawnOptions,
@@ -331,8 +368,8 @@ function execFileOnce(
             //   - typeof (err as any).code === 'number' → 子进程退出码
             const numericCode = (err as unknown as { code?: unknown }).code;
             const exitCode = typeof numericCode === 'number' ? numericCode : null;
-            if (opts?.signal && errno.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-              stdioReleased = true;
+            if (errno.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+              stdioReleased = process.platform === 'win32';
               // execFile only kills the immediate child on overflow.
               queueMicrotask(() => startTreeCleanup((treeConfirmedGone) => new GitExecError({
                 args, exitCode, stderr: stderrStr, stdout: '', cause: errno,

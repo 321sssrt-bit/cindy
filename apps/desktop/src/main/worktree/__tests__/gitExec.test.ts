@@ -15,11 +15,12 @@ type ExecCb = (err: Error | null, stdout: string, stderr: string) => void;
 
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
   killProcessTree: vi.fn(),
   withCrossProcessLock: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => ({ execFile: mocks.execFile }));
+vi.mock('node:child_process', () => ({ execFile: mocks.execFile, spawn: mocks.spawn }));
 vi.mock('../../scheduler-host/proc-util', () => ({ killProcessTree: mocks.killProcessTree }));
 vi.mock('../../device-link/crossProcessLock', () => ({
   withCrossProcessLock: mocks.withCrossProcessLock,
@@ -164,6 +165,18 @@ async function flushMicrotasks() {
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.execFile.mockReset();
+  // Drive the same lifecycle fixtures through spawn's actual stream/close API.
+  mocks.spawn.mockReset().mockImplementation((file, args, opts) => {
+    const child = mocks.execFile(file, args, opts, (error: NodeJS.ErrnoException | null, stdout: string, stderr: string) => {
+      if (stdout) child.stdout.emit('data', Buffer.from(stdout));
+      if (stderr) child.stderr.emit('data', Buffer.from(stderr));
+      if (error && typeof error.code !== 'number') child.emit('error', error);
+      else child.emit('close', error?.code ?? 0, null);
+    });
+    child.stdout ??= new EventEmitter();
+    child.stderr ??= new EventEmitter();
+    return child;
+  });
   mocks.killProcessTree.mockReset();
   mocks.withCrossProcessLock.mockReset();
   // 默认按「持锁成功」直通, 让 dubious-ownership 的 read+add 序列可逐步驱动;
@@ -181,6 +194,40 @@ afterEach(() => {
 });
 
 describe('gitExec timeoutMs', () => {
+  // #7351 CI: execFile silently discarded detached. Exercise spawn's actual
+  // boundary and byte streams; the old mock only checked the ignored option.
+  it.each([0, 128])('uses a detached POSIX spawn and preserves UTF-8 output for exit %s', async (code) => {
+    setPlatform('linux');
+    const state = installExecFileMock();
+    const pending = gitExec(['status'], '/repo');
+    expect(mocks.spawn).toHaveBeenCalledWith('git', ['status'], expect.objectContaining({ detached: true }));
+    const bytes = Buffer.from('\u4e2d\u6587');
+    state.child.stdout.emit('data', bytes.subarray(0, 2));
+    state.child.stdout.emit('data', bytes.subarray(2));
+    state.child.stderr.emit('data', Buffer.from('diagnostic'));
+    state.child.emit('close', code, null);
+    const output = { stdout: '\u4e2d\u6587', stderr: 'diagnostic' };
+    if (code === 0) await expect(pending).resolves.toEqual(output);
+    else await expect(pending).rejects.toMatchObject({ ...output, exitCode: code });
+  });
+
+  it.each(['stdout', 'stderr'] as const)('bounds POSIX %s and drains the process group on overflow', async (stream) => {
+    setPlatform('linux');
+    const state = installExecFileMock();
+    const { group } = installProcessKillMock();
+    const pending = gitExec(['status'], '/repo');
+    const observed = probe(pending);
+    state.child[stream].emit('data', Buffer.alloc(16 * 1024 * 1024 + 1));
+    await flushMicrotasks();
+    expect(group.signals).toContain('SIGTERM');
+    expect(observed.settled).toBe(false);
+    group.alive = false;
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(pending).rejects.toMatchObject({
+      cleanupUnconfirmed: false, cause: { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' },
+    });
+  });
+
   // #7259: unit tier. Explicit abort must kill the tree, not only drop its
   // promise; a blocked child is the minimal reproduction. No wall-clock waits.
   it.each(['win32', 'linux'] as const)('abort terminates the %s tree before settling', async (platform) => {

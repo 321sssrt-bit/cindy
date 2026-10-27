@@ -16313,6 +16313,7 @@
     "save": "儲存例行任務",
     "deleteConfirm": "刪除這條例行任務，並取消等待中的執行？",
     "keep": "保留例行任務",
+    "openTask": "查看任務",
     "history": "執行歷史",
     "noRuns": "這條例行任務尚未執行",
     "field": "欄位",
@@ -16344,6 +16345,10 @@
       "not-equals": "不等於"
     },
     "quiet": "檢查沒事不說話",
+    "sessionMode": "執行方式",
+    "sessionModePersistent": "沿用同一任務（保留上下文）",
+    "sessionModeFresh": "每次新建任務（隔離上下文）",
+    "sessionModeHint": "沿用同一任務會在同一個例行任務的對話裡繼續；每次新建會為每次觸發建立一個獨立任務，執行結束後關閉。",
     "quietHint": "僅回報變化或問題。提醒和定時傳送可關閉此項。",
     "checkCommand": "前置檢查命令",
     "checkHint": "選填。在電腦上先檢查：結束代碼 2 跳過本次執行，0 繼續執行，異常仍會回報。清空可移除。",

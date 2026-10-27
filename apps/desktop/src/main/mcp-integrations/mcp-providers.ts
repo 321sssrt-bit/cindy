@@ -1083,7 +1083,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               eq(botSessionLinks.sessionId, callerSessionId),
               eq(sessions.source, 'bot'),
               // The owner's Bot Chat: the main Chat or one of its private-chat topics.
-              inArray(botSessionLinks.role, ['canonical', 'thread']),
+              inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
             ))
             .limit(1);
           if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== scope) {
@@ -1126,7 +1126,7 @@ export function createDesktopMcpProviders(deps: DesktopMcpProvidersDeps): LiziMc
               and(
                 eq(botSessionLinks.sessionId, callerSessionId),
                 eq(sessions.source, 'bot'),
-                inArray(botSessionLinks.role, ['canonical', 'thread']),
+                inArray(botSessionLinks.role, ['canonical', 'thread', 'routine']),
               ),
             )
             .limit(1);

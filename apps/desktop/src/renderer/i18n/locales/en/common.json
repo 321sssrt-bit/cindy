@@ -16369,6 +16369,7 @@
     "save": "Save Routine",
     "deleteConfirm": "Delete this routine and cancel its pending runs?",
     "keep": "Keep Routine",
+    "openTask": "Open Session",
     "history": "Run History",
     "noRuns": "This routine has not run yet.",
     "field": "Field",
@@ -16400,6 +16401,10 @@
       "not-equals": "Does Not Equal"
     },
     "quiet": "Stay quiet when checks find nothing",
+    "sessionMode": "Run session",
+    "sessionModePersistent": "Persistent session (keep context)",
+    "sessionModeFresh": "New session each trigger (isolate context)",
+    "sessionModeHint": "Persistent keeps one routine conversation. New session creates and closes an isolated conversation for each trigger.",
     "quietHint": "Report changes or problems only. Turn off for reminders and scheduled messages.",
     "checkCommand": "Pre-run check command",
     "checkHint": "Optional. Checks on the computer before each run: exit 2 skips the run, exit 0 continues, errors stay visible. Clear to remove.",

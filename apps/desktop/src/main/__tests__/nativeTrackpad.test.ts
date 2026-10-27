@@ -33,6 +33,8 @@ function setup({ optIn = true, occupied = false, iframe = false, contacts = fals
           });
         if (method === 'DOM.getNodeForLocation') return { backendNodeId: 1 };
         if (method === 'DOM.resolveNode') return { object: { objectId: 'node' } };
+        if (method === 'Runtime.callFunctionOn' && _args?.arguments)
+          return { result: { value: true } };
         if (
           method === 'Runtime.callFunctionOn' &&
           String(_args?.functionDeclaration).includes('getAttribute')
@@ -218,8 +220,75 @@ test('maps independent contacts without scale hysteresis, including iframe offse
   h.emit('end', []);
   expect(h.inputs()[4]).toMatchObject({
     type: 'touchEnd',
-    touchPoints: [{ id: 0, x: 170, y: 330 }],
+    touchPoints: [],
   });
+});
+
+// Review regression: a cached contacts element can be replaced without mouse
+// movement or navigation. Its failed delivery must cancel and re-hit-test;
+// existing tests covered navigation, not same-document element replacement.
+test('invalid contacts targets cancel and rearm without requiring another pointer event', async () => {
+  for (const phase of ['begin', 'change']) {
+    const h = setup({ contacts: true });
+    await h.arm();
+    if (phase === 'change') {
+      h.emit('begin');
+      await settle();
+    }
+    const command = h.debug.sendCommand.getMockImplementation()!;
+    let invalid = true;
+    h.debug.sendCommand.mockImplementation(async (method, args, session) => {
+      if (method === 'Runtime.callFunctionOn' && args?.arguments && invalid) {
+        invalid = false;
+        return { result: { value: false } };
+      }
+      return command(method, args, session);
+    });
+    h.emit(phase);
+    await settle();
+    expect(h.native.stop).toHaveBeenCalledWith(1);
+    expect(h.native.start).toHaveBeenCalledTimes(2);
+    expect(h.debug.sendCommand.mock.calls).toContainEqual([
+      'Runtime.callFunctionOn',
+      expect.objectContaining({
+        arguments: expect.arrayContaining([{ value: { phase: 'cancel', touches: [] } }]),
+      }),
+      undefined,
+    ]);
+    const count = h.debug.sendCommand.mock.calls.length;
+    h.emit('change', h.points, 0);
+    expect(h.debug.sendCommand).toHaveBeenCalledTimes(count);
+    h.emit('begin');
+    await settle();
+    expect(h.native.stop).not.toHaveBeenCalledWith(2);
+  }
+});
+
+test('a late invalid-target response cannot cancel a newer capture after blur', async () => {
+  const h = setup({ contacts: true });
+  await h.arm();
+  const command = h.debug.sendCommand.getMockImplementation()!;
+  let resolve!: (value: any) => void;
+  let pending = true;
+  h.debug.sendCommand.mockImplementation(async (method, args, session) => {
+    if (method === 'Runtime.callFunctionOn' && args?.arguments && pending) {
+      pending = false;
+      return new Promise((done) => {
+        resolve = done;
+      });
+    }
+    return command(method, args, session);
+  });
+  h.emit('begin');
+  h.window.emit('blur');
+  await settle();
+  await h.hover();
+  h.emit('begin');
+  await settle();
+  resolve({ result: { value: false } });
+  await settle();
+  expect(h.native.start).toHaveBeenCalledTimes(2);
+  expect(h.native.stop).not.toHaveBeenCalledWith(2);
 });
 
 test('owner revocation cancels active contacts; late frames never cross a navigation', async () => {
@@ -277,6 +346,7 @@ test('atomic contacts preserve the pair and cancel before releasing their frame 
             ],
           },
         },
+        { value: { x: 220, y: 260 } },
       ],
     },
     'child-session',
@@ -292,12 +362,22 @@ test('atomic contacts preserve the pair and cancel before releasing their frame 
           ],
         },
       },
+      { value: { x: 220, y: 260 } },
     ],
   });
   expect(h.inputs()).toEqual([]);
+  const command = h.debug.sendCommand.getMockImplementation()!;
+  let release!: () => void;
+  h.debug.sendCommand.mockImplementation(async (method, args, session) => {
+    if (method === 'Runtime.releaseObject' && args?.objectId === 'surface')
+      return new Promise<void>((done) => {
+        release = done;
+      });
+    return command(method, args, session);
+  });
   h.window.emit('blur');
   expect(packets().at(-1)?.[1]).toMatchObject({
-    arguments: [{ value: { phase: 'cancel', touches: [] } }],
+    arguments: [{ value: { phase: 'cancel', touches: [] } }, { value: { x: 220, y: 260 } }],
   });
   const n = packets().length;
   h.emit('change');
@@ -308,6 +388,10 @@ test('atomic contacts preserve the pair and cancel before releasing their frame 
     { objectId: 'surface' },
     'child-session',
   );
+  expect(h.debug.detach).not.toHaveBeenCalled();
+  release();
+  await settle();
+  expect(h.debug.detach).toHaveBeenCalledOnce();
 });
 
 test('reversing at a screen edge moves immediately without unwinding offscreen distance', async () => {

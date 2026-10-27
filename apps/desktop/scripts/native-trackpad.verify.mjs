@@ -1,7 +1,9 @@
 /** Runtime tier: real Electron input through cross-origin + same-origin iframes.
  * Run with node apps/desktop/scripts/native-trackpad.verify.mjs.
  * The AppKit source is substituted with recorded normalized contacts: this does
- * not claim physical-trackpad verification. No Cindy profile is opened. */
+ * not claim physical-trackpad verification. --headless also substitutes focus
+ * and pointer-entry signals, retaining real renderer/CDP delivery for locked
+ * desktops; it does not verify OS focus. No Cindy profile is opened. */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +32,7 @@ if (!process.versions.electron) {
     });
     const env = { ...process.env };
     env.CINDY_TRACKPAD_VERIFY_CONTACTS = process.argv.includes('--contacts') ? '1' : '0';
+    env.CINDY_TRACKPAD_VERIFY_HEADLESS = process.argv.includes('--headless') ? '1' : '0';
     env.CINDY_TRACKPAD_EXERCISE = process.argv.includes('--exercise') ? '1' : '0';
     delete env.ELECTRON_RUN_AS_NODE;
     execFileSync(
@@ -48,11 +51,13 @@ if (!process.versions.electron) {
   void (async () => {
     const { app, BrowserWindow } = require('electron');
     const temp = process.argv[2];
+    const headless = process.env.CINDY_TRACKPAD_VERIFY_HEADLESS === '1';
     app.setPath('userData', path.join(temp, 'profile'));
     let win, server;
     const deadline = setTimeout(() => app.exit(1), 25000);
     try {
       await app.whenReady();
+      if (headless) console.log('DOM_CDP_ONLY: synthetic focus, pointer entry and AppKit samples');
       const { installNativeTrackpad } = require(path.join(temp, 'input.cjs'));
       const addon = require(path.join(desktop, 'resources/tools/trackpad/cindy-trackpad.node'));
       assert.equal(typeof addon.start, 'function');
@@ -145,10 +150,11 @@ if (!process.versions.electron) {
                 width: r.width,
                 height: r.height,
               };
+            const childBounds = await frame.executeJavaScript(
+              `(()=>[...document.querySelectorAll('iframe')].map(e=>{const r=e.getBoundingClientRect();return {url:e.src,x:r.x,y:r.y};}))()`,
+            );
             for (const child of frame.frames) {
-              const bounds = await frame.executeJavaScript(
-                `(()=>{const e=[...document.querySelectorAll('iframe')].find(e=>e.src===${JSON.stringify(child.url)});if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y};})()`,
-              );
+              const bounds = childBounds.find((entry) => entry.url === child.url);
               if (bounds) {
                 const found = await find(child, { x: offset.x + bounds.x, y: offset.y + bounds.y });
                 if (found) return found;
@@ -277,22 +283,51 @@ if (!process.versions.electron) {
           );
         else
           res.end(`<style>body{margin:0}canvas{position:absolute;left:20px;top:10px;width:400px;height:500px;touch-action:none}</style><canvas data-cindy-trackpad="${process.env.CINDY_TRACKPAD_VERIFY_CONTACTS === '1' ? 'contacts' : ''}"></canvas><script>
-        window.events=[];for(const type of ['touchstart','touchmove','touchend','touchcancel'])document.querySelector('canvas').addEventListener(type,e=>{e.preventDefault();events.push({type,at:Date.now(),touches:[...e.touches].map(t=>({id:t.identifier,x:t.clientX,y:t.clientY}))});},{passive:false});
-        let count=0;document.querySelector('canvas').addEventListener('cindy-trackpad',e=>{
-          const f=e.detail,type=f.phase==='begin'?'touchstart':f.phase==='cancel'?'touchcancel':f.phase==='end'||f.touches.length<count?'touchend':'touchmove';
-          count=f.touches.length;events.push({type,at:Date.now(),touches:f.touches});
-        });
+        window.events=[];let generation=0;
+        window.bindSurface=element=>{
+          element.dataset.generation=String(generation);
+          for(const type of ['touchstart','touchmove','touchend','touchcancel'])element.addEventListener(type,e=>{e.preventDefault();events.push({type,at:Date.now(),target:element.dataset.generation,connected:element.isConnected,touches:[...e.touches].map(t=>({id:t.identifier,x:t.clientX,y:t.clientY}))});},{passive:false});
+          let count=0;element.addEventListener('cindy-trackpad',e=>{
+            const f=e.detail,type=f.phase==='begin'?'touchstart':f.phase==='cancel'?'touchcancel':f.phase==='end'||f.touches.length<count?'touchend':'touchmove';
+            count=f.touches.length;events.push({type,at:Date.now(),target:element.dataset.generation,connected:element.isConnected,touches:f.touches});
+          });
+        };
+        bindSurface(document.querySelector('canvas'));
+        window.replaceSurface=cover=>{
+          const old=[...document.querySelectorAll('canvas')].at(-1),next=old.cloneNode();generation++;bindSurface(next);
+          if(cover)old.after(next);else old.replaceWith(next);
+        };
       </script>`);
       });
       await new Promise((r) => server.listen(0, '127.0.0.1', r));
       win = new BrowserWindow({
+        show: !headless,
         width: 700,
         height: 800,
         webPreferences: { sandbox: true, contextIsolation: true },
       });
       const wc = win.webContents;
+      // Explicit DOM/CDP-only tier for a locked/unavailable desktop. The
+      // production focus guards remain unchanged; this mode substitutes their
+      // inputs, so it is not evidence of OS focus or physical AppKit capture.
+      const fixtureProxy = (target, overrides) =>
+        new Proxy(target, {
+          get(object, key) {
+            if (key in overrides) return overrides[key];
+            const value = Reflect.get(object, key);
+            return typeof value === 'function' ? value.bind(object) : value;
+          },
+        });
+      const inputContents = headless ? fixtureProxy(wc, { isFocused: () => true }) : wc;
+      const inputWindow = headless
+        ? fixtureProxy(win, { isFocused: () => true, isVisible: () => true })
+        : win;
+      const commands = [];
+      let pointerEvents = 0;
+      wc.on('before-mouse-event', () => pointerEvents++);
       const command = wc.debugger.sendCommand.bind(wc.debugger);
       wc.debugger.sendCommand = async (method, ...args) => {
+        commands.push(method);
         try {
           const result = await command(method, ...args);
           if (method === 'Input.dispatchTouchEvent' || method === 'DOM.getBoxModel')
@@ -305,7 +340,7 @@ if (!process.versions.electron) {
       };
       let callback, armed;
       const ready = new Promise((r) => (armed = r));
-      installNativeTrackpad(wc, wc, () => true, {
+      installNativeTrackpad(inputContents, inputContents, () => true, {
         platform: 'darwin',
         load: () => ({
           position: () => ({ x: 270, y: 330 }),
@@ -317,19 +352,39 @@ if (!process.versions.electron) {
           },
           stop: () => {},
         }),
-        window: () => win,
+        window: () => inputWindow,
       });
       await win.loadURL(`http://localhost:${server.address().port}/outer`);
       await wc.capturePage(); // Wait for the nested frame's first compositor frame.
-      win.show();
-      win.focus();
-      wc.focus();
-      for (let i = 0; i < 100 && !callback; i++) {
+      if (!headless) {
+        app.focus({ steal: true });
+        win.show();
         win.focus();
         wc.focus();
-        wc.sendInputEvent({ type: 'mouseMove', x: 270, y: 330 });
+      }
+      for (let i = 0; i < 100 && !callback; i++) {
+        if (headless) wc.emit('before-mouse-event', {}, { type: 'mouseMove', x: 270, y: 330 });
+        else {
+          win.focus();
+          wc.focus();
+          wc.sendInputEvent({ type: 'mouseMove', x: 270, y: 330 });
+        }
         await new Promise((r) => setTimeout(r, 10));
       }
+      if (!callback)
+        console.log(
+          'ARM_FAILURE',
+          JSON.stringify({
+            windowFocus: win.isFocused(),
+            guestFocus: wc.isFocused(),
+            visible: win.isVisible(),
+            pointerEvents,
+            commands,
+            optIn: await wc.executeJavaScript(
+              'document.querySelector("meta[name=cindy-native-trackpad]")?.content',
+            ),
+          }),
+        );
       assert(callback, 'Native surface not armed after focus/DOM readiness');
       await ready;
       const frame = wc.mainFrame.frames[0].frames[0];
@@ -402,15 +457,73 @@ if (!process.versions.electron) {
         assert.equal(latency.length, 120);
       }
       emit('change', [points[0]]);
-      await until((e) => e.some((v) => v.type === 'touchend' && v.touches.length === 1));
+      const lifted = await until((e) =>
+        e.some((v) => v.type === 'touchend' && v.touches.length === 1),
+      );
+      assert.equal(lifted.findLast((v) => v.type === 'touchend').touches[0].id, start[0].id);
       emit('end', []);
       await until((e) => e.some((v) => v.type === 'touchend' && v.touches.length === 0));
+      if (process.env.CINDY_TRACKPAD_VERIFY_CONTACTS === '1') {
+        // React can replace a surface without navigation or pointer movement.
+        // The old delivery must cancel, release its object and re-hit-test.
+        const previous = callback;
+        await frame.executeJavaScript('replaceSurface(false)');
+        emit('begin', points);
+        for (let i = 0; i < 100 && callback === previous; i++)
+          await new Promise((r) => setTimeout(r, 10));
+        assert.notEqual(callback, previous, 'Disconnected contacts surface did not rearm');
+      }
       emit('begin', points);
       await until(
         (e) => e.filter((v) => v.type === 'touchstart' && v.touches.length === 2).length === 2,
       );
+      if (process.env.CINDY_TRACKPAD_VERIFY_CONTACTS === '1') {
+        let previous = callback;
+        emit('end', []);
+        await until((e) => e.at(-1)?.type === 'touchend' && e.at(-1).touches.length === 0);
+        await frame.executeJavaScript('replaceSurface(true)');
+        emit('begin', points);
+        for (let i = 0; i < 100 && callback === previous; i++)
+          await new Promise((r) => setTimeout(r, 10));
+        assert.notEqual(callback, previous, 'Covered contacts surface did not rearm');
+        emit('begin', points);
+        await until((e) => e.at(-1)?.type === 'touchstart' && e.at(-1).target === '2');
+        previous = callback;
+        await frame.executeJavaScript('replaceSurface(false)');
+        emit('change', points);
+        for (let i = 0; i < 100 && callback === previous; i++)
+          await new Promise((r) => setTimeout(r, 10));
+        assert.notEqual(callback, previous, 'Mid-gesture replacement did not rearm');
+        emit('begin', points);
+        const rebound = await until(
+          (e) => e.at(-1)?.type === 'touchstart' && e.at(-1).target === '3',
+        );
+        assert(rebound.some((e) => e.type === 'touchcancel' && e.connected === false));
+        console.log(
+          'PASS: disconnected, covered and mid-gesture replaced contacts rearm without pointer movement',
+        );
+        emit('end', []);
+        await until((e) => e.at(-1)?.type === 'touchend' && e.at(-1).touches.length === 0);
+        await frame.executeJavaScript(`(()=>{
+          const canvas=[...document.querySelectorAll('canvas')].at(-1),host=document.createElement('div');
+          host.style.display='contents';canvas.style.cssText='position:absolute;left:20px;top:10px;width:400px;height:500px;touch-action:none';
+          canvas.replaceWith(host);host.attachShadow({mode:'closed'}).append(canvas);
+        })()`);
+        previous = callback;
+        emit('begin', points);
+        await until((e) => e.at(-1)?.type === 'touchstart' && e.at(-1).target === '3');
+        assert.equal(callback, previous, 'A valid shadow-root surface must not be rejected');
+        console.log('PASS: begin hit testing preserves a valid closed-shadow-root surface');
+      }
       win.emit('blur');
-      await until((e) => e.some((v) => v.type === 'touchcancel'));
+      await until((e) => e.at(-1)?.type === 'touchcancel');
+      for (let i = 0; i < 100 && wc.debugger.isAttached(); i++)
+        await new Promise((r) => setTimeout(r, 10));
+      assert.equal(
+        wc.debugger.isAttached(),
+        false,
+        'Cleanup must release its object before detaching',
+      );
       console.log(
         'PASS: native addon loads; nested iframe mapping, stationary finger, independent motion, liftoff and blur cancellation',
       );

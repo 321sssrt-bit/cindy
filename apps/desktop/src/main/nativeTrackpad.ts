@@ -25,9 +25,15 @@ interface Contact extends Point {
 }
 // One native sample stays one DOM event. Chromium's touch injection otherwise
 // splits the initial pair into 1/2 contacts and delays moves until input ACK.
-const deliverContacts = `function(frame) {
-  if (this.isConnected && this.getAttribute('data-cindy-trackpad') === 'contacts')
-    this.dispatchEvent(new CustomEvent('cindy-trackpad', {detail: frame}));
+const deliverContacts = `function(frame, anchor) {
+  if (frame.phase !== 'cancel') {
+    if (!this.isConnected || this.getAttribute('data-cindy-trackpad') !== 'contacts') return false;
+    if (frame.phase === 'begin' &&
+        this.getRootNode().elementFromPoint(anchor.x, anchor.y)?.closest('[data-cindy-trackpad]') !== this)
+      return false;
+  }
+  this.dispatchEvent(new CustomEvent('cindy-trackpad', {detail: frame}));
+  return true;
 }`;
 const requireNative = createRequire(__filename);
 const log = createLogger('nativeTrackpad');
@@ -108,7 +114,7 @@ export function installNativeTrackpad(
     const previous = surface;
     surface = null;
     if (previous && attached && !guest.isDestroyed())
-      void cancelled
+      return cancelled
         .then(() =>
           guest.debugger.sendCommand(
             'Runtime.releaseObject',
@@ -116,6 +122,7 @@ export function installNativeTrackpad(
             previous.session,
           ),
         )
+        .then(() => {})
         .catch(() => {});
     return cancelled;
   };
@@ -127,6 +134,7 @@ export function installNativeTrackpad(
         {
           objectId: target.objectId,
           functionDeclaration: deliverContacts,
+          returnByValue: true,
           arguments: [
             {
               value: {
@@ -138,11 +146,21 @@ export function installNativeTrackpad(
                 })),
               },
             },
+            { value: { x: pointer.x - target.offset.x, y: pointer.y - target.offset.y } },
           ],
         },
         target.session,
       )
-      .then(() => {})
+      .then((reply) => {
+        if (reply.exceptionDetails) throw new Error('Native trackpad target execution failed');
+        if (reply.result?.value !== true && surface === target) {
+          // Same-document replacement, removed opt-in or an overlay can leave
+          // the cached object alive but unable to receive this sequence.
+          // Cancel even on a disconnected node, then reuse normal hit testing.
+          void stop();
+          void locate();
+        }
+      })
       .catch(() => {
         // Clear the gesture before teardown so a failed cancel cannot recurse.
         if (surface === target) {
@@ -210,7 +228,9 @@ export function installNativeTrackpad(
       };
     });
     g.raw = packet.touches;
-    // CDP touchEnd names the released contacts, not the remaining ones.
+    // Current Chromium's WebTouch path names released IDs for partial lifts;
+    // an active-point touchMove does not release the missing finger there.
+    // A complete end uses the protocol's empty list (as does cancellation).
     const released = g.points.filter((p) => !touchPoints.some((t) => t.id === p.id));
     const type =
       packet.phase === 'begin'
@@ -227,7 +247,7 @@ export function installNativeTrackpad(
     void guest.debugger
       .sendCommand('Input.dispatchTouchEvent', {
         type,
-        touchPoints: type === 'touchEnd' ? released : touchPoints,
+        touchPoints: type === 'touchEnd' && touchPoints.length ? released : touchPoints,
       })
       .catch(() => {
         if (stamp === epoch) detach();

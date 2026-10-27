@@ -65,7 +65,8 @@ export function telegramMessageText(message: TelegramTextContent): string {
     }
     return parts.join('\n');
   }
-  return visit(message.rich_message?.blocks, 0, '\n').slice(0, MAX_TEXT).trim();
+  const text = visit(message.rich_message?.blocks, 0, '\n').slice(0, MAX_TEXT);
+  return text.trim() ? text : '';
 }
 
 /** The selected quote is more specific than the full parent. Protection is
@@ -75,7 +76,7 @@ export function telegramReplyText(message: {
   quote?: { text?: unknown };
 }): string {
   const quote = message.quote?.text;
-  if (typeof quote === 'string' && quote.trim()) return quote.slice(0, MAX_TEXT).trim();
+  if (typeof quote === 'string' && quote.trim()) return quote.slice(0, MAX_TEXT);
   const reply = message.reply_to_message;
   if (!reply) return '';
   return telegramMessageText(reply);

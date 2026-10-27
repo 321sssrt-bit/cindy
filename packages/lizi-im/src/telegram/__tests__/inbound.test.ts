@@ -218,6 +218,29 @@ describe('replyContextOf', () => {
     expect(groupWindowEntryOf(rich).text).toBe(expected);
   });
 
+  it('preserves leading and trailing empty table cells in replies and history', () => {
+    const rich = msg({
+      text: undefined,
+      rich_message: {
+        blocks: [
+          {
+            type: 'table',
+            cells: [
+              [{}, { text: 'B1' }],
+              [{ text: 'A2' }, {}],
+            ],
+          },
+        ],
+      },
+    });
+    const expected = '\tB1\nA2\t';
+    expect(groupWindowEntryOf(rich).text).toBe(expected);
+    const m = msg({ reply_to_message: rich });
+    expect(replyContextOf(m)?.text).toBe(expected);
+    m.quote = { text: expected };
+    expect(replyContextOf(m)?.text).toBe(expected);
+  });
+
   it('uses an explicit quote and still respects protection of the original', () => {
     const m = msg({
       quote: { text: '选中的片段' },

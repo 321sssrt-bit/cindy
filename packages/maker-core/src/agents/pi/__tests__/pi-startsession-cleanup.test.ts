@@ -1535,19 +1535,16 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
   // #7494: a child's internal `cindy:harness-hook` shares the extension_ui
   // channel with permissions. It must be answered through the harness hook
   // bridge, never surfaced as a `Subagent: tool` approval with `{}` input.
-  it('answers a durable Subagent harness hook through the hook bridge instead of an approval prompt', async () => {
-    const runId = '123e4567-e89b-42d3-a456-426614174098';
-    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
-    // Surface the child's request only after the hook handler is attached, as
-    // in a live session where the handler is wired before tools run.
-    let handlerAttached = false;
-    mockRunDiscovery().mockImplementation(async () => !handlerAttached ? [] : [{
+  function mockHarnessHookRun(runId: string, taskId: string, ready: () => boolean): void {
+    // Surface the child's request only once the test is ready (handler wired),
+    // as in a live session where the handler is attached before tools run.
+    mockRunDiscovery().mockImplementation(async () => !ready() ? [] : [{
       version: 1,
       runId,
-      taskId: 'tool-harness-hook',
+      taskId,
       parentSessionId: 's1',
       runtimeOwnerId: ownerId(),
-      runnerInstanceId: 'runner-harness-hook',
+      runnerInstanceId: `runner-${taskId}`,
       state: 'running',
       startedAt: 1,
       updatedAt: 2,
@@ -1569,6 +1566,13 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
         },
       }],
     }]);
+  }
+
+  it('answers a durable Subagent harness hook through the hook bridge instead of an approval prompt', async () => {
+    const runId = '123e4567-e89b-42d3-a456-426614174098';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-hook', () => handlerAttached);
     const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
     const hook = vi.fn(async () => ({ action: 'block', reason: 'policy' }) as const);
     const handle = await new PiAgent(buildDeps()).startSession(opts());
@@ -1597,6 +1601,39 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     expect(resolver).not.toHaveBeenCalled();
 
     await handle.close();
+  });
+
+  it('answers continue, not the bridge close block, when a navigation close lands mid-hook', async () => {
+    // Closing the bridge settles pending hooks as `block`; the detached child
+    // keeps running and must not have its tool refused because the view left.
+    const runId = '123e4567-e89b-42d3-a456-426614174099';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-hook-close', () => handlerAttached);
+    let hookEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { hookEntered = resolve; });
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setHarnessHookHandler?.(() => {
+      hookEntered();
+      return new Promise(() => {});
+    });
+    handlerAttached = true;
+    await entered;
+
+    await handle.close({ reason: 'navigation' });
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook-close',
+      'approval',
+      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+    ), { timeout: 3_000 });
+    expect(control).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook-close',
+      'approval',
+      expect.objectContaining({ value: JSON.stringify({ action: 'block' }) }),
+    );
   });
 
   /**

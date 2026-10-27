@@ -4759,10 +4759,14 @@ export class PiAgent extends BaseAgent {
           // Same fence as the turn-change acknowledgement: park across an
           // account switch rather than answer for the outgoing account.
           if (accountBoundaryTeardown) return;
+          // A navigation close during the wait closes the bridge, which settles
+          // pending hooks as `block`. A detached child keeps running, so that
+          // must not reach it: once this handle is closed, answer `continue`.
+          const answer = closed ? { action: 'continue' as const } : result;
           const controlled = await publishPiSubagentApproval(status.taskId, {
             childId: task.childId,
             approvalId: approval.id,
-            value: JSON.stringify(result),
+            value: JSON.stringify(answer),
             runtimeOwnerId: controlOwnerId,
           });
           if (controlled > 0) piSubagentApprovalDeliveries.add(key);

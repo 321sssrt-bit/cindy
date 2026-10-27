@@ -70,7 +70,7 @@ export function BotGroupSpeakerRow({ deviceId, identity, sessionId, activity, on
     turnId: lane,
   });
   const label = stopping || executionStatus === 'stopping' ? t('groupChat.speaking.stopping')
-    : executionStatus === 'queued' ? t('devices.companions.queued')
+    : executionStatus === 'queued' ? t('devices.companions.status.queued')
     : activity === 'planning'
     ? t('groupChat.speaking.planning')
     : copy ?? (activity === 'step' ? t('groupChat.speaking.step') : t('devices.companions.working.processing'));

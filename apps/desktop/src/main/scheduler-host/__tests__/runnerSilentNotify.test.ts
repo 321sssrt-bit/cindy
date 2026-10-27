@@ -584,6 +584,21 @@ describe('MakerScheduleRunner silent-run notification skip', () => {
     },
   );
 
+  it.each([true, false])('repairs a hidden Claude block followed by a visible fallback tail (silenced=%s)', async (silenced) => {
+    const h = createSessionHarness(acceptingSend());
+    const { runner } = createRunnerHarness(h.session, { silenced });
+    const promise = runner.fire(baseSchedule({ source: 'bot', silentWhenIdle: true }), createFireContext());
+    await vi.waitFor(() => expect(mocks.createMessage).toHaveBeenCalled());
+    h.emit({ type: 'text', source: 'claude-code', data: { text: 'Hidden prefix ', isFinal: true } });
+    revealScheduledOutput({ kind: 'scheduler', scheduleId: 'schedule-1', scheduleName: 'Check', runId: 'run-1' });
+    h.emit({ type: 'text', source: 'claude-code', data: { text: 'visible tail' } });
+    h.emit({ type: 'done', source: 'claude-code', data: { result: 'Hidden prefix visible tail' } });
+    await promise;
+    const repairs = mocks.createMessage.mock.calls.filter(([, body]) => body.role === 'assistant');
+    expect(repairs).toHaveLength(1);
+    expect(repairs[0][1].content).toBe('Hidden prefix visible tail');
+  });
+
   it('does not broadcast or notify into a new owner after persisting the final report', async () => {
     const h = createSessionHarness(acceptingSend());
     const { runner, notifier } = createRunnerHarness(h.session, { silenced: false });

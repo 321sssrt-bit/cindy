@@ -1,4 +1,4 @@
-import { beginQuietScheduledOutput, hidesScheduledTranscript, hasVisibleScheduledOutput } from './silent-output.js';
+import { beginQuietScheduledOutput, hidesScheduledTranscript, hasVisibleScheduledOutput, isQuietScheduledOutput } from './silent-output.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import { BUILTIN_ROUTINE_SCHEDULE_PREFIX, routineInstructionFromPrompt } from '../../shared/botAutonomy.js';
 import {
@@ -3445,6 +3445,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     const sessionId = initialSession.id;
     let assistantText = '';
     let finalTextMatchesStream = false;
+    let streamContainsHiddenText = false;
     // A non-empty full-text snapshot (`isFullText`, e.g. a completed Codex or
     // Pi item) is already a sealed transcript row; deltas that follow it start a
     // new message. A block final without `isFullText` (claude-code) may still
@@ -3564,18 +3565,30 @@ export class MakerScheduleRunner implements ScheduleRunner {
               // (Codex commentary before its empty answer item, an empty item
               // without phase, or a repeated empty item) is never replayed,
               // regardless of the event shape that carried it (#5220, #5277).
-              if (!assistantTextSealed) assistantText = '';
+              if (!assistantTextSealed) {
+                assistantText = '';
+                streamContainsHiddenText = false;
+              }
               return;
             }
-            if (data.text.trim()) finalTextMatchesStream = true;
+            const hidden = !!data.text.trim()
+              && isQuietScheduledOutput({ ...ev, turnOrigin: options.origin });
             if (data.isFinal) {
               assistantText = data.text;
               assistantTextSealed = data.isFullText === true;
+              streamContainsHiddenText = hidden;
             } else {
-              if (assistantTextSealed) assistantText = '';
+              if (assistantTextSealed) {
+                assistantText = '';
+                streamContainsHiddenText = false;
+              }
               assistantTextSealed = false;
               assistantText += data.text;
+              streamContainsHiddenText ||= hidden;
             }
+            // Raw provider text may span the quiet/visible boundary. A visible
+            // fallback tail does not prove that the hidden prefix was persisted.
+            if (data.text.trim()) finalTextMatchesStream = !streamContainsHiddenText;
           }
           return;
         }

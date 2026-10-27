@@ -1,11 +1,11 @@
 /**
  * 测试价值
- * - 生产入口与可观察结果：插件模型缓存使用真实 readWorkerAgentLocations；完整读取后显示远程电脑，失败时省略 locations，恢复后可重读
- * - Bug／规则依据：makecindy/cindy#7452 SC1；makecindy/cindy#7472 Greptile 失败位置缓存；plugin-agent-models.md §4.0.3a
- * - 现有覆盖缺口：现有用例只验证读取函数的降级列表，没有验证插件缓存不会保存该降级结果
- * - 最小失败输入：handleListDevices 首次拒绝、随后返回一台远程电脑；同时有一个 active 分享
+ * - 生产入口与可观察结果：插件模型缓存调用真实 readWorkerAgentLocations；失败时省略 locations，重试显示当前设备；同账号并发读取只发一次设备查询
+ * - Bug／规则依据：makecindy/cindy#7452 SC1；makecindy/cindy#7472 Greptile 的失败位置缓存与并发重复请求；plugin-agent-models.md §4.0.3a
+ * - 现有覆盖缺口：原用例只验证降级列表，没有覆盖插件缓存失败恢复或同账号并发合并
+ * - 最小失败输入：同账号两个并发读取，handleListDevices 先拒绝、重试再返回一台远程电脑
  * - tier：unit
- * - 实测耗时：4.70 s（修复后单文件运行，macOS arm64）
+ * - 实测耗时：4.03 s（红测单文件运行，macOS arm64）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceLinkDeviceView } from '../../../shared/deviceLinkIpc.js';
@@ -100,6 +100,26 @@ describe('listWorkerAgentLocations', () => {
     await expect(cache.locations('owner', readWorkerAgentLocations)).resolves.toEqual([
       { agentDeviceId: 'mac-mini', name: 'Mac mini' },
       { agentDeviceId: 'share:s1', name: 'Claude API · Ann' },
+    ]);
+    expect(io.handleListDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares an in-flight location read for the same owner and retries after failure', async () => {
+    const cache = createGhostAgentModelsCache();
+    io.handleListDevices
+      .mockRejectedValueOnce(new Error('cloud down'))
+      .mockResolvedValueOnce({ devices: [device({})] });
+
+    const first = cache.locations('owner', readWorkerAgentLocations);
+    const second = cache.locations('owner', readWorkerAgentLocations);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toBeUndefined();
+    expect(secondResult).toBeUndefined();
+    expect(io.handleListDevices).toHaveBeenCalledTimes(1);
+
+    await expect(cache.locations('owner', readWorkerAgentLocations)).resolves.toEqual([
+      { agentDeviceId: 'mac-mini', name: 'Mac mini' },
     ]);
     expect(io.handleListDevices).toHaveBeenCalledTimes(2);
   });

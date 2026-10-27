@@ -730,6 +730,30 @@ describe('binary version checks after an applied update', () => {
     } finally { service.stopUpdateService(); }
   });
 
+  // Greptile #7435: prepare A, then publish B while confirmation is open. The
+  // prepared flow must not leave the legacy force-download marker. Tier: unit.
+  it('restarts a prepared harness without forcing a download of a superseding manifest', async () => {
+    const service = await freshUpdateService('darwin');
+    const { consumeStartupBinaryUpdateMarker } = await import('../agent-binaries/startup-update');
+    service.initUpdateService();
+    try {
+      await service.checkForUpdate(updateManifest());
+      expect(() => ipcHandlers.get('update-harness-relaunch')?.({ sender: { id: 1 } }, 'codex', '9.0.0')).toThrow('prepare the requested');
+      expect(appRelaunch).not.toHaveBeenCalled();
+      fetchManifest.mockResolvedValue({ ...updateManifest(), codexPackage: { version: '9.0.0', file: 'runtime.tar.gz', sha256: 'a'.repeat(64), size: 123 } });
+      await ipcHandlers.get('update-harness-prepare')?.({ sender: { id: 1 } }, 'codex', '9.0.0');
+      expect(() => ipcHandlers.get('update-harness-relaunch')?.({ sender: { id: 1 } }, 'codex', '9.1.0')).toThrow('prepare the requested');
+      fetchManifest.mockResolvedValue({ ...updateManifest(), codexPackage: { version: '9.1.0', file: 'runtime.tar.gz', sha256: 'b'.repeat(64), size: 123 } });
+      const checks = fetchManifest.mock.calls.length;
+      expect(ipcHandlers.get('update-harness-relaunch')?.({ sender: { id: 1 } }, 'codex', '9.0.0')).toEqual({ accepted: true });
+      expect(consumeStartupBinaryUpdateMarker(TEST_USER_DATA, appGetVersion())).toBe(false);
+      expect(fetchManifest).toHaveBeenCalledTimes(checks);
+      expect(service.getUpdateStatus()).toBe('ready');
+      expect(appRelaunch).toHaveBeenCalledExactlyOnceWith({ args: process.argv.slice(1) });
+      expect(appQuit).toHaveBeenCalledOnce();
+    } finally { service.stopUpdateService(); }
+  });
+
   it('schedules a one-time refresh of only the confirmed harness before a graceful relaunch', async () => {
     const service = await freshUpdateService('darwin');
     const { consumeStartupBinaryUpdateMarker } = await import('../agent-binaries/startup-update');

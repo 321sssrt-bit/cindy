@@ -2471,12 +2471,14 @@ export function initUpdateService(): void {
 
   // About downloads before showing the restart confirmation. A failed preparation
   // leaves both the application update state and the running harness untouched.
+  const preparedHarnessVersions = new Map<'claude-code' | 'codex', string>();
   ipcMain.handle('update-harness-prepare', async (event, kind: unknown, expectedVersion: unknown) => {
     assertTrustedAppRendererEvent(event);
     if ((kind !== 'claude-code' && kind !== 'codex') || typeof expectedVersion !== 'string'
       || expectedVersion.length === 0 || expectedVersion.length > 128) {
       throwIpcError('INVALID_PARAMS', 'kind and expectedVersion required');
     }
+    preparedHarnessVersions.delete(kind);
     const signal = AbortSignal.timeout(180_000);
     const manifest = await fetchManifest(undefined, signal);
     const asset = manifest && getVendorAsset(manifest, kind === 'claude-code' ? 'claudeCode' : 'codexPackage');
@@ -2486,21 +2488,28 @@ export function initUpdateService(): void {
     if (!await prefetchAgentBinary(kind, { manifest, signal })) {
       throwIpcError('INTERNAL', 'could not prepare harness update; retry later');
     }
+    preparedHarnessVersions.set(kind, expectedVersion);
     return { ready: true };
   });
 
   // About → Agent version update: keep the same graceful app relaunch lifecycle,
-  // but ask the next startup to refresh managed harness binaries before they are
-  // exposed to Maker. The marker is consumed once by agent-binaries/prepare and
-  // is scoped to the harness the user confirmed; Pi has its own kernel manager.
-  ipcMain.handle('update-harness-relaunch', (event, kind: unknown) => {
+  // with cache-only adoption for prepared targets. Only legacy kind-only callers
+  // retain a scoped repair marker: a newer manifest must not cause a prepared
+  // update to download again in Splash. Pi has its own kernel manager.
+  ipcMain.handle('update-harness-relaunch', (event, kind: unknown, preparedVersion?: unknown) => {
     assertTrustedAppRendererEvent(event);
     if (kind !== 'claude-code' && kind !== 'codex') {
       throwIpcError('INVALID_PARAMS', 'kind required (claude-code | codex)');
     }
-    const cancelMarker = writeStartupBinaryUpdateMarker(app.getPath('userData'), app.getVersion(), [kind]);
-    if (!cancelMarker) {
-      throwIpcError('INTERNAL', 'failed to schedule harness update');
+    if (preparedVersion !== undefined) {
+      if (typeof preparedVersion !== 'string' || preparedHarnessVersions.get(kind) !== preparedVersion) {
+        throwIpcError('INVALID_PARAMS', 'prepare the requested harness version before restarting');
+      }
+    } else {
+      const cancelMarker = writeStartupBinaryUpdateMarker(app.getPath('userData'), app.getVersion(), [kind]);
+      if (!cancelMarker) {
+        throwIpcError('INTERNAL', 'failed to schedule harness update');
+      }
     }
     log.info(`harness update relaunch requested: ${kind}`);
     app.relaunch({ args: process.argv.slice(1) });

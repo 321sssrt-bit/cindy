@@ -238,7 +238,7 @@ describe('AboutSection agent binary versions', () => {
     expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
     expect(prepareHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex', 'v1.1.0');
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm Codex' }));
-    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex'));
+    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex', 'v1.1.0'));
   });
 
   // Manual updates now prepare outside Splash. Keep restart confirmation after
@@ -292,7 +292,7 @@ describe('AboutSection agent binary versions', () => {
     expect(relaunchForHarnessUpdate).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.about.harnessUpdateConfirm Codex' }));
-    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex'));
+    await waitFor(() => expect(relaunchForHarnessUpdate).toHaveBeenCalledExactlyOnceWith('codex', '1.1.0'));
   });
 
   it('does not relaunch when the busy probe fails and the interruption warning is declined', async () => {

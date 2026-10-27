@@ -295,7 +295,7 @@ function AgentVersionRow({
     if (!canUpdate()) return;
 
     try {
-      await window.electronAPI.relaunchForHarnessUpdate(kind);
+      await window.electronAPI.relaunchForHarnessUpdate(kind, targetVersion);
     } catch {
       toast.error(t('settings.about.harnessUpdateFailed'));
     }

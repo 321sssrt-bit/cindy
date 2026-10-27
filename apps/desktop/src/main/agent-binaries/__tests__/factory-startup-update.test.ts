@@ -136,6 +136,17 @@ describe('background downloads handed to the existing installer', () => {
     expect((await provisioner.prepare({ checkForUpdates: false })).binaryPath).not.toBe(oldPath);
   });
 
+  it('keeps a usable old runtime without HTTP when the prefetched target is superseded before restart', async () => {
+    const oldPath = installLocal('1.0.0');
+    const provisioner = createBinaryProvisioner(config);
+    await expect(provisioner.prefetch({ manifest: { app: {} } as never })).resolves.toBe(true);
+    mocks.getVendorAsset.mockReturnValue({ ...asset, version: '4.0.0', sha256: 'd'.repeat(64) });
+    await expect(provisioner.prepare({ checkForUpdates: false })).resolves.toEqual({ ready: true, binaryPath: oldPath });
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(fs.readFileSync(oldPath, 'utf8')).toBe('local');
+    expect(fs.existsSync(path.join(mocks.userDataDir, config.installSubdir, '4.0.0', '.verified'))).toBe(false);
+  });
+
   it('rejects a modified cache without a startup download or a false installed marker', async () => {
     const oldPath = installLocal('1.0.0');
     const provisioner = createBinaryProvisioner(config);

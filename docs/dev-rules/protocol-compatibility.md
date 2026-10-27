@@ -15,8 +15,9 @@ Profile 版本）。它是显式接受模型的意图；宿主重新校验模型
 
 Desktop 新增本机 `update-harness-prepare` IPC（Claude Code/Codex、用户看到的目标版本），
 只供可信应用顶层 renderer 在重启确认前准备下载，不暴露到 device-link allowlist。
-原 `update-harness-relaunch` 参数与回复保持兼容，旧设置入口与旧的一次性修复标记仍可
-更新。应用更新 IPC、手机与设备间 wire protocol 不变；后台归档只放新缓存目录，旧客户端
+原 `update-harness-relaunch` 追加可选 `preparedVersion`：宿主只接受本轮准备成功的目标，
+下次启动只消费缓存，避免确认期间清单变化又触发启动下载。省略参数的旧设置入口仍写
+原 scoped 修复标记，回复保持兼容。应用更新 IPC、手机与设备间 wire protocol 不变；后台归档只放新缓存目录，旧客户端
 忽略它，不改变原安装目录、凭证、数据库或持久偏好。
 
 ## 任务链接保留所属电脑

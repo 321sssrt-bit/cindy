@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { ComposerRichInput, type ComposerRichInputHandle } from '@/session/ComposerRichInput';
 import { textComposerDocument, type ComposerDocument } from '@/session/composerDocument';
+import { createComposerDraftSource } from '@/session/composerDraftSource';
 
 const bridge = vi.hoisted(() => ({
   onMessage: (_event: { nativeEvent: { data: string } }) => {},
@@ -72,6 +73,9 @@ function mount(hidden = false) {
     }),
     setConfig: vi.fn(),
     focus: vi.fn(),
+    snapshot: vi.fn((requestId: number) => bridge.onMessage({ nativeEvent: { data: JSON.stringify({
+      type: 'snapshot', requestId, documentId: page.id, document: page.document, pendingPaste: false,
+    }) } })),
     ping: vi.fn((id: number) => bridge.onMessage({ nativeEvent: { data: JSON.stringify({ type: 'pong', id }) } })),
   };
   bridge.inject.mockImplementation((script: string) => runInNewContext(script, { window: { cindyComposer: page } }));
@@ -85,6 +89,82 @@ function mount(hidden = false) {
   const send = (message: unknown) => act(() => bridge.onMessage({ nativeEvent: { data: JSON.stringify(message) } }));
   return { ref, page, send, onChangeDocument, onPasteImagesLoadFailed, renderDocument };
 }
+
+// #7508 / #7509, unit: the real WebView bridge must hand Send the visible document,
+// including preedit, without echoing it back into the IME. Earlier tests only covered
+// unsolicited change events; the minimal missing case is a DOM edit with no change yet.
+it('reads the visible send snapshot and acknowledges it without replacing the editor', async () => {
+  const { ref, page, send, onChangeDocument, renderDocument } = mount();
+  send({ type: 'ready' });
+  page.document = { version: 1, nodes: [
+    { type: 'quote', quote: { text: 'retained reference' } },
+    { type: 'text', text: '자동완성 껐는데 그래도 잘리네' },
+  ] };
+  page.applyDocument.mockClear();
+  let snapshot!: ComposerDocument;
+  await act(async () => { snapshot = await ref.current!.flushDocument!(); });
+  expect(snapshot).toEqual(page.document);
+  expect(onChangeDocument).toHaveBeenLastCalledWith(snapshot);
+  renderDocument(snapshot);
+  expect(page.applyDocument).not.toHaveBeenCalled();
+});
+
+it.each(['replacement', 'termination', 'unmount', 'timeout'] as const)(
+  'rejects an unavailable send snapshot after %s and ignores a late reply', async reason => {
+    vi.useFakeTimers();
+    const { ref, page, send, renderDocument, onChangeDocument } = mount();
+    send({ type: 'ready' });
+    page.snapshot.mockImplementation(() => {});
+    const oldId = page.id;
+    const result = ref.current!.flushDocument!().then(() => 'accepted', () => 'rejected');
+    const requestId = page.snapshot.mock.lastCall![0];
+    if (reason === 'replacement') renderDocument(textComposerDocument('new draft'));
+    else if (reason === 'termination') act(() => bridge.onRenderProcessGone());
+    else if (reason === 'unmount') { act(() => root!.unmount()); root = undefined; }
+    else act(() => vi.advanceTimersByTime(5000));
+    expect(await result).toBe('rejected');
+    send({ type: 'snapshot', requestId, documentId: oldId, document: textComposerDocument('stale'), pendingPaste: false });
+    expect(onChangeDocument).not.toHaveBeenCalled();
+  },
+);
+
+it('does not submit a partially replaced paste or an editor that has not loaded', async () => {
+  const { ref, page, send, onChangeDocument } = mount();
+  await expect(ref.current!.flushDocument!()).rejects.toThrow();
+  send({ type: 'ready' });
+  page.snapshot.mockImplementation(requestId => send({
+    type: 'snapshot', requestId, documentId: page.id, document: textComposerDocument('partial'), pendingPaste: true,
+  }));
+  await expect(ref.current!.flushDocument!()).rejects.toThrow();
+  expect(onChangeDocument).not.toHaveBeenCalled();
+});
+
+// #7508 review, unit: cancelling queue edit restores the draft synchronously,
+// but its WebView props wait for the next frame. A solicited snapshot can arrive
+// in that gap even without typing; replacement-after-render coverage misses it.
+it('rejects an invalidated send scope before a late snapshot can overwrite the restored draft', async () => {
+  vi.useFakeTimers();
+  const { ref, page, send, onChangeDocument } = mount();
+  send({ type: 'ready' });
+  page.snapshot.mockImplementation(() => {});
+  const editing = { clientId: 'queued-message' };
+  let queueEdit: typeof editing | null = editing;
+  const source = createComposerDraftSource(textComposerDocument('edited queued message'));
+  const unsubscribe = source.subscribe(() => {});
+  onChangeDocument.mockImplementation((document: ComposerDocument) => source.setDocument(document));
+  const result = ref.current!.flushDocument!(() => queueEdit === editing).then(() => 'accepted', () => 'rejected');
+  const requestId = page.snapshot.mock.lastCall![0];
+  queueEdit = null;
+  const restored = textComposerDocument('unsent personal draft');
+  source.setDocument(restored);
+  // Deliberately do not render the restored document or advance its frame yet.
+  send({ type: 'snapshot', requestId, documentId: page.id,
+    document: textComposerDocument('edited queued message'), pendingPaste: false });
+  expect(await result).toBe('rejected');
+  expect(onChangeDocument).not.toHaveBeenCalled();
+  expect(source.getSnapshot().document).toEqual(restored);
+  unsubscribe();
+});
 
 it('never writes an older native edit back over later typing, but applies external replacements', () => {
   const { page, send, onChangeDocument, renderDocument } = mount();

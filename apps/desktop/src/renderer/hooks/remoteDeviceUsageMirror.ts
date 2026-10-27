@@ -5,6 +5,7 @@ import {
   isDataOwnerGenerationCurrent,
 } from '@/contexts/dataOwnerGeneration';
 import { isDeviceLinkRemotePushCurrent } from '@/lib/remoteDataOwnerPushFence';
+import { HIDDEN_ANIMATION_ATTR } from '@/lib/hiddenAnimationGate';
 import { extractIpcError } from '@/utils/ipcError';
 
 const UNSUPPORTED_RETRY_AFTER_MS = 15 * 60_000;
@@ -141,7 +142,10 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
         entry.settledAt > 0 &&
         Date.now() - entry.settledAt < MOUNT_REUSE_MS;
       entry.listeners.add(notify);
-      const visible = () => document.visibilityState !== 'hidden';
+      // The existing gate also includes native hide/minimize broadcasts: Electron
+      // can keep visibilityState "visible" while active turns disable throttling.
+      const visible = () => document.visibilityState !== 'hidden'
+        && !document.documentElement.hasAttribute(HIDDEN_ANIMATION_ATTR);
       if (!settled && (!cfg.refreshIntervalMs || visible())) request(deviceId, providerId);
       let timer: ReturnType<typeof setInterval> | undefined;
       const poll = () => {
@@ -160,6 +164,10 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
         watchVisibility();
         document.addEventListener('visibilitychange', watchVisibility);
       }
+      const hiddenObserver = cfg.refreshIntervalMs ? new MutationObserver(watchVisibility) : undefined;
+      hiddenObserver?.observe(document.documentElement, {
+        attributes: true, attributeFilter: [HIDDEN_ANIMATION_ATTR],
+      });
       const off = cfg.pushChannel ? window.electronAPI.deviceLink.onRemotePush((push, ownerStamp) => {
         if (
           push.deviceId !== deviceId ||
@@ -187,6 +195,7 @@ export function createRemoteDeviceUsageMirror<T extends object>(cfg: {
       }) : () => {};
       return () => {
         clearInterval(timer);
+        hiddenObserver?.disconnect();
         if (cfg.refreshIntervalMs) document.removeEventListener('visibilitychange', watchVisibility);
         entry.listeners.delete(notify);
         off();

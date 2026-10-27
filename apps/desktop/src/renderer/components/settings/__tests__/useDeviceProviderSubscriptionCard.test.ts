@@ -70,6 +70,7 @@ import { resetRemoteDeviceUsageMirrorsForTest } from '@/hooks/useRemoteDeviceUsa
 import { useProviderUsageSnapshots, useProviderWeeklyQuota } from '../../new-chat/useProviderWeeklyQuota';
 import { matchCodexBucketForModel } from '@cindy/maker-shared/codex-usage-buckets';
 import { setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
+import { installHiddenAnimationGate } from '@/lib/hiddenAnimationGate';
 
 function provider(id: string, auth: Record<string, unknown>): ProviderView {
   return { id, name: id, source: 'user', connected: true, auth } as unknown as ProviderView;
@@ -139,6 +140,12 @@ describe('useDeviceProviderSubscriptionCard', () => {
   });
 
   it('shares one read per minute and stops when hidden, closed or unmounted', async () => {
+    let nativeHidden!: (hidden: boolean) => void;
+    window.electronAPI.onWindowHiddenChange = (callback) => {
+      nativeHidden = callback;
+      return () => {};
+    };
+    const disposeGate = installHiddenAnimationGate();
     const { result, rerender, unmount } = renderHook(({ open }) => ({
       card: useDeviceProviderSubscriptionCard(open ? codex : undefined, 'mini'),
       second: useDeviceProviderSubscriptionCard(open ? codex : undefined, 'mini'),
@@ -149,27 +156,37 @@ describe('useDeviceProviderSubscriptionCard', () => {
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(remaining(result.current.card)).toEqual([['secondary', 56]]);
     expect(result.current.card?.updatedAt).toBe(Date.now());
+    await act(async () => { nativeHidden(true); });
+    expect(document.visibilityState).toBe('visible');
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    await act(async () => { nativeHidden(false); });
+    expect(invoke).toHaveBeenCalledTimes(3);
     act(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledTimes(3);
     await act(async () => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
       document.dispatchEvent(new Event('visibilitychange'));
     });
-    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenCalledTimes(4);
     rerender({ open: false });
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenCalledTimes(4);
     expect(result.current.card).toBeNull();
+    await act(async () => { nativeHidden(true); });
     rerender({ open: true });
     await act(async () => {});
     expect(invoke).toHaveBeenCalledTimes(4);
+    await act(async () => { nativeHidden(false); });
+    expect(invoke).toHaveBeenCalledTimes(5);
     unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
-    expect(invoke).toHaveBeenCalledTimes(4);
+    expect(invoke).toHaveBeenCalledTimes(5);
+    disposeGate();
   });
 
   it.each(['[CHANNEL_NOT_ALLOWED]', 'network unavailable'])('falls back to the old snapshot after %s without clearing it on failure', async (error) => {

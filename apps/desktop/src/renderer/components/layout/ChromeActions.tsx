@@ -39,10 +39,8 @@ import { useTranslation } from 'react-i18next';
 import { MenuButton } from '@/components/title-bar/MenuButton';
 import { ChromeIconButton } from '@/components/title-bar/ChromeIconButton';
 import { Tip } from '@/components/ui/tooltip';
-import { useAuth } from '@/contexts/AuthContext';
 import { useMacFullscreen } from '@/hooks/useMacFullscreen';
 import { useAppShortcutDisplay } from '@/hooks/useAppShortcut';
-import { useSessionBrowseHistory } from '@/features/cc-agent/useSessionBrowseHistory';
 import type { SessionBrowseNavigation } from '@/features/cc-agent/useSessionBrowseHistory';
 import { cn } from '@/lib/utils';
 
@@ -53,6 +51,11 @@ interface ChromeActionsProps {
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   /**
+   * 任务浏览栈。由常驻壳层 MainLayout 持有：设置页会整个卸载本按钮簇，
+   * 快捷键监听不能跟着按钮一起消失。
+   */
+  browseHistory: SessionBrowseNavigation;
+  /**
    * 完全隐藏态 hover peek 的触发钮 props(useSidebarPeek)——只挂在折叠按钮上,
    * MenuButton 的 hover 有自己的语义(打开菜单),不参与 peek。
    */
@@ -62,15 +65,11 @@ interface ChromeActionsProps {
 export function ChromeActions({
   isSidebarCollapsed,
   onToggleSidebar,
+  browseHistory,
   peekTriggerProps,
 }: ChromeActionsProps) {
   const { t } = useTranslation();
   const { isMac, isFullscreen } = useMacFullscreen();
-  // 浏览栈按数据所有者(账号 + 恢复代次)隔离：切号时不能把上一个账号的任务带过来。
-  const { dataOwnerId, dataOwnerRecoveryEpoch } = useAuth();
-  const browseHistory = useSessionBrowseHistory({
-    ownerKey: `${dataOwnerId ?? 'signed-out'}:${dataOwnerRecoveryEpoch}`,
-  });
 
   // 钉死左上角:mac 非全屏让位红绿灯(78),其余 8。不随侧栏状态变化。
   const x =

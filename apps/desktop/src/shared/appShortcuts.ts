@@ -168,6 +168,9 @@ export const APP_SHORTCUT_DEFINITIONS: ReadonlyArray<AppShortcutDefinition> = [
     labelKey: 'settings.shortcuts.items.session-history-back.label',
     descriptionKey: 'settings.shortcuts.items.session-history-back.description',
     rebindable: true,
+    // 新增默认键位对用户既有改绑让位：老用户把 toggle-sidebar 等动作改绑到 ⌘[ 是
+    // 历史合法绑定，若两个动作同名生效，一次按键会同时切侧栏与后退。
+    yieldsToUserBindings: true,
     getDefaultCombos: (platform) => [modCombo('BracketLeft', platform)],
   },
   {
@@ -176,6 +179,7 @@ export const APP_SHORTCUT_DEFINITIONS: ReadonlyArray<AppShortcutDefinition> = [
     labelKey: 'settings.shortcuts.items.session-history-forward.label',
     descriptionKey: 'settings.shortcuts.items.session-history-forward.description',
     rebindable: true,
+    yieldsToUserBindings: true,
     getDefaultCombos: (platform) => [modCombo('BracketRight', platform)],
   },
   {

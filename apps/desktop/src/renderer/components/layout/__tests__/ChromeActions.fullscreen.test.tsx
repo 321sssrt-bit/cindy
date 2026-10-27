@@ -84,6 +84,14 @@ afterEach(() => {
 });
 
 describe('ChromeActions fullscreen fallback', () => {
+  // 浏览栈现在由常驻壳层持有，按钮簇只接收它的快照；这组用例与浏览无关。
+  const idleBrowseHistory = {
+    canBack: false,
+    canForward: false,
+    goBack: () => false,
+    goForward: () => false,
+  };
+
   it('lets a macOS user exit fullscreen when native traffic lights are unavailable', () => {
     const windowExitFullscreen = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
@@ -93,7 +101,7 @@ describe('ChromeActions fullscreen fallback', () => {
 
     render(
       <MemoryRouter>
-        <ChromeActions isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+        <ChromeActions isSidebarCollapsed={false} onToggleSidebar={vi.fn()} browseHistory={idleBrowseHistory} />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'contentHeader.exitFullscreen' }));
@@ -106,7 +114,7 @@ describe('ChromeActions fullscreen fallback', () => {
 
     render(
       <MemoryRouter>
-        <ChromeActions isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+        <ChromeActions isSidebarCollapsed={false} onToggleSidebar={vi.fn()} browseHistory={idleBrowseHistory} />
       </MemoryRouter>,
     );
 

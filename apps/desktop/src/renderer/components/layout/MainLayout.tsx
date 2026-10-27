@@ -102,6 +102,8 @@ import {
   toggleAgentIslandSoundEnabled,
 } from '@/hooks/useAgentIslandSettings';
 import { requestNewWorkerFromShortcut } from '@/features/cc-agent/lib/newWorkerShortcut';
+import { useSessionBrowseHistory } from '@/features/cc-agent/useSessionBrowseHistory';
+import { useAuth } from '@/contexts/AuthContext';
 // chat-data-localization F1 V0.4 / M-FE6
 import { useCorruptionRestoredToast } from '@/hooks/useCorruptionRestoredToast';
 // #37 schema-drift release-side toast
@@ -453,6 +455,15 @@ export function MainLayout() {
   }, []);
 
   const isSettingsRoute = location.pathname === '/settings';
+
+  // 任务浏览栈与它的快捷键监听挂在常驻壳层:设置页会整个卸载左上按钮簇
+  // (下面的 `!isSettingsRoute && <ChromeActions>`)，快捷键不能跟着一起消失——
+  // hook 的语义包含「从设置等栈外页后退回最近任务」。浏览栈按数据所有者
+  // (账号 + 恢复代次)隔离：切号时不能把上一个账号的任务带过来。
+  const { dataOwnerId, dataOwnerRecoveryEpoch } = useAuth();
+  const browseHistory = useSessionBrowseHistory({
+    ownerKey: `${dataOwnerId ?? 'signed-out'}:${dataOwnerRecoveryEpoch}`,
+  });
 
   // 完全隐藏态 hover 临时浮出(peek)状态机 —— hover 折叠按钮抽屉滑出预览,
   // 点击/⌘B 固定展开(pin)。rail 态(isCollapsed=false)不触发。见 useSidebarPeek。
@@ -1691,6 +1702,7 @@ export function MainLayout() {
           <ChromeActions
             isSidebarCollapsed={isSidebarCollapsed}
             onToggleSidebar={handleToggleSidebar}
+            browseHistory={browseHistory}
             peekTriggerProps={sidebarPeek.triggerProps}
           />
         )}

@@ -127,3 +127,45 @@ it('retains a sanitized failure for continuations without unhandled rejections o
   expect(calls.sync).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(5 * 60_000);
 });
+
+// PR #7464: completed results consumed the active-operation quota. Unit tier:
+// keep one real handler operation pending while 65 others finish (including
+// failures); completed cache pressure must neither block starts nor evict it.
+it('does not let retained terminal results block new work or evict an active operation', async () => {
+  vi.useFakeTimers();
+  let finish!: (value: { updated: number }) => void;
+  calls.sync.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+  const waiting = handlers.sync({}, { ...req, waitForResult: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const pending = await waiting;
+  if (!('operationId' in pending)) throw new Error('expected continuation');
+  for (let i = 0; i < 65; i++) {
+    if (i % 2) {
+      calls.sync.mockRejectedValueOnce(new Error('failed'));
+      await expect(handlers.sync({}, { ...req, waitForResult: true })).rejects.toThrow('branch-sync:git');
+    } else {
+      calls.sync.mockResolvedValueOnce({ updated: 1 });
+      expect(await handlers.sync({}, { ...req, waitForResult: true })).toEqual({ updated: 1 });
+    }
+  }
+  finish({ updated: 3 });
+  expect(await handlers.sync({}, { ...req, waitForResult: true, operationId: pending.operationId })).toEqual({ updated: 3 });
+  expect(calls.sync).toHaveBeenCalledTimes(66);
+  expect(vi.getTimerCount()).toBe(64);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('still bounds active work and releases its quota when the operations finish', async () => {
+  vi.useFakeTimers();
+  let finish!: (value: { updated: number }) => void;
+  calls.sync.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const requests = Array.from({ length: 64 }, () => handlers.sync({}, { ...req, waitForResult: true }));
+  expect(() => handlers.sync({}, { ...req, waitForResult: true })).toThrow('branch-sync:busy');
+  finish({ updated: 1 });
+  await Promise.all(requests);
+  expect(await handlers.sync({}, { ...req, waitForResult: true })).toEqual({ updated: 1 });
+  expect(calls.sync).toHaveBeenCalledTimes(65);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  expect(vi.getTimerCount()).toBe(0);
+});

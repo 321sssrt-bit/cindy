@@ -99,6 +99,36 @@ it('continues waiting for the same remote fetch and shows its final result', asy
   expect(mocks.toast).not.toHaveBeenCalled();
 });
 
+// PR #7464: a transport rejection used to lose the operation handle. Drive the
+// real component through a failed continuation and an explicit retry; terminal
+// failures must instead release the handle so a later click can start new work.
+it.each(['transport', 'terminal', 'selection-change'] as const)('retries after a %s failure with the correct operation identity', async (failure) => {
+  const operationId = '8a7768e7-e652-4458-9c15-96af310bc9cb';
+  let polls = 0;
+  invoke.mockImplementation(async (_device, channel) => {
+    if (channel !== 'worktree:sync-branch') return baseStatus;
+    if (++polls === 1) return { pending: true, operationId };
+    if (polls === 2) throw new Error(failure === 'terminal' ? 'branch-sync:changed' : 'connection lost');
+    return { status: baseStatus, updated: 3 };
+  });
+  const view = render(<BranchWorktreeChip {...props} deviceId="remote-a" />);
+  fireEvent.click(await screen.findByRole('button', { name: /newChat.branchSync.action/ }));
+  let retry = await screen.findByRole('button', { name: /newChat.branchSync.failed/ });
+  expect(polls).toBe(2);
+  if (failure === 'selection-change') {
+    view.rerender(<BranchWorktreeChip {...props} branchLabel="next" deviceId="remote-a" />);
+    retry = await screen.findByRole('button', { name: /newChat.branchSync.action/ });
+  }
+  fireEvent.click(retry);
+  await screen.findByRole('button', { name: /newChat.branchSync.updated/ });
+  expect(invoke.mock.calls.filter((call) => call[1] === 'worktree:sync-branch')[2][2]).toEqual([
+    { baseRepo: '/repo', branch: failure === 'selection-change' ? 'next' : 'main', waitForResult: true, ...(failure === 'transport' ? { operationId } : {}) },
+  ]);
+  fireEvent.click(screen.getByRole('button', { name: /newChat.branchSync.updated/ }));
+  await waitFor(() => expect(polls).toBe(4));
+  expect(invoke.mock.calls.filter((call) => call[1] === 'worktree:sync-branch')[3][2][0]).not.toHaveProperty('operationId');
+});
+
 it('shares counts with the selected row and keeps full remote refs distinct during keyboard search', async () => {
   render(<BranchWorktreeChip {...props} />);
   await waitFor(() => expect(status).toHaveBeenCalledOnce());

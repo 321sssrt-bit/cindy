@@ -26,6 +26,13 @@ export function createBranchSyncHandlers<Event>(deps: {
       outcome: Promise<Outcome>;
     }
   >();
+  let activeOperations = 0;
+  const completed = new Map<string, ReturnType<typeof setTimeout>>();
+  function forgetCompleted(id: string) {
+    clearTimeout(completed.get(id));
+    completed.delete(id);
+    operations.delete(id);
+  }
 
   // Each poll fits inside the existing invoke budget. Only the initial request
   // starts work; lost replies, changed peers and expired tokens never replay it.
@@ -116,7 +123,8 @@ export function createBranchSyncHandlers<Event>(deps: {
         )
           throwIpcError('INTERNAL', BRANCH_SYNC_ERROR_PREFIX + 'changed');
       } else {
-        if (operations.size >= 64) throwIpcError('INTERNAL', BRANCH_SYNC_ERROR_PREFIX + 'busy');
+        if (activeOperations >= 64) throwIpcError('INTERNAL', BRANCH_SYNC_ERROR_PREFIX + 'busy');
+        activeOperations += 1;
         operationId = randomUUID();
         const id = operationId;
         const outcome: Promise<Outcome> = Promise.resolve()
@@ -129,7 +137,13 @@ export function createBranchSyncHandlers<Event>(deps: {
         // Retain terminal outcomes briefly for a delayed continuation. Running
         // downloads are bounded by Git inactivity, not by polling wall time.
         void outcome.then(() => {
-          setTimeout(() => operations.delete(id), 5 * 60_000).unref?.();
+          activeOperations -= 1;
+          const timer = setTimeout(() => forgetCompleted(id), 5 * 60_000);
+          timer.unref?.();
+          completed.set(id, timer);
+          // Bound retained outcomes independently; never evict active work or
+          // reject a new fetch just because earlier fetches completed quickly.
+          if (completed.size > 64) forgetCompleted(completed.keys().next().value!);
         });
       }
       return wait(operationId);

@@ -11,6 +11,14 @@ Profile 版本）。它是显式接受模型的意图；宿主重新校验模型
 返回成功视为完成恢复，必须读回版本及发送结果。现有 `update_teammate_profile` 显式提交
 `modelChain` 时走同一接受入口，包括重复选择当前值；省略模型字段不改变恢复状态。
 
+## 设置中的引擎更新准备
+
+Desktop 新增本机 `update-harness-prepare` IPC（Claude Code/Codex、用户看到的目标版本），
+只供可信应用顶层 renderer 在重启确认前准备下载，不暴露到 device-link allowlist。
+原 `update-harness-relaunch` 参数与回复保持兼容，旧设置入口与旧的一次性修复标记仍可
+更新。应用更新 IPC、手机与设备间 wire protocol 不变；后台归档只放新缓存目录，旧客户端
+忽略它，不改变原安装目录、凭证、数据库或持久偏好。
+
 ## 任务链接保留所属电脑
 
 任务查询返回可选 `sessionUrl`，沿用 `cindy://session/<id>?device=<deviceId>`。

@@ -44,6 +44,8 @@ import { compareAppUpdateVersions } from './updateVersionPolicy';
 import { CURRENT_APP_ID } from '../shared/brandRegion';
 import { syncWindowsVersionAfterUpdate, windowsInstallKey } from './windowsInstallationVersion';
 import { writeStartupBinaryUpdateMarker } from './agent-binaries/startup-update';
+import { prefetch as prefetchAgentBinary } from './agent-binaries/index.js';
+import { getVendorAsset } from './agent-binaries/manifest.js';
 
 import { createLogger, maskPath } from './logger';
 import {
@@ -2063,8 +2065,9 @@ async function executeRelaunchUnguarded(
     maskPath(readyFilePath), fs.statSync(readyFilePath).size,
   );
 
-  // Every applied app update — manual, idle or startup auto-relaunch — checks
-  // agent binaries once on the next launch; ordinary launches do not.
+  // Keep the legacy marker for rollback compatibility. New startups adopt only
+  // completed binary downloads and reuse usable local runtimes otherwise;
+  // application-update readiness never waits for optional binary preparation.
   if (readyVersion) {
     cancelStartupBinaryUpdateCheck = writeStartupBinaryUpdateMarker(app.getPath('userData'), readyVersion);
   }
@@ -2464,6 +2467,26 @@ export function initUpdateService(): void {
     // relaunch arguments retain the original native command line.
     app.relaunch({ args: process.argv.slice(1) });
     app.quit();
+  });
+
+  // About downloads before showing the restart confirmation. A failed preparation
+  // leaves both the application update state and the running harness untouched.
+  ipcMain.handle('update-harness-prepare', async (event, kind: unknown, expectedVersion: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    if ((kind !== 'claude-code' && kind !== 'codex') || typeof expectedVersion !== 'string'
+      || expectedVersion.length === 0 || expectedVersion.length > 128) {
+      throwIpcError('INVALID_PARAMS', 'kind and expectedVersion required');
+    }
+    const signal = AbortSignal.timeout(180_000);
+    const manifest = await fetchManifest(undefined, signal);
+    const asset = manifest && getVendorAsset(manifest, kind === 'claude-code' ? 'claudeCode' : 'codexPackage');
+    if (!manifest || !asset || asset.version !== expectedVersion) {
+      throwIpcError('INTERNAL', 'harness update changed or is unavailable; check again');
+    }
+    if (!await prefetchAgentBinary(kind, { manifest, signal })) {
+      throwIpcError('INTERNAL', 'could not prepare harness update; retry later');
+    }
+    return { ready: true };
   });
 
   // About → Agent version update: keep the same graceful app relaunch lifecycle,

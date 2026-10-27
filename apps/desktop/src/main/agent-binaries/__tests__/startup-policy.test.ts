@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { c as createTar } from 'tar';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Manifest } from '../../manifestService';
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   remoteManifest: null as Manifest | null,
   fetchManifest: vi.fn(),
   download: vi.fn(),
+  backgroundDownload: vi.fn(),
   execFile: vi.fn(),
   systemCommands: new Map<string, string>(),
 }));
@@ -37,6 +39,7 @@ vi.mock('../../manifestService.js', () => ({
 }));
 vi.mock('../../downloader/index.js', () => ({
   download: mocks.download,
+  createDownloader: () => mocks.backgroundDownload,
   DownloadError: class DownloadError extends Error {},
 }));
 vi.mock('../../logger', () => ({ createLogger: () => ({ warn: vi.fn(), info: vi.fn() }) }));
@@ -117,6 +120,7 @@ beforeEach(async () => {
     }
     return { path: targetPath, size: 7 };
   });
+  mocks.backgroundDownload.mockReset();
   await reloadBinaries();
 });
 afterEach(() => {
@@ -126,6 +130,44 @@ afterEach(() => {
 afterAll(() => { fs.rmSync(tempRoot, { recursive: true, force: true }); });
 
 describe('shared startup policy through the real binary preparation chain', () => {
+  // Public index -> cache -> original installer. Windows has an .exe entrypoint;
+  // Linux can start from a system CLI. Existing tests had no background/next-start
+  // handoff. Tier: unit, real local archives with a fake network.
+  it.each(['darwin', 'win32', 'linux'] as const)('adopts a background Codex download on the next %s startup while keeping the running path unchanged', async platform => {
+    await reloadBinaries(platform);
+    const version = newerStableVersion(PINNED_CODEX_VERSION);
+    const source = fs.mkdtempSync(path.join(tempRoot, 'prefetch-package-'));
+    const binaryName = path.join('bin', platform === 'win32' ? 'codex.exe' : 'codex');
+    writeExecutable(path.join(source, binaryName), version);
+    fs.writeFileSync(path.join(source, 'codex-package.json'), '{}');
+    const archivePath = path.join(source, 'payload.tar.gz');
+    await createTar({ file: archivePath, cwd: source, gzip: true }, ['bin', 'codex-package.json']);
+    const bytes = fs.readFileSync(archivePath);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    mocks.remoteManifest = { app: { version: '2.0.0' }, codexPackage: {
+      version, file: `codex-package/${version}/runtime.tar.gz`, sha256, size: bytes.length,
+    } };
+    const oldPath = platform === 'linux'
+      ? writeExecutable(path.join(tempRoot, 'system-prefetch-codex'), 'codex-cli ' + PINNED_CODEX_VERSION)
+      : installManaged('codex', PINNED_CODEX_VERSION);
+    if (platform === 'linux') mocks.systemCommands.set('codex', oldPath);
+    await expect(binaries.prepare('codex', quiet)).resolves.toMatchObject({ ready: true, path: oldPath });
+    mocks.backgroundDownload.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.writeFileSync(targetPath, bytes);
+      return { path: targetPath, sha256, size: bytes.length };
+    });
+    await expect(binaries.prefetch('codex', { manifest: mocks.remoteManifest! })).resolves.toBe(true);
+    expect(binaries.getReadyBinaryPath('codex')).toBe(oldPath);
+    expect(fs.existsSync(oldPath)).toBe(true);
+    await reloadBinaries(platform);
+    const nextPath = path.join(mocks.userDataDir, 'codex-package', version, binaryName);
+    await expect(binaries.prepare('codex', quiet)).resolves.toMatchObject({ ready: true, path: nextPath });
+    expect(fs.readFileSync(nextPath, 'utf8')).toBe(version);
+    expect(fs.readFileSync(path.join(mocks.userDataDir, 'codex-package', version, 'codex-package.json'), 'utf8')).toBe('{}');
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(mocks.userDataDir, 'agent-binary-downloads', 'codex', sha256))).toBe(false);
+  });
+
   it.each(['darwin', 'win32', 'linux'] as const)('reuses managed runtimes by default on %s after fetching manifest', async (platform) => {
     await reloadBinaries(platform);
     for (const kind of ['claude-code', 'codex', 'pi'] as const) {
@@ -137,8 +179,8 @@ describe('shared startup policy through the real binary preparation chain', () =
     expect(mocks.download).not.toHaveBeenCalled();
   });
 
-  it('consumes a matching marker once and retains the upgrade decision for retries and other vendors', async () => {
-    writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0');
+  it('consumes a legacy harness marker once and retains its repair decision for retries and other vendors', async () => {
+    writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0', ['pi', 'codex']);
     installManaged('pi');
     await expect(binaries.peekNeedsDownload('pi')).resolves.toBe(true);
     expect(fs.existsSync(path.join(mocks.userDataDir, 'agent-binary-update-once.json'))).toBe(false);
@@ -154,6 +196,18 @@ describe('shared startup policy through the real binary preparation chain', () =
     expect(mocks.download).toHaveBeenCalledTimes(2);
   });
 
+  // Migration regression: older app updaters write an unscoped marker. With no
+  // prepared download, the next startup must keep usable runtimes, not fetch them.
+  it('consumes an old application-update marker without forcing any runtime download', async () => {
+    const paths = new Map((['claude-code', 'codex', 'pi'] as const).map(kind => [kind, installManaged(kind)]));
+    writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0');
+    for (const [kind, binaryPath] of paths) {
+      await expect(binaries.prepare(kind, quiet)).resolves.toMatchObject({ ready: true, path: binaryPath });
+    }
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(mocks.userDataDir, 'agent-binary-update-once.json'))).toBe(false);
+  });
+
   it('limits a harness-scoped marker to the confirmed harness', async () => {
     writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0', ['codex']);
     installManaged('claude-code');
@@ -165,7 +219,7 @@ describe('shared startup policy through the real binary preparation chain', () =
   });
 
   it.each([false, true])('Pi background recovery inherits checkForUpdates=%s without caller flags', async (allowUpdates) => {
-    if (allowUpdates) writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0');
+    if (allowUpdates) writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0', ['pi']);
     const localPath = installManaged('pi');
     mocks.remoteManifest = null;
     const startup = await binaries.prepare('pi', quiet);
@@ -256,6 +310,10 @@ describe('Linux local discovery before any update download', () => {
     await expect(binaries.prepare('codex', quiet)).resolves.toMatchObject({ ready: true, path: systemPath });
     expect(mocks.download).not.toHaveBeenCalled();
     writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0');
+    await reloadBinaries('linux');
+    await expect(binaries.prepare('codex', quiet)).resolves.toMatchObject({ ready: true, path: systemPath });
+    expect(mocks.download).not.toHaveBeenCalled();
+    writeStartupBinaryUpdateMarker(mocks.userDataDir, '2.0.0', ['codex']);
     await reloadBinaries('linux');
     await expect(binaries.peekNeedsDownload('codex')).resolves.toBe(true);
     await expect(binaries.prepare('codex', quiet)).resolves.toMatchObject({ ready: true });

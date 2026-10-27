@@ -34,6 +34,8 @@ const getBaseUrl = vi.fn(() => CDN_EXTERNAL_BASE_URL);
 const isDev = vi.fn(() => false);
 const syncWindowsVersionAfterUpdate = vi.fn(async () => undefined);
 const download = vi.fn();
+const prefetchAgentBinary = vi.fn(async () => true);
+vi.mock('../agent-binaries/index.js', () => ({ prefetch: prefetchAgentBinary }));
 const readAutoUpdateSettings = vi.fn(() => ({ autoRelaunchOnIdle: true }));
 const spawnProcess = vi.fn(() => ({
   unref: vi.fn(),
@@ -682,12 +684,50 @@ describe('agent-facing managed app update check', () => {
 
 describe('binary version checks after an applied update', () => {
   beforeEach(() => {
+    prefetchAgentBinary.mockReset().mockResolvedValue(true);
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
     download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, 'update');
       return { path: targetPath, size: 123 };
     });
+  });
+
+  // New local preparation IPC: deferred/failed binary downloads must leave a
+  // staged application patch ready and must not restart Cindy. Tier: unit.
+  it('keeps the application update ready while About prepares an engine, including preparation failure', async () => {
+    const service = await freshUpdateService('darwin');
+    service.initUpdateService();
+    try {
+      await service.checkForUpdate(updateManifest());
+      const manifest = { ...updateManifest(), codexPackage: { version: '9.0.0', file: 'codex-package/runtime.tar.gz', sha256: 'a'.repeat(64), size: 123 } };
+      fetchManifest.mockResolvedValue(manifest);
+      const preparation = Promise.withResolvers<boolean>();
+      prefetchAgentBinary.mockReturnValueOnce(preparation.promise);
+      const prepare = ipcHandlers.get('update-harness-prepare');
+      const result = prepare?.({ sender: { id: 1 } }, 'codex', '9.0.0');
+      await vi.waitFor(() => expect(prefetchAgentBinary).toHaveBeenCalled());
+      expect(service.getUpdateStatus()).toBe('ready');
+      expect(appRelaunch).not.toHaveBeenCalled();
+      preparation.resolve(false);
+      await expect(result).rejects.toThrow('could not prepare harness update');
+      expect(service.getUpdateStatus()).toBe('ready');
+      // A fresh user retry is allowed; a failed download cannot poison readiness.
+      await expect(prepare?.({ sender: { id: 1 } }, 'codex', '9.0.0')).resolves.toEqual({ ready: true });
+      expect(appRelaunch).not.toHaveBeenCalled();
+      expect(appQuit).not.toHaveBeenCalled();
+    } finally { service.stopUpdateService(); }
+  });
+
+  it('rejects a changed engine version before downloading or scheduling a restart', async () => {
+    const service = await freshUpdateService('darwin');
+    service.initUpdateService();
+    try {
+      fetchManifest.mockResolvedValue({ ...updateManifest(), codexPackage: { version: '9.1.0', file: 'runtime.tar.gz', sha256: 'a'.repeat(64), size: 123 } });
+      await expect(ipcHandlers.get('update-harness-prepare')?.({ sender: { id: 1 } }, 'codex', '9.0.0')).rejects.toThrow('harness update changed');
+      expect(prefetchAgentBinary).not.toHaveBeenCalled();
+      expect(appRelaunch).not.toHaveBeenCalled();
+    } finally { service.stopUpdateService(); }
   });
 
   it('schedules a one-time refresh of only the confirmed harness before a graceful relaunch', async () => {

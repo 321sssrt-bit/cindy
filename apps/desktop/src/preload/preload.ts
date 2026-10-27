@@ -2874,6 +2874,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isCustomized?: boolean;
   }> => ipcRenderer.invoke('update-channel-settings-reset'),
   relaunchForChannelChange: (): Promise<void> => ipcRenderer.invoke('update-channel-relaunch'),
+  /** Cache the confirmed target before the user chooses to interrupt work and restart. */
+  prepareHarnessUpdate: (kind: 'claude-code' | 'codex', version: string): Promise<{ ready: true }> =>
+    ipcRenderer.invoke('update-harness-prepare', kind, version),
   /** Restart once; the next startup refreshes only the confirmed managed harness first. */
   relaunchForHarnessUpdate: (kind: 'claude-code' | 'codex'): Promise<{ accepted: true }> =>
     ipcRenderer.invoke('update-harness-relaunch', kind),

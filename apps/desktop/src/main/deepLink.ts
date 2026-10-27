@@ -500,9 +500,9 @@ function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true, owner?: 
     if (windowReady) win!.webContents.send('deep-link:navigate', payload);
     return;
   }
-  // A loaded login/LocalDbGate page has no MainLayout listener yet. Imports stay
+  // A loaded login/LocalDbGate page has no MainLayout listener yet. These intents stay
   // in the existing pending slot until the authenticated consumer takes them.
-  if (!windowReady || payload.type === 'provider-import' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join') {
+  if (!windowReady || payload.type === 'provider-import' || payload.type === 'shared-task-join' || payload.type === 'provider-share-join' || payload.type === 'plugin') {
     // 保留"用户最后意图"语义:同一次冷启动如果先后入站多条 (例如 argv 同时含
     // deep link URL 和 --open-folder, 现实场景极罕见但 bootstrap 两条 scan 都
     // 会触发),后到的覆盖前者。但 warn log 留下排查线索,事后能从日志识别这种
@@ -526,7 +526,7 @@ function dispatchDeepLink(payload: DeepLinkPayload, shouldFocus = true, owner?: 
       return;
     }
   }
-  // Imports use this event only as a wake-up; MainLayout consumes the pending slot.
+  // Retained intents use this event only as a wake-up; MainLayout consumes the pending slot.
   // Other existing navigation events retain their direct-delivery behavior.
   // 同时把窗口拉前台 — open-url / second-instance 本身不会唤起,用户点链接的
   // 意图就是要看到 app。

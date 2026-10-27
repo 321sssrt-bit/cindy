@@ -29,6 +29,13 @@ const material = {
   imageSvg: '<svg />',
 };
 const load = async () => material;
+// Buttons exist while material is loading. Wait for the real action to become
+// usable so a disabled click cannot skip the PNG failure/cancellation path.
+async function clickReadyAction(name: string) {
+  const button = await screen.findByRole<HTMLButtonElement>('button', { name });
+  await waitFor(() => expect(button.disabled).toBe(false));
+  await act(async () => { fireEvent.click(button); });
+}
 beforeEach(() => {
   vi.clearAllMocks();
   io.copyText.mockResolvedValue(undefined);
@@ -52,7 +59,8 @@ describe('manual sharing output', () => {
     );
     const onClose = vi.fn();
     render(<ShareDialog load={load} onClose={onClose} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'sharing.copyImage' }));
+    await clickReadyAction('sharing.copyImage');
+    expect(io.png).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'sharing.close' }));
     await act(async () => {
       finish(new Blob(['png']));
@@ -63,15 +71,15 @@ describe('manual sharing output', () => {
   it('keeps the valid link usable after PNG generation fails', async () => {
     io.png.mockRejectedValueOnce(new Error('image unavailable'));
     render(<ShareDialog load={load} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'sharing.copyImage' }));
+    await clickReadyAction('sharing.copyImage');
     await waitFor(() => expect(io.error).toHaveBeenCalledWith('sharing.copyImageFailed'));
-    fireEvent.click(screen.getByRole('button', { name: 'sharing.copyLink' }));
+    await clickReadyAction('sharing.copyLink');
     await waitFor(() => expect(io.copyText).toHaveBeenCalledWith({ text: material.url }));
     expect(screen.getByRole('dialog')).toBeTruthy();
   });
   it('does not report a canceled native save as saved or failed', async () => {
     render(<ShareDialog load={load} onClose={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'sharing.saveImage' }));
+    await clickReadyAction('sharing.saveImage');
     await waitFor(() => expect(io.save).toHaveBeenCalledOnce());
     await waitFor(() =>
       expect(

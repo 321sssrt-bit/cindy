@@ -52,7 +52,7 @@ const response = {
   kind: 'plugin',
   shareId,
   includeAttribution: false,
-  url: `https://share.example.test/s/${shareId}?region=global&lang=en`,
+  url: `https://share.example.test/s/${shareId}`,
   imageSvg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
   plugin: {
     schemaVersion: 1,
@@ -110,22 +110,25 @@ describe('public sharing preparation', () => {
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
   it.each(['cn', 'dev'])(
-    'keeps %s sharing in Chinese and binds the returned link to that context',
+    'keeps %s creation in Chinese with a clean returned link',
     async (region) => {
       mocks.region = region;
-      const url = `https://share.example.test/s/${shareId}?region=cn&lang=zh-CN`;
+      const url = `https://share.example.test/s/${shareId}`;
       mocks.fetch.mockResolvedValue({ ...response, url });
       expect((await preparePluginShare(pluginId)).url).toBe(url);
       expect(mocks.fetch).toHaveBeenCalledWith(
         '/api/shares',
-        expect.objectContaining({ token: null }),
+        expect.objectContaining({
+          token: null,
+          body: { kind: 'plugin', reference: pluginId, includeAttribution: false, region: 'cn', lang: 'zh-CN' },
+        }),
       );
     },
   );
-  it('rejects a returned link that silently changes the language or region', async () => {
+  it.each(['?region=cn', '?lang=zh-CN'])('rejects a returned link with unexpected query %s', async (query) => {
     mocks.fetch.mockResolvedValue({
       ...response,
-      url: response.url.replace('lang=en', 'lang=zh-CN'),
+      url: `${response.url}${query}`,
     });
     await expect(preparePluginShare(pluginId)).rejects.toThrow('SHARE_READ_FAILED');
   });

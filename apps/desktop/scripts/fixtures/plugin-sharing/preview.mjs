@@ -37,12 +37,20 @@ createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:4178');
   res.setHeader('Cache-Control', 'no-store');
   if (url.pathname.startsWith('/share/')) {
+    // The canvas only reads its fixture and creates shares. Choose literal
+    // targets so no request path, query or redirect can select another endpoint.
+    const target = !url.search && req.method === 'GET' && url.pathname === '/share/fixture.json'
+      ? 'http://127.0.0.1:4179/fixture.json'
+      : !url.search && req.method === 'POST' && url.pathname === '/share/api/shares'
+        ? 'http://127.0.0.1:4179/api/shares'
+        : null;
+    if (!target) { res.writeHead(404).end(); return; }
     try {
       const chunks = []; let size = 0;
       for await (const chunk of req) { size += chunk.length; if (size > 4096) { res.writeHead(413).end(); return; } chunks.push(chunk); }
       const headers = {};
       for (const key of ['content-type', 'authorization']) if (req.headers[key]) headers[key] = req.headers[key];
-      const response = await fetch(`http://127.0.0.1:4179/${url.pathname.slice(7)}${url.search}`, { method: req.method, headers, ...(chunks.length ? { body: Buffer.concat(chunks) } : {}) });
+      const response = await fetch(target, { method: req.method, redirect: 'error', headers, ...(chunks.length ? { body: Buffer.concat(chunks) } : {}) });
       res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') ?? 'application/octet-stream' });
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch { res.writeHead(503).end('分享网页原型尚未启动'); }

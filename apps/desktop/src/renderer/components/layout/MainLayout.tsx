@@ -809,11 +809,11 @@ export function MainLayout() {
         void pullChatInvitations();
         return;
       }
-      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join') {
+      if (payload.type !== 'provider-import' && payload.type !== 'shared-task-join' && payload.type !== 'provider-share-join' && payload.type !== 'plugin') {
         handleDeepLinkPayload(payload);
         return;
       }
-      // Main retains imports through login. Both this wake-up and the mount pull
+      // Main retains these intents through login. Both this wake-up and the mount pull
       // use the same atomic take, so either ordering navigates only once.
       void pullChatInvitations();
     });

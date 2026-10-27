@@ -42,7 +42,6 @@ export async function preparePluginShare(
   const baseUrl = getBuildClientEndpoint('shareBaseUrl');
   if (!baseUrl) throwIpcError('SHARE_NOT_CONFIGURED', 'Sharing is not configured');
   const region = CURRENT_CINDY_REGION === 'global' ? 'global' : 'cn';
-  const query = new URLSearchParams({ region, lang: region === 'cn' ? 'zh-CN' : 'en' });
   try {
     const signed = includeAttribution && session.isAuthenticated && !!session.user;
     const request = (token: string | null) => {
@@ -80,7 +79,7 @@ export async function preparePluginShare(
     // The service can resolve legacy IDs, but cannot redirect the client to an arbitrary origin.
     if (typeof row.shareId !== 'string' || !/^[A-Za-z0-9_-]{32}$/.test(row.shareId) || row.includeAttribution !== signed)
       throw new Error('Invalid share binding');
-    const url = `${baseUrl}/s/${row.shareId}?${query}`;
+    const url = `${baseUrl}/s/${row.shareId}`;
     if (
       row.url !== url ||
       typeof row.imageSvg !== 'string' ||

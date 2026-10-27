@@ -59,6 +59,7 @@ import {
   WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
 } from '../shared/windowBackdrop';
 import { isDeepLinkProviderConnectId } from '../shared/deepLinkSchemes';
+import { isValidPluginResourceId } from '@cindy/plugin-protocol';
 import {
   parseProjectOrderSnapshot,
   SIDEBAR_APPLY_PROJECT_ORDER_CHANNEL,
@@ -1621,6 +1622,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('plugin-market:snapshot'),
     detail: (pluginId: string): Promise<import('../shared/pluginMarket').PluginMarketDetail> =>
       ipcRenderer.invoke('plugin-market:detail', pluginId),
+    prepareShare: (pluginId: string, options?: import('../shared/share').ShareOptions): Promise<import('../shared/share').ShareContent> =>
+      ipcRenderer.invoke('plugin-market:prepare-share', pluginId, options),
     localIcons: (
       requests: import('../shared/pluginMarket').PluginMarketLocalIconRequest[],
     ): Promise<import('../shared/pluginMarket').PluginMarketLocalIconResult[]> =>
@@ -2371,6 +2374,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Discord Bot (Settings → IM Bot tab) ──
   // 用户本机自建 Discord App + Bot Token;凭证保存在本机 secrets。
   discordBot: {
+    reconnect: () => ipcRenderer.invoke('discordBot:reconnect'),
     getStatus: (): Promise<{
       status:
         | { kind: 'idle' }
@@ -2870,9 +2874,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isCustomized?: boolean;
   }> => ipcRenderer.invoke('update-channel-settings-reset'),
   relaunchForChannelChange: (): Promise<void> => ipcRenderer.invoke('update-channel-relaunch'),
-  /** Restart once; the next startup refreshes only the confirmed managed harness first. */
-  relaunchForHarnessUpdate: (kind: 'claude-code' | 'codex'): Promise<{ accepted: true }> =>
-    ipcRenderer.invoke('update-harness-relaunch', kind),
+  /** Cache the confirmed target before the user chooses to interrupt work and restart. */
+  prepareHarnessUpdate: (kind: 'claude-code' | 'codex', version: string): Promise<{ ready: true }> =>
+    ipcRenderer.invoke('update-harness-prepare', kind, version),
+  /** Prepared targets adopt cache only; omitted version keeps the legacy repair flow. */
+  relaunchForHarnessUpdate: (kind: 'claude-code' | 'codex', preparedVersion?: string): Promise<{ accepted: true }> =>
+    ipcRenderer.invoke('update-harness-relaunch', kind, preparedVersion),
   probeBetaChannel: (): Promise<{ available: boolean }> =>
     ipcRenderer.invoke('update-channel-probe-beta'),
   setUpdateRelaunchTheme: (theme: 'light' | 'dark'): void => {
@@ -4015,6 +4022,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         | { type: 'new-session'; workingDir: string }
         | { type: 'share-import'; filePath: string }
         | { type: 'provider-import'; importId: string }
+        | { type: 'plugin'; pluginId: string }
         | { type: 'shared-task-join'; invitation: string; server: string }
         | { type: 'provider-share-join'; link: string }
         | { type: 'chat-invite'; token: string }
@@ -4030,6 +4038,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         workingDir?: unknown;
         filePath?: unknown;
         importId?: unknown;
+        pluginId?: unknown;
         invitation?: unknown;
         token?: unknown;
         server?: unknown;
@@ -4058,6 +4067,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
             ? { islandEntryId: p.islandEntryId }
             : {}),
         });
+      } else if (p.type === 'plugin' && isValidPluginResourceId(p.pluginId)) {
+        callback({ type: 'plugin', pluginId: p.pluginId });
       } else if (p.type === 'chat-message' && typeof p.groupId === 'string' && typeof p.messageId === 'string'
         && [p.groupId, p.messageId, ...(p.threadRootId === undefined ? [] : [p.threadRootId])].every(value => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))) {
         callback({ type: 'chat-message', groupId: p.groupId, messageId: p.messageId,
@@ -4125,6 +4136,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     | { type: 'new-session'; workingDir: string }
     | { type: 'share-import'; filePath: string }
     | { type: 'provider-import'; importId: string }
+    | { type: 'plugin'; pluginId: string }
     | { type: 'shared-task-join'; invitation: string; server: string }
     | { type: 'provider-share-join'; link: string }
     | { type: 'chat-invite'; token: string }
@@ -4436,6 +4448,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resolvePath: (params: {
     href: string;
     workingDir: string;
+    /** User retry bypasses the host's shared render-time cache. */
+    refresh?: boolean;
   }): Promise<{
     status: 'unique' | 'multiple' | 'none';
     candidates: string[];

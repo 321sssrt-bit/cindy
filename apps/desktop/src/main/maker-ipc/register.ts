@@ -1065,8 +1065,8 @@ import {
   createOrcaRemoteWorkerSessionOpener,
   registerOrcaRemoteWorkerHandlers,
 } from './orcaRemoteWorkerHost.js';
-import { createOrcaRemoteWorkers, invokeDeviceValue, isExecutionDeviceCandidate, type OrcaRemoteWorkers } from './orcaRemoteWorkers.js';
-import { getReceivedShares, providerShareAgentDeviceId } from '../device-link/providerShareGuest.js';
+import { createOrcaRemoteWorkers, invokeDeviceValue, type OrcaRemoteWorkers } from './orcaRemoteWorkers.js';
+import { listWorkerAgentLocations } from './workerAgentLocations.js';
 import {
   ORCA_EXECUTION_DEVICES_CHANNEL,
   ORCA_REMOTE_WORKER_BRIDGE_CHANNEL,
@@ -1501,6 +1501,7 @@ import {
   setGhostErrandRunner,
   setGhostWorkspaceSessionService,
   setGhostLibraryExtraDirSync,
+  setGhostAgentModelLocationSources,
   getFocusedGhostSessionId,
   notifyGhostSessionEvent,
   getInstalledGhostName,
@@ -14634,6 +14635,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // 的会话聚焦通道。注入方式与 setGhostAgentTurnRunner 同款倒置,避免
   // cindy-brain 反向依赖 maker-ipc / localDb 形成模块环。
   setGhostLibraryExtraDirSync(syncLibraryReadonlyExtraDir);
+  setGhostAgentModelLocationSources({
+    listLocations: listWorkerAgentLocations,
+    readRemoteViews: (agentDeviceId) => readDeviceProviderViews(remoteBackgroundInvoke, agentDeviceId),
+  });
   getGhostFsSlot().setSessionSnapshotResolver(async (sessionId, instanceId) =>
     resolveGhostFsSessionSnapshot((id) => getMaker().getSession(id), sessionId, instanceId));
   setGhostWorkspaceSessionService({
@@ -15742,31 +15747,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (getDeviceLinkInvokeContext()?.sharedTask) throwIpcError('PERMISSION_DENIED', 'not available to shared task guests');
     return { devices: await orcaRemoteWorkers.listExecutionDevices() };
   });
-
-  /**
-   * Lead 的 list_available_models 给出的 Worker Agent 位置(远程供应商)：同账号在线、开了远程控制的
-   * 电脑，以及收到的、未暂停的分享。只列位置不读目录；那台没开放供应商时按位置再列模型会是空的。
-   * 分享不写分享者的电脑名(provider-sharing.md §6)，写「供应商 · 分享者」。
-   */
-  async function listWorkerAgentLocations(): Promise<Array<{ agentDeviceId: string; name: string }>> {
-    const { devices } = await handleListDevices(deviceDirectoryDeps()).catch(() => ({ devices: [] }));
-    const shares = getReceivedShares().filter((share) => share.status === 'active');
-    return [
-      ...devices
-        .filter(isExecutionDeviceCandidate)
-        .map((device) => ({ agentDeviceId: device.deviceId, name: device.name || device.deviceId })),
-      ...shares.flatMap((share) => {
-        try {
-          return [{
-            agentDeviceId: providerShareAgentDeviceId(share.shareId),
-            name: `${share.providerLabel} · ${share.owner.displayName}`,
-          }];
-        } catch {
-          return [];
-        }
-      }),
-    ];
-  }
 
   const getProviderRoutingContext = () =>
     readOrcaWorkerProviderRoutingContext({

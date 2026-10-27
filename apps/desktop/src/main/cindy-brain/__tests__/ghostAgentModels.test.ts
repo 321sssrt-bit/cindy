@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderView } from '@cindy/model-providers';
-import { projectGhostAgentModels } from '../ghostAgentModels.js';
+import { createGhostAgentModelsCache, projectGhostAgentModels } from '../ghostAgentModels.js';
 
 const provider = (id: string, efforts: string[]) =>
   ({
@@ -104,5 +104,38 @@ describe('plugin model projection', () => {
     expect(before.ok && before.models.map(m => m.agent)).toEqual(['codex']);
     const after = projectGhostAgentModels([p], ['codex', 'pi']);
     expect(after.ok && after.models.map(m => m.agent)).toEqual(['codex', 'pi']);
+  });
+
+  it('projects a remote location with catalog defaults and distinct provider rows', async () => {
+    const anthropic = provider('anthropic', ['high']);
+    const api = provider('anthropic-api', ['high']);
+    anthropic.models.codex![0]!.defaultEnabled = false;
+    const result = await createGhostAgentModelsCache().catalog('owner', 'claude', async () => [anthropic, api]);
+    expect(result).toEqual({
+      ok: true,
+      agentDeviceId: 'claude',
+      models: [
+        {
+          visible: false,
+          id: 'model',
+          name: 'Model',
+          agent: 'codex',
+          providerId: 'anthropic',
+          providerName: 'anthropic',
+          efforts: ['high'],
+          defaultEffort: 'high',
+        },
+        {
+          visible: true,
+          id: 'model',
+          name: 'Model',
+          agent: 'codex',
+          providerId: 'anthropic-api',
+          providerName: 'anthropic-api',
+          efforts: ['high'],
+          defaultEffort: 'high',
+        },
+      ],
+    });
   });
 });

@@ -6,10 +6,15 @@ import {
 } from '@cindy/model-providers';
 import type { GhostAgentModelsResult } from '../../shared/ghost.js';
 
+export const GHOST_AGENT_MODELS_CACHE_MS = 60_000;
+export const GHOST_REMOTE_AGENT_MODELS = ['codex', 'claude-code', 'pi'] as const;
+export type GhostAgentLocation = { agentDeviceId: string; name: string };
+type GhostAgentModelsOk = Extract<GhostAgentModelsResult, { ok: true }>;
+
 /** Project each provider separately: the same model can support different efforts per route. */
 export function projectGhostAgentModels(views: ProviderView[], availableAgents: readonly string[], visibilityOverride: (agent: 'codex' | 'claude-code' | 'pi', providerId: string, modelId: string) => boolean | undefined = () => undefined): GhostAgentModelsResult {
-  const models: Extract<GhostAgentModelsResult, { ok: true }>['models'] = [];
-  for (const agent of ['codex', 'claude-code', 'pi'] as const) {
+  const models: GhostAgentModelsOk['models'] = [];
+  for (const agent of GHOST_REMOTE_AGENT_MODELS) {
     if (!availableAgents.includes(agent)) continue;
     for (const provider of connectedProvidersForAgent(views, agent)) {
       for (const model of provider.models[agent] ?? []) {
@@ -29,4 +34,43 @@ export function projectGhostAgentModels(views: ProviderView[], availableAgents: 
     }
   }
   return { ok: true, models };
+}
+
+/** Plugin GET /agent-models caches successful locations and per-device catalogs for 60s. */
+export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs?: number } = {}) {
+  const now = options.now ?? Date.now;
+  const ttlMs = options.ttlMs ?? GHOST_AGENT_MODELS_CACHE_MS;
+  let locations: { owner: string; at: number; value: GhostAgentLocation[] } | null = null;
+  const catalogs = new Map<string, { at: number; value: GhostAgentModelsOk }>();
+
+  return {
+    async locations(owner: string, read: () => Promise<GhostAgentLocation[]>): Promise<GhostAgentLocation[] | undefined> {
+      if (locations && locations.owner === owner && now() - locations.at < ttlMs) return locations.value;
+      try {
+        const value = await read();
+        locations = { owner, at: now(), value };
+        return value;
+      } catch {
+        return undefined;
+      }
+    },
+    async catalog(
+      owner: string,
+      agentDeviceId: string,
+      read: () => Promise<ProviderView[]>,
+    ): Promise<GhostAgentModelsResult> {
+      const key = `${owner}\0${agentDeviceId}`;
+      const hit = catalogs.get(key);
+      if (hit && now() - hit.at < ttlMs) return hit.value;
+      try {
+        const projected = projectGhostAgentModels(await read(), GHOST_REMOTE_AGENT_MODELS);
+        if (!projected.ok) return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
+        const value = { ...projected, agentDeviceId };
+        catalogs.set(key, { at: now(), value });
+        return value;
+      } catch {
+        return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
+      }
+    },
+  };
 }

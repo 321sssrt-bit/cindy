@@ -1,4 +1,4 @@
-import { beginQuietScheduledOutput, hidesScheduledTranscript } from './silent-output.js';
+import { beginQuietScheduledOutput, hidesScheduledTranscript, hasVisibleScheduledOutput, isQuietScheduledOutput } from './silent-output.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import { BUILTIN_ROUTINE_SCHEDULE_PREFIX, routineInstructionFromPrompt } from '../../shared/botAutonomy.js';
 import {
@@ -3337,7 +3337,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     // Save a canonical reply missing from the normal text-event persistence path,
     // including done-only replacements of a partial stream. Matching replies need no extra row.
     const missingFinalReply =
-      !hidesScheduledTranscript(schedule) &&
+      !(hidesScheduledTranscript(schedule) && !hasVisibleScheduledOutput(ctx.runId)) &&
       !finalTextMatchesStream &&
       finalRun.status === 'success' &&
       !!assistantText.trim();
@@ -3368,7 +3368,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       if (!silenced) ctx.onRunnerNotified?.(finalRun.status === 'success' ? 'success' : 'failure');
       const ownerScope = captureDataOwnerBroadcastScope();
       if (
-        (hidesScheduledTranscript(schedule) || missingFinalReply) &&
+        ((hidesScheduledTranscript(schedule) && !hasVisibleScheduledOutput(ctx.runId)) || missingFinalReply) &&
         finalRun.status === 'success' &&
         assistantText.trim()
       ) {
@@ -3445,6 +3445,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     const sessionId = initialSession.id;
     let assistantText = '';
     let finalTextMatchesStream = false;
+    let streamContainsHiddenText = false;
     // A non-empty full-text snapshot (`isFullText`, e.g. a completed Codex or
     // Pi item) is already a sealed transcript row; deltas that follow it start a
     // new message. A block final without `isFullText` (claude-code) may still
@@ -3564,18 +3565,30 @@ export class MakerScheduleRunner implements ScheduleRunner {
               // (Codex commentary before its empty answer item, an empty item
               // without phase, or a repeated empty item) is never replayed,
               // regardless of the event shape that carried it (#5220, #5277).
-              if (!assistantTextSealed) assistantText = '';
+              if (!assistantTextSealed) {
+                assistantText = '';
+                streamContainsHiddenText = false;
+              }
               return;
             }
-            if (data.text.trim()) finalTextMatchesStream = true;
+            const hidden = !!data.text.trim()
+              && isQuietScheduledOutput({ ...ev, turnOrigin: options.origin });
             if (data.isFinal) {
               assistantText = data.text;
               assistantTextSealed = data.isFullText === true;
+              streamContainsHiddenText = hidden;
             } else {
-              if (assistantTextSealed) assistantText = '';
+              if (assistantTextSealed) {
+                assistantText = '';
+                streamContainsHiddenText = false;
+              }
               assistantTextSealed = false;
               assistantText += data.text;
+              streamContainsHiddenText ||= hidden;
             }
+            // Raw provider text may span the quiet/visible boundary. A visible
+            // fallback tail does not prove that the hidden prefix was persisted.
+            if (data.text.trim()) finalTextMatchesStream = !streamContainsHiddenText;
           }
           return;
         }
@@ -3589,6 +3602,12 @@ export class MakerScheduleRunner implements ScheduleRunner {
           // 边界是本 run 的 auto-resume claim。旧 turn 的 done 即使迟到也不能提前
           // 收口，恢复 turn 跨过 pre-vendor 边界时 claim 会先被清除。
           if (isCurrentAutoResumePending()) return;
+          const terminalOutcome = ev.data as { status?: unknown; cancelled?: boolean } | null;
+          const terminalStatus = terminalOutcome?.cancelled === true ? 'cancelled' : terminalOutcome?.status;
+          if (['cancelled', 'aborted', 'interrupted', 'failed'].includes(String(terminalStatus))) {
+            fail(new Error(`Scheduled turn ended with status: ${terminalStatus}`));
+            return;
+          }
           // silent-stop:上游空内容消息静默收尾,main 守卫会在 1.5s 后自动续跑
           // (或弹耗尽横幅)。不 finish——等续跑 turn 的 done 或守卫 settle 通知。
           // settle 通知覆盖守卫决策为非续跑的所有路径(skip/exhausted/send 失败),
@@ -3602,8 +3621,8 @@ export class MakerScheduleRunner implements ScheduleRunner {
               : (owner.beginTurnContinuationWait?.(continuationId) ?? null);
           if (continuationState === 'cancelled') {
             // Provider already observed an explicit stop/teardown. Session
-            // gets a separate ordered boundary; this run can settle now.
-            finish();
+            // gets a separate ordered boundary; this run did not complete.
+            fail(new Error('Scheduled turn continuation was cancelled'));
             return;
           }
           if (continuationState === 'awaiting' || continuationState === 'active') {
@@ -3620,7 +3639,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
                 }
                 pendingContinuationUnsub?.();
                 pendingContinuationUnsub = undefined;
-                finish();
+                fail(new Error('Scheduled turn continuation was cancelled'));
               },
             );
             this.deps.logger.info?.(
@@ -3777,7 +3796,10 @@ export class MakerScheduleRunner implements ScheduleRunner {
 }
 
 function buildScheduledRunPrompt(schedule: Schedule, ctx: FireContext, checkOutput = ''): string {
-  return `${schedule.prompt}${checkOutput}${buildScheduledRunContextInstruction(schedule, ctx)}${
+  const routineWait = schedule.source === 'bot' && schedule.recurring
+    ? '\n\n[Routine checkpoint] For recurring checks with another trigger scheduled, inspect the current state and finish this run once actionable work is handled. If only external progress is pending, leave a concise checkpoint (identifiers, current state and next check) in the final result; do not keep this run alive with repeated sleep/poll calls. A later trigger may start with fresh context: when prior progress is needed, retrieve the previous result from the existing routine or schedule run history instead of assuming it is in this conversation. Complete one-time assignments and preserve explicit instructions requiring continuous observation or a delivery deadline.'
+    : '';
+  return `${schedule.prompt}${checkOutput}${buildScheduledRunContextInstruction(schedule, ctx)}${routineWait}${
     schedule.silentWhenIdle ? buildSilentRunInstruction(schedule.source === 'bot') : ''
   }`;
 }

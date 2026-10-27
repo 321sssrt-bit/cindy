@@ -986,6 +986,12 @@ export interface AgentDeps {
     modelId: string,
   ) => number | null;
 
+  /** Host-resolved model percentage. Hosts without a policy retain their runtime defaults. */
+  resolveModelCompactionPct?: (
+    providerId: string | null | undefined,
+    modelId: string,
+  ) => number | null;
+
   /** Resolve native metadata using the exact app-server config and usage report. */
   resolveCodexContextWindowInfo?: (
     modelId: string,

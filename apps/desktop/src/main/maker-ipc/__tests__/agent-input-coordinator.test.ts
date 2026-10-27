@@ -2335,6 +2335,8 @@ describe('AgentInputCoordinator send transaction', () => {
     h.coordinator.enqueue(sid, { ...makeItem('typed', 'Update Cindy'), autoReviewUserText: 'Update Cindy' });
     await flush();
     expect(h.coordinator.isActiveInputOwnerAuthored(sid)).toBe(true);
+    expect(h.coordinator.isActiveInputOwnerAuthored(sid, 0)).toBe(true);
+    expect(h.coordinator.isActiveInputOwnerAuthored(sid, 1)).toBe(false);
     await h.coordinator.steer(sid, {
       ...makeItem('from-task', 'please update'),
       autoReviewUserText: 'please update',

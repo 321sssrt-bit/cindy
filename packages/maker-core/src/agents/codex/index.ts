@@ -3929,6 +3929,7 @@ assertRouteCurrent();
      */
     let activeTurnModel: string | undefined = opts.model;
     let activeTurnContextLimit = this.deps.resolveModelContextLimit?.(opts.providerId, opts.model) ?? null;
+    let activeTurnCompactionPct = this.deps.resolveModelCompactionPct?.(opts.providerId, opts.model) ?? 90;
     /**
      * 任务级工作上下文预算（tokens）：host 已按目录上限与模型级上限收敛。
      * 优先于模型级上限/目录默认；host 在预算变化时直接触发重建，不走热切。
@@ -6574,6 +6575,9 @@ assertRouteCurrent();
     }
 
     let customProviderThreadConfig: Record<string, unknown> = {};
+    const currentCompactionPct = () => this.deps.resolveModelCompactionPct?.(
+      mutableProviderId, mutableCatalogModel ?? mutableModel,
+    ) ?? null;
     const currentContextLimit = (): number | null => {
       // 任务级预算优先：本任务的工作窗口由用户显式选定，host 已收敛到目录上限内。
       if (mutableContextWindowBudget !== null) return mutableContextWindowBudget;
@@ -6592,6 +6596,7 @@ assertRouteCurrent();
     };
     let appliedContextLimit = currentContextLimit();
     activeTurnContextLimit = effectiveThreadContextWindow(appliedContextLimit);
+    activeTurnCompactionPct = currentCompactionPct() ?? 90;
 
     /** 设备托管：线程与每轮都选中任务所在电脑上的 exec-server 环境(工作目录与根都是那台电脑的路径)。 */
     function hostedEnvironmentParams(): { environments?: Array<Record<string, unknown>> } {
@@ -6771,7 +6776,7 @@ assertRouteCurrent();
               model_context_window: Math.floor(threadContextWindow),
               model_auto_compact_token_limit: Math.max(
                 1,
-                Math.floor(threadContextWindow * 0.9),
+                Math.floor(threadContextWindow * ((currentCompactionPct() ?? 90) / 100)),
               ),
             }
           : {}),
@@ -13644,6 +13649,7 @@ assertRouteCurrent();
         // 立即改这两个值也不会串到还在产出的本 turn (见 activeTurnModel / capContextWindow)。
         activeTurnModel = mutableCatalogModel;
         activeTurnContextLimit = effectiveThreadContextWindow(appliedContextLimit);
+        activeTurnCompactionPct = currentCompactionPct() ?? 90;
         activeTurnProviderId = mutableProviderId;
         const markTurnConfigAccepted = (): void => {
           threadMayHaveRollout = true;
@@ -14075,6 +14081,7 @@ assertRouteCurrent();
               // 窗口归属必须跟着改写走, 否则查不到目录条目、沿用 app-server 的基础模型窗口。
               activeTurnModel = mutableCatalogModel;
               activeTurnContextLimit = effectiveThreadContextWindow(appliedContextLimit);
+              activeTurnCompactionPct = currentCompactionPct() ?? 90;
               activeTurnProviderId = mutableProviderId;
               if (serviceTierState.value !== undefined) {
                 turnParams.serviceTier = serviceTierState.value ?? null;
@@ -14551,7 +14558,7 @@ assertRouteCurrent();
         const model = activeTurnModel ?? mutableModel;
         const reportedWindow = lastNativeContextWindow;
         const contextLimit = activeTurnContextLimit;
-        const compactRatio = 0.9;
+        const compactRatio = activeTurnCompactionPct / 100;
         try {
           const response = await host.request<{ config?: Record<string, unknown> }>(
             Method.ConfigRead, { includeLayers: false, cwd: opts.workingDir }, { timeoutMs: 5_000 },

@@ -4424,7 +4424,7 @@ interface ElectronAPI {
     baseRepo: string;
   }) => Promise<import('@/lib/worktree.types').SuggestNameResp>;
   worktreeBranchSyncStatus: (req: import('../shared/worktreeBranchSync').BranchSyncRequest) => Promise<import('../shared/worktreeBranchSync').BranchSyncStatus>;
-  worktreeSyncBranch: (req: import('../shared/worktreeBranchSync').BranchSyncRequest) => Promise<import('../shared/worktreeBranchSync').BranchSyncResult>;
+  worktreeSyncBranch: (req: import('../shared/worktreeBranchSync').BranchSyncRequest) => Promise<import('../shared/worktreeBranchSync').BranchSyncReply>;
   worktreeListBranches: (req: {
     baseRepo: string;
   }) => Promise<import('@/lib/worktree.types').ListBranchesResp>;
@@ -5965,6 +5965,11 @@ interface ElectronAPI {
      */
     getModelContextLimit: (
       target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+    ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
+    setModelCompaction: (
+      target: import('../shared/modelContextLimit').ModelContextLimitTarget,
+      pct: number | null,
+      owner: import('../shared/modelContextLimit').ModelContextLimitOwner,
     ) => Promise<import('../shared/modelContextLimit').ModelContextLimitView>;
     /** 任务窗口档位表的权威边界（与 device-link 的 maker:get-context-window-bounds 同一 handler）。 */
     getSessionContextWindowBounds: (

@@ -4033,7 +4033,7 @@ function astraResponsesPayload(payload, model) {
 
 async function nativeFastPayload(payload, model, ctx) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
-  if (!model || !['openai-responses', 'azure-openai-responses', 'openai-completions'].includes(model.api)) return undefined;
+  if (!model || !['openai-responses', 'azure-openai-responses', 'openai-completions', 'openai-codex-responses'].includes(model.api)) return undefined;
   let models;
   try { models = JSON.parse(process.env.CINDY_PI_FAST_MODELS || '[]'); } catch { return undefined; }
   if (!Array.isArray(models) || !models.some(item => item.provider === model.provider && item.id === model.id)) return undefined;

@@ -183,6 +183,68 @@ function startUpgradeUpstream(opts: { handshakeDelayMs?: number } = {}): Promise
 }
 
 describe('anthropic-compat-proxy websocket upgrades', () => {
+  it('prepares host authentication without forwarding client credentials and revokes live sockets', async () => {
+    const upstream = await startUpgradeUpstream();
+    const controller = new AbortController();
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid', transformRequest: [],
+      resolveWebSocketUpstream: () => upstream.url,
+      prepareWebSocketRequest: async ({ headers }) => ({ headers: {
+        authorization: 'Bearer fixture-host-token', 'sec-websocket-key': headers['sec-websocket-key'],
+        'sec-websocket-version': headers['sec-websocket-version'],
+      }, signal: controller.signal }),
+    });
+    const client = await openUpgrade(proxy.url, '/codex/responses', Buffer.alloc(0), [
+      'Authorization: Bearer client-placeholder', 'X-Cindy-Pi-Session-Token: fixture-local-secret',
+    ]);
+    expect(client.head).toContain('101 Switching Protocols');
+    expect(upstream.requests[0].url).toBe('/codex/responses');
+    expect(upstream.requests[0].headers.authorization).toBe('Bearer fixture-host-token');
+    expect(upstream.requests[0].headers['x-cindy-pi-session-token']).toBeUndefined();
+    const closed = new Promise<void>(resolve => client.socket.once('close', () => resolve()));
+    controller.abort(); await closed;
+    expect(client.socket.destroyed).toBe(true);
+  });
+
+  it('rechecks live authorization on reused sockets while preserving compression negotiation', async () => {
+    const upstream = await startUpgradeUpstream();
+    let authorized = true;
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid', transformRequest: [],
+      resolveWebSocketUpstream: () => upstream.url,
+      prepareWebSocketRequest: async ({ headers }) => ({ headers: { ...headers },
+        signal: new AbortController().signal, authorize: () => authorized }),
+    });
+    const client = await openUpgrade(proxy.url);
+    expect(client.head).toContain('permessage-deflate');
+    client.socket.write('PING');
+    await waitForSocketText(client.socket, client.rest, 'PONG');
+    const closed = new Promise<void>(resolve => client.socket.once('close', () => resolve()));
+    authorized = false;
+    client.socket.write('FORBIDDEN');
+    await closed;
+    expect(upstream.received.join('')).not.toContain('FORBIDDEN');
+  });
+
+  it('does not dispatch when authorization is revoked while preparation is pending', async () => {
+    const upstream = await startUpgradeUpstream();
+    const controller = new AbortController();
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid', transformRequest: [],
+      resolveWebSocketUpstream: () => upstream.url,
+      prepareWebSocketRequest: async () => {
+        controller.abort(); return { headers: {}, signal: controller.signal };
+      },
+    });
+    const endpoint = new URL(proxy.url);
+    const socket = connect(Number(endpoint.port), endpoint.hostname); sockets.add(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('error', reject); socket.once('close', () => resolve());
+      socket.once('connect', () => socket.write(upgradeRequest('/codex/responses', endpoint.host)));
+    });
+    expect(upstream.requests).toHaveLength(0);
+  });
+
   it('forwards the upgrade handshake, strips /v1, and pipes buffered bytes both ways', async () => {
     const upstream = await startUpgradeUpstream();
     proxy = await createAnthropicCompatProxy({

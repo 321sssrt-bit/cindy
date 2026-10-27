@@ -1436,7 +1436,7 @@ export function useRemoteProjectSessions(): Session[] {
   return useSyncExternalStore(subscribe, actions.getVisibleMergedRemoteSessions);
 }
 
-/** Both initial cache hydration and device discovery have settled (including failure/cancellation). */
+/** Initial discovery settled, was cancelled, or exceeded the startup route's wait budget. */
 export function useRemoteInitialDiscoverySettled(): boolean {
   return useSyncExternalStore(subscribe, actions.getInitialDiscoverySettled);
 }

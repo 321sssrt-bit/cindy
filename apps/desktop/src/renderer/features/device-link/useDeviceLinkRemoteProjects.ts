@@ -133,6 +133,9 @@ export function startSessionListTokenRefresh(
 
 /** sessions:created reseed 防抖(被控端短时间多次创建会话 / orca 起多 worker 时合并重拉)。 */
 const RESEED_DEBOUNCE_MS = 300;
+// Limit only the startup route's discovery wait, not the request or peer lifetime.
+// Matches the background device directory's 10s budget; late results still apply.
+const INITIAL_DISCOVERY_WAIT_MS = 10_000;
 
 /**
  * best-effort push 的窗口内 anti-entropy 周期。列表、置顶、归档/删除走 sessions:patched /
@@ -424,6 +427,7 @@ export function useDeviceLinkRemoteProjects(
 
     let disposed = false;
     const finishInitialDiscovery = remoteProjectsStore.beginInitialDiscovery();
+    const initialDiscoveryTimer = setTimeout(finishInitialDiscovery, INITIAL_DISCOVERY_WAIT_MS);
     /**
      * 「已明确离场、不许被冷缓存种回来」的设备 id。删除 / 撤销访问 / 关闭被控 / 本机停用控制
      * 路径都会往里加 —— 它们清盘是异步的,而 mount 时那次 readCachedSessionList 可能早已
@@ -909,7 +913,10 @@ export function useDeviceLinkRemoteProjects(
     // Neither an empty bootstrap set nor the first completed read alone proves
     // the remembered remote task is absent. Per-device loading takes over once
     // discovery starts bootstrap; failures and cleanup must release this gate.
-    void Promise.allSettled([initialCacheRead, initialDirectoryRead]).then(finishInitialDiscovery);
+    void Promise.allSettled([initialCacheRead, initialDirectoryRead]).then(() => {
+      clearTimeout(initialDiscoveryTimer);
+      finishInitialDiscovery();
+    });
 
     const offPresence = window.electronAPI.deviceLink.onPresenceChanged((snap) => {
       applyDevice({
@@ -984,6 +991,7 @@ export function useDeviceLinkRemoteProjects(
         // 已空,整份快照被写成 [],main 侧据此把 session-list.json 删掉。于是「relay 停服
         // (非登出)」会在约 1.2s 后抹掉侧边栏冷缓存 —— 而「停服后重启、relay 仍未恢复」
         // 正是这份缓存要解决的场景(review: P2)。整体删除只归 owner 边界的 clearAll。
+        clearTimeout(initialDiscoveryTimer);
         remoteProjectsStore.clear();
         remoteProjectAliases.clear();
         cancelSessionListPersist();
@@ -1076,6 +1084,7 @@ export function useDeviceLinkRemoteProjects(
 
     return () => {
       disposed = true;
+      clearTimeout(initialDiscoveryTimer);
       setRemoteReseedImpl(null);
       setRemoteSessionBootstrapRetryImpl(null);
       wakeRemoteReconcileRef.current = () => undefined;

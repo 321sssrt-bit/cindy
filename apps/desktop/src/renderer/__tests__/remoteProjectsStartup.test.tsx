@@ -72,7 +72,7 @@ afterEach(() => {
 // #7437 / unit: real startup hook + redirect + mirror. Earlier tests seeded
 // bootstrap before mount, missing local-B arriving before cache/device discovery.
 // Deferred IPC replies verify the visible route without network or real waits.
-// Standalone on Windows: 5.51s wall / 3.74s Vitest / 61ms tests (18 cases, one worker).
+// Standalone on Windows: 5.01s wall / 3.38s Vitest / 62ms tests (21 cases, one worker).
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
@@ -184,14 +184,55 @@ it('releases the initial wait when Device Link stops, ignoring late completion',
   expect(state.navigate).toHaveBeenCalledTimes(1);
 });
 
+// PR #7453 / unit: the real directory IPC has no default network timeout.
+// Earlier failure cases rejected; an unresolved read must also release routing
+// without clearing other peers or navigating again when the late cache arrives.
+it.each(['cache', 'state', 'directory'] as const)('bounds initial discovery when %s never settles', async (pending) => {
+  const { cache, link, directory } = setupStartup();
+  await act(async () => {
+    render(<StartupRoute />);
+    remoteProjectsStore.setDeviceSessions('healthy', 'Healthy', [
+      { id: 'healthy-task', status: 'active', source: 'desktop' } as import('@/lib/ccAgent.types').Session,
+    ]);
+    if (pending !== 'cache') cache.resolve([]);
+    if (pending !== 'state') link.resolve({ linkStatus: 'connecting' });
+    if (pending !== 'directory') directory.resolve({ devices: [
+      { deviceId: 'healthy', name: 'Healthy', online: false, remoteControlEnabled: false, isSelf: false },
+      { deviceId: 'late', name: 'Late', online: false, remoteControlEnabled: false, isSelf: false },
+    ] });
+  });
+  const peers = remoteProjectsStore.getDeviceList();
+  await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+  expect(state.navigate).not.toHaveBeenCalled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(state.navigate).toHaveBeenCalledExactlyOnceWith('/cc-agent/local-B', { replace: true });
+  expect(remoteProjectsStore.getDeviceList()).toEqual(peers);
+  expect(remoteProjectsStore.getSessionDeviceId('healthy-task')).toBe('healthy');
+  await act(async () => {
+    cache.resolve([{ deviceId: 'late', deviceName: 'Late', sessions: [
+      { id: 'remote-A', status: 'active', source: 'desktop' } as import('@/lib/ccAgent.types').Session,
+    ] }]);
+    link.resolve({ linkStatus: 'connecting' });
+    directory.resolve({ devices: [
+      { deviceId: 'healthy', name: 'Healthy', online: false, remoteControlEnabled: false, isSelf: false },
+      { deviceId: 'late', name: 'Late', online: false, remoteControlEnabled: false, isSelf: false },
+    ] });
+  });
+  expect(state.navigate).toHaveBeenCalledTimes(1);
+  if (pending === 'cache') expect(remoteProjectsStore.getSessionDeviceId('remote-A')).toBe('late');
+});
+
 it('does not let cancelled initialization settle a newly mounted synchronizer', async () => {
   const old = setupStartup();
   let view!: ReturnType<typeof render>;
   await act(async () => { view = render(<StartupRoute />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
   view.unmount();
   expect(remoteProjectsStore.getInitialDiscoverySettled()).toBe(true);
   const current = setupStartup();
   await act(async () => { render(<StartupRoute />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  expect(state.navigate).not.toHaveBeenCalled();
   await act(async () => {
     old.cache.resolve([]);
     old.link.resolve({ linkStatus: 'connecting' });

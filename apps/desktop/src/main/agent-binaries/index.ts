@@ -33,7 +33,7 @@ import fs from 'node:fs';
 import { app, BrowserWindow } from 'electron';
 
 import { createBinaryProvisioner } from './factory.js';
-import { probeBinaryVersion } from './binary-version-probe.js';
+import { isBinaryVersionNotOlder, normalizeBinaryVersion, probeBinaryVersion } from './binary-version-probe.js';
 import { findDevBinary } from './dev-fallback.js';
 import {
   findCachedLinuxRuntimeFallbackBinary,
@@ -447,7 +447,16 @@ export async function prepare(
         if (localPath) {
           const manifest = getCachedManifest();
           const asset = manifest && getVendorAsset(manifest, cfg.manifestField);
-          if (!asset || !hasPreparedBinaryDownload(cfg.vendorKey, asset)) {
+          let usePreparedDownload = false;
+          if (asset && hasPreparedBinaryDownload(cfg.vendorKey, asset)) {
+            const localVersion = await probeBinaryVersion(localPath, opts.signal);
+            const targetVersion = normalizeBinaryVersion(asset.version);
+            // As with managed installs, adopt only a provably newer target.
+            // Failed/unknown probes keep the already usable system/private CLI.
+            usePreparedDownload = Boolean(localVersion && targetVersion
+              && !isBinaryVersionNotOlder(localVersion, targetVersion));
+          }
+          if (!usePreparedDownload) {
             lastReadyPath.set(kind, localPath);
             return { ready: true, path: localPath, downloaded: false };
           }

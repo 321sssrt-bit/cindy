@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { Manifest } from '../../manifestService';
 import { createPiRuntimeRecovery } from '../pi-runtime-recovery';
 import { writeStartupBinaryUpdateMarker } from '../startup-update';
-import { newerStableVersion, PINNED_CODEX_VERSION } from './runtimeVersionFixtures';
+import { newerStableVersion, PINNED_CLAUDE_VERSION, PINNED_CODEX_VERSION } from './runtimeVersionFixtures';
 
 const mocks = vi.hoisted(() => ({
   userDataDir: '',
@@ -297,6 +297,31 @@ describe('explicit Pi selection on startup', () => {
 });
 
 describe('Linux local discovery before any update download', () => {
+  // #7435: a completed cache must not silently downgrade a user-managed Claude.
+  // Public prefetch -> prepare, one newer system CLI and one older archive. Unit.
+  it('keeps a newer Linux system Claude when an older background download is complete', async () => {
+    await reloadBinaries('linux');
+    const target = newerStableVersion(PINNED_CLAUDE_VERSION);
+    const current = newerStableVersion(target);
+    const oldArchive = gzipSync(Buffer.from(target));
+    const sha256 = createHash('sha256').update(oldArchive).digest('hex');
+    mocks.remoteManifest = { app: { version: '2.0.0' }, claudeCode: {
+      version: target, file: `claude-code/${target}/linux-x64/claude.gz`, sha256, size: oldArchive.length,
+    } };
+    const systemPath = writeExecutable(path.join(tempRoot, 'newer-system-claude'), `${current} (Claude Code)`);
+    mocks.systemCommands.set('claude', systemPath);
+    mocks.backgroundDownload.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.writeFileSync(targetPath, oldArchive);
+      return { path: targetPath, sha256, size: oldArchive.length };
+    });
+    await expect(binaries.prefetch('claude-code', { manifest: mocks.remoteManifest })).resolves.toBe(true);
+    await expect(binaries.prepare('claude-code', quiet)).resolves.toMatchObject({ ready: true, path: systemPath });
+    expect(binaries.getReadyBinaryPath('claude-code')).toBe(systemPath);
+    expect(fs.readFileSync(systemPath, 'utf8')).toBe(`${current} (Claude Code)`);
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(mocks.userDataDir, 'claude-code', target, '.verified'))).toBe(false);
+  });
+
   it('keeps the previously used system Codex when a newer CDN release appears on the next startup', async () => {
     await reloadBinaries('linux');
     const systemPath = writeExecutable(path.join(tempRoot, 'system-codex'), 'codex-cli ' + PINNED_CODEX_VERSION);

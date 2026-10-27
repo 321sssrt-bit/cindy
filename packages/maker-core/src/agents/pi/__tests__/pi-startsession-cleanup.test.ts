@@ -1532,6 +1532,249 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     await handle.close();
   });
 
+  // #7494: a child's internal `cindy:harness-hook` shares the extension_ui
+  // channel with permissions. It must be answered through the harness hook
+  // bridge, never surfaced as a `Subagent: tool` approval with `{}` input.
+  type PendingFixture = NonNullable<PiSubagentRunStatus['tasks'][number]['pendingApproval']>;
+  const harnessHook = (placeholder: string, id = 'hook-1'): PendingFixture => ({
+    id, method: 'input', title: 'cindy:harness-hook', placeholder,
+  });
+  const toolBeforeHook = harnessHook(JSON.stringify({
+    name: 'tool.before',
+    toolName: 'bash',
+    toolUseId: 'bash-1',
+    input: { command: 'git status' },
+  }));
+  function mockHarnessHookRun(
+    runId: string,
+    taskId: string,
+    ready: () => boolean,
+    approvals: PendingFixture[] = [toolBeforeHook],
+  ): void {
+    // Surface the child's requests only once the test is ready (handler wired),
+    // as in a live session where the handler is attached before tools run, and
+    // only to this test's own run root: a detached supervisor left draining by
+    // an earlier test must not answer them.
+    const root = piSubagentRuns.piSubagentRunRoot(agentHome, opts().sessionId);
+    mockRunDiscovery().mockImplementation(async (candidate) => candidate !== root || !ready() ? [] : [{
+      version: 1,
+      runId,
+      taskId,
+      parentSessionId: 's1',
+      runtimeOwnerId: ownerId(),
+      runnerInstanceId: `runner-${taskId}`,
+      state: 'running',
+      startedAt: 1,
+      updatedAt: 2,
+      tasks: approvals.map((pendingApproval, index) => ({
+        childId: `${runId}-${index + 1}`,
+        sessionId: `${runId}-${index + 1}`,
+        agent: 'worker',
+        title: 'hook-fixture',
+        status: 'running',
+        pendingApproval,
+      })),
+    }]);
+  }
+
+  it('answers a durable Subagent harness hook through the hook bridge instead of an approval prompt', async () => {
+    const runId = '123e4567-e89b-42d3-a456-426614174098';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-hook', () => handlerAttached);
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    const hook = vi.fn(async () => ({ action: 'block', reason: 'policy' }) as const);
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setInteractionResolver(resolver);
+    handle.setHarnessHookHandler?.(hook);
+    handlerAttached = true;
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook',
+      'approval',
+      expect.objectContaining({
+        childId: `${runId}-1`,
+        approvalId: 'hook-1',
+        // The bridge forwards only the action; reasons never reach Pi.
+        value: JSON.stringify({ action: 'block' }),
+        runtimeOwnerId: ownerId(),
+      }),
+    ), { timeout: 3_000 });
+    expect(hook).toHaveBeenCalledWith({
+      name: 'tool.before',
+      toolName: 'bash',
+      toolUseId: 'bash-1',
+      input: { command: 'git status' },
+    });
+    expect(resolver).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
+  it('forwards a durable Subagent compaction.before hook with only its name', async () => {
+    const runId = '123e4567-e89b-42d3-a456-42661417409a';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-compaction', () => handlerAttached, [
+      harnessHook(JSON.stringify({ name: 'compaction.before' })),
+    ]);
+    const hook = vi.fn(async () => ({ action: 'continue' }) as const);
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setHarnessHookHandler?.(hook);
+    handlerAttached = true;
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-compaction',
+      'approval',
+      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+    ), { timeout: 3_000 });
+    expect(hook).toHaveBeenCalledWith({ name: 'compaction.before' });
+
+    await handle.close();
+  });
+
+  // Same gate as the root session: anything that is not a well-formed
+  // tool.before / compaction.before keeps the native policy (continue) and
+  // never reaches the hook handler or an approval card.
+  it.each([
+    ['non-JSON payload', 'not json'],
+    ['unknown hook name', JSON.stringify({ name: 'tool.after', toolName: 'bash' })],
+    ['tool.before without a tool name', JSON.stringify({ name: 'tool.before', input: {} })],
+    ['array payload', '[]'],
+  ])('answers continue for a malformed durable Subagent hook (%s)', async (_case, placeholder) => {
+    const runId = '123e4567-e89b-42d3-a456-42661417409b';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-malformed', () => handlerAttached, [harnessHook(placeholder)]);
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    const hook = vi.fn(async () => ({ action: 'block' }) as const);
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setInteractionResolver(resolver);
+    handle.setHarnessHookHandler?.(hook);
+    handlerAttached = true;
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-malformed',
+      'approval',
+      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+    ), { timeout: 3_000 });
+    expect(hook).not.toHaveBeenCalled();
+    expect(resolver).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
+  it('keeps durable Subagent hooks out of Auto-review', async () => {
+    // #7494's symptom: the hook reached Auto-review as `tool` with `{}` input
+    // and was escalated as an unreviewable action.
+    const runId = '123e4567-e89b-42d3-a456-42661417409c';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-auto', () => handlerAttached);
+    const review = vi.fn(async () => ({ verdict: 'allow' as const }));
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    const handle = await new PiAgent(buildDeps({ reviewAutoPermissionAction: review as never }))
+      .startSession({ ...opts(), permissionMode: 'auto' });
+    handle.setInteractionResolver(resolver);
+    handle.setHarnessHookHandler?.(async () => ({ action: 'continue' }));
+    handlerAttached = true;
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-auto',
+      'approval',
+      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+    ), { timeout: 3_000 });
+    expect(review).not.toHaveBeenCalled();
+    expect(resolver).not.toHaveBeenCalled();
+
+    await handle.close();
+  });
+
+  it('still forwards a real cindy:permission with its tool and input next to a hook', async () => {
+    // The hook gate must only take `cindy:harness-hook`; a permission raised
+    // in the same run keeps its tool name and arguments and its approval card.
+    const runId = '123e4567-e89b-42d3-a456-42661417409d';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-mixed', () => handlerAttached, [
+      toolBeforeHook,
+      {
+        id: 'approval-2',
+        method: 'confirm',
+        title: 'cindy:permission',
+        message: JSON.stringify({ toolName: 'bash', input: { command: 'printf fixture' } }),
+      },
+    ]);
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    const hook = vi.fn(async () => ({ action: 'continue' }) as const);
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setInteractionResolver(resolver);
+    handle.setHarnessHookHandler?.(hook);
+    handlerAttached = true;
+
+    await vi.waitFor(() => {
+      expect(control).toHaveBeenCalledWith(
+        expect.any(String),
+        'tool-harness-mixed',
+        'approval',
+        expect.objectContaining({ childId: `${runId}-1`, approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+      );
+      expect(control).toHaveBeenCalledWith(
+        expect.any(String),
+        'tool-harness-mixed',
+        'approval',
+        expect.objectContaining({ childId: `${runId}-2`, approvalId: 'approval-2', confirmed: true }),
+      );
+    }, { timeout: 3_000 });
+    expect(hook).toHaveBeenCalledOnce();
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'permission',
+      toolName: 'bash',
+      input: { command: 'printf fixture' },
+      title: 'Subagent: bash',
+    }));
+
+    await handle.close();
+  });
+
+  it('answers continue, not the bridge close block, when a navigation close lands mid-hook', async () => {
+    // Closing the bridge settles pending hooks as `block`; the detached child
+    // keeps running and must not have its tool refused because the view left.
+    const runId = '123e4567-e89b-42d3-a456-426614174099';
+    const control = vi.spyOn(piSubagentRuns, 'controlPiSubagentRuns').mockResolvedValue(1);
+    let handlerAttached = false;
+    mockHarnessHookRun(runId, 'tool-harness-hook-close', () => handlerAttached);
+    let hookEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { hookEntered = resolve; });
+    const handle = await new PiAgent(buildDeps()).startSession(opts());
+    handle.setHarnessHookHandler?.(() => {
+      hookEntered();
+      return new Promise(() => {});
+    });
+    handlerAttached = true;
+    await entered;
+
+    await handle.close({ reason: 'navigation' });
+
+    await vi.waitFor(() => expect(control).toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook-close',
+      'approval',
+      expect.objectContaining({ approvalId: 'hook-1', value: JSON.stringify({ action: 'continue' }) }),
+    ), { timeout: 3_000 });
+    expect(control).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'tool-harness-hook-close',
+      'approval',
+      expect.objectContaining({ value: JSON.stringify({ action: 'block' }) }),
+    );
+  });
+
   /**
    * The caller-side fence check is not the write. Between them
    * `controlPiSubagentRuns` discovers runs and guards the run directory —

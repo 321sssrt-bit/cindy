@@ -3146,7 +3146,7 @@ export class Session {
     const control = this.toolLoopControlFor(generation);
     if (!control?.toolLoopMonitor) return;
     if (event.type === 'text') {
-      if (typeof data.text === 'string') control.toolLoopMonitor.onAssistantText(data.text);
+      if (typeof data.text === 'string') control.toolLoopMonitor.onAssistantText(data.text, data.isFinal === true);
       return;
     }
     if (event.type === 'tool_result') {

@@ -5459,10 +5459,11 @@ export class ClaudeCodeAgent extends BaseAgent {
           pendingContinuationTerminalBoundaries += 1;
         }
         if (e.type === 'text' && turnInFlight && !turnState.interruptRequested) {
-          const text = (e.data as { text?: unknown } | undefined)?.text;
+          const data = e.data as { text?: unknown; isFinal?: unknown } | undefined;
+          const text = data?.text;
           const parent = e.agentMeta?.parentUuid;
           if (typeof text === 'string') {
-            getToolLoopMonitor(typeof parent === 'string' && parent ? parent : undefined).onAssistantText(text);
+            getToolLoopMonitor(typeof parent === 'string' && parent ? parent : undefined).onAssistantText(text, data?.isFinal === true);
           }
         }
         const accepted = pushForwardedEvent(e);

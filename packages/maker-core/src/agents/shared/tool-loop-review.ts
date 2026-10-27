@@ -80,10 +80,10 @@ export class ToolLoopMonitor {
     this.explanationBeforeTool = true;
   }
 
-  /** 复用公开 text 事件；下一次工具之后出现的新说明替换旧说明，流式片段连续拼接。 */
-  onAssistantText(text: string): void {
-    if (!text) return;
-    if (this.explanationBeforeTool) this.assistantExplanation = '';
+  /** 复用公开 text 事件：增量拼接，final 全文校准；工具后新说明替换旧说明。 */
+  onAssistantText(text: string, isFinal = false): void {
+    if (!text && !isFinal) return;
+    if (this.explanationBeforeTool || isFinal) this.assistantExplanation = '';
     this.explanationBeforeTool = false;
     // 多保留一个字符作为截断信号，发送前复用证据截断器丢弃残缺凭证。
     this.assistantExplanation = (this.assistantExplanation + text).slice(0, 4_001);

@@ -867,6 +867,11 @@ describe('Claude Code tool-loop guard runtime integration', () => {
     };
     try {
       await handle.send({ type: 'user', content: 'wait for the run' });
+      stream.emit({ type: 'stream_event', parent_tool_use_id: null,
+        event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } });
+      stream.emit({ type: 'stream_event', parent_tool_use_id: null,
+        event: { type: 'content_block_delta', index: 0,
+          delta: { type: 'text_delta', text: 'The job is still running; ' } } });
       stream.emit({
         type: 'assistant', parent_tool_use_id: null,
         message: { role: 'assistant', content: [{ type: 'text', text: 'The job is still running; I am checking for completion.' }] },

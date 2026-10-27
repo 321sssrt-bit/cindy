@@ -50,7 +50,7 @@ function setup(agentKind: 'pi' | 'codex', hangAbort = false, toolLoopReviewer: T
     await vi.advanceTimersByTimeAsync(0);
   };
   const errors = () => seen.filter((event) => event.type === 'error');
-  return { queue, session, seen, handle, tool, errors,
+  return { queue, session, seen, handle, tool, errors, logger,
     ask: (delivery?: 'async') => resolveInteraction({ kind: 'ask_user_question', requestId: 'question',
       questions: [{ question: 'Scope?' }], ...(delivery ? { delivery } : {}) }),
     end: async () => {
@@ -227,7 +227,25 @@ describe.each(['pi', 'codex'] as const)('%s Session tool loop coverage', (agentK
     const t = setup(agentKind, false, reviewer);
     const userIntent = { earlierUserMessages: ['Play the phone game using screenshots.'], currentUserMessage: 'Continue until the level ends.' };
     await t.session.send('Continue until the level ends.', { [AUTO_REVIEW_USER_INTENT]: userIntent });
-    t.queue.push({ type: 'text', data: { text: 'The target moves; I will observe its new position before tapping.' }, source: agentKind });
+    // PR #7404 review: delta + final 全文不能重复，避免 2000 字符发送预算挤掉最新理由。
+    const prefix = 'Observing the animation. '.repeat(50);
+    const explanation = `${prefix}The target moves; I will observe its new position before tapping.`;
+    if (agentKind === 'pi') {
+      const context = createPiTranslateContext(t.logger);
+      translatePiEvent({ type: 'message_update', assistantMessageEvent: {
+        type: 'text_delta', contentIndex: 0, delta: prefix,
+      } }, t.queue, context);
+      translatePiEvent({ type: 'message_end', message: {
+        role: 'assistant', content: [{ type: 'text', text: explanation }], stopReason: 'toolUse',
+      } }, t.queue, context);
+    } else {
+      const context = { rt: newCodexRuntimeState(), log: { info() {}, warn() {}, error() {}, debug() {} } };
+      const item = { type: 'agentMessage', id: 'explanation', text: prefix };
+      translateItemNotification('started', { threadId: 'thread', turnId: 'turn', item }, t.queue, context);
+      translateItemNotification('completed', {
+        threadId: 'thread', turnId: 'turn', item: { ...item, text: explanation },
+      }, t.queue, context);
+    }
     t.queue.push({ type: 'thinking', data: { text: 'private reasoning must not be sent' }, source: agentKind });
     t.queue.push({ type: 'text', data: { text: 'unrelated background task' }, source: agentKind, turnScope: 'background' });
     const operations = ['screenshot', 'tap', 'swipe', 'Read'];
@@ -236,7 +254,7 @@ describe.each(['pi', 'codex'] as const)('%s Session tool loop coverage', (agentK
     expect(reviewer.mock.calls[0]?.[0]).toMatchObject({
       sessionId: 'test-session', agentKind, model: 'test-model',
       userIntent,
-      assistantExplanation: 'The target moves; I will observe its new position before tapping.',
+      assistantExplanation: explanation,
       verdict: { reason: 'rotation', count: 16, toolName: 'Read' },
     });
     for (let i = 16; i < 100; i++) await t.tool(String(i), {}, operations[i % 4]);

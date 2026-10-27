@@ -62,11 +62,13 @@ describe('direct Chat Server client', () => {
     expect(reopened.messages).toEqual(first.messages);
     expect(first.messages.map(m => m.id)).toEqual([id(21), id(20)]);
     expect(chatGroupView(reopened, id(10)).round.speakers).toMatchObject([{ executionId: id(30), executionStatus: 'stopping' }]);
-    // Exactly the two live-state reads: no repeated snapshot, root or reply-page download.
-    expect(request.mock.calls.map(([path]) => path)).toEqual([
-      `/conversations/${id(1)}/executions`,
-      expect.stringContaining(`/conversations/${id(1)}/execution-failures?`),
-    ]);
+    // History stays cached while the existing live execution and failure reads
+    // still refresh. No snapshot, root or reply-page request may be repeated.
+    const refreshedPaths = request.mock.calls.map(([path]) => path.split('?')[0]);
+    expect(refreshedPaths).toHaveLength(2);
+    expect(refreshedPaths).toEqual(expect.arrayContaining([
+      `/conversations/${id(1)}/executions`, `/conversations/${id(1)}/execution-failures`,
+    ]));
   });
   // #6907: existing fixtures never pair a human's group name A with account ownerName B (unit tier).
   it('keeps owner labels scoped to each group and follows refreshed names without changing identities', () => {

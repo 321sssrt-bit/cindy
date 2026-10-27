@@ -440,6 +440,7 @@ export async function prepare(
     // 可能已拉取并缓存)→ 清标记走 CDN,CDN 资产可用时不该被旧标记跳过。
     if (getCachedManifest()) skipCdnUntilNextProbeSuccess = false;
     const cdnSkipped = skipCdnUntilNextProbeSuccess;
+    let usableLocalFallbackPath: string | undefined;
     if (opts.checkForUpdates === false) {
       const hasLocalCdnRuntime = getCachedManifest() && !await getBase(kind).peekNeedsDownload(opts);
       if (!hasLocalCdnRuntime) {
@@ -462,6 +463,7 @@ export async function prepare(
           }
           // Try the completed cache first. A corrupt or locked cache falls back
           // to the working system/private runtime without starting network IO.
+          usableLocalFallbackPath = localPath;
           opts = { ...opts, allowDownload: false };
         }
       }
@@ -483,6 +485,10 @@ export async function prepare(
       }
     }
     if (cdnResult.ready) return cdnResult;
+    if (usableLocalFallbackPath) {
+      lastReadyPath.set(kind, usableLocalFallbackPath);
+      return { ready: true, path: usableLocalFallbackPath, downloaded: false };
+    }
 
     if (broadcastProgress) {
       broadcastBinaryDownloadProgress({

@@ -297,6 +297,35 @@ describe('explicit Pi selection on startup', () => {
 });
 
 describe('Linux local discovery before any update download', () => {
+  // Independent review of #7435: a valid private CLI can differ from the new app's
+  // bundled pin. A corrupt optional cache must not route it through pin-only repair.
+  it('keeps an already usable private Linux Claude when a newer prepared archive is corrupt', async () => {
+    await reloadBinaries('linux');
+    const current = newerStableVersion(PINNED_CLAUDE_VERSION);
+    const target = newerStableVersion(current);
+    const runtimeRoot = path.join(mocks.userDataDir, 'agent-runtime', 'claude-code');
+    const localPath = writeExecutable(path.join(runtimeRoot, 'bin', 'claude'), `${current} (Claude Code)`);
+    fs.writeFileSync(path.join(runtimeRoot, '.version'), current);
+    const archive = gzipSync(Buffer.from(target));
+    const sha256 = createHash('sha256').update(archive).digest('hex');
+    mocks.remoteManifest = { app: { version: '2.0.0' }, claudeCode: {
+      version: target, file: `claude-code/${target}/linux-x64/claude.gz`, sha256, size: archive.length,
+    } };
+    mocks.backgroundDownload.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.writeFileSync(targetPath, archive);
+      return { path: targetPath, sha256, size: archive.length };
+    });
+    await expect(binaries.prefetch('claude-code', { manifest: mocks.remoteManifest })).resolves.toBe(true);
+    const altered = Buffer.from(archive);
+    altered[0] ^= 1;
+    fs.writeFileSync(path.join(mocks.userDataDir, 'agent-binary-downloads', 'claude', sha256, 'archive'), altered);
+    mocks.download.mockRejectedValue(new Error('unexpected network fallback'));
+    const result = await binaries.prepare('claude-code', quiet);
+    expect.soft(result).toMatchObject({ ready: true, path: localPath });
+    expect.soft(mocks.download).not.toHaveBeenCalled();
+    expect(fs.readFileSync(localPath, 'utf8')).toBe(`${current} (Claude Code)`);
+  });
+
   // #7435: a completed cache must not silently downgrade a user-managed Claude.
   // Public prefetch -> prepare, one newer system CLI and one older archive. Unit.
   it('keeps a newer Linux system Claude when an older background download is complete', async () => {

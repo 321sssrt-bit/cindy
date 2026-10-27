@@ -228,6 +228,7 @@ Desktop「设置 → 模型供应商」的左栏(2026-10-08 用户裁决)：
   详情、模型选择器左栏和模型行打开且页面可见时约每 60 秒复查，关闭或隐藏后停止；换账号丢弃旧结果。
   详情与左栏取账号通用额度，模型行按模型选择额度桶；ChatGPT 网页额度仍读原有 WHAM 槽。
   旧电脑不支持实时通道或读取失败时回退原快照，回退也失败时保留已有数据；「数据更新于」保留数据实际读取的时间。
+  快照通道成功返回空账号时清除已有额度（例如远端退出账号），不把明确清空当成读取失败。
   分享来源仍按 §7.5 的独立授权读取。实现见
   [useRemoteDeviceUsage.ts](../../apps/desktop/src/renderer/hooks/useRemoteDeviceUsage.ts)，回归见
   [useDeviceProviderSubscriptionCard.test.ts](../../apps/desktop/src/renderer/components/settings/__tests__/useDeviceProviderSubscriptionCard.test.ts)。

@@ -88,6 +88,8 @@ const codexRateLimitsMirror = createRemoteDeviceUsageMirror<RemoteCodexAccountUs
     const fallback = await window.electronAPI.deviceLink.invoke(
       deviceId, 'maker:usage:account', providerId === 'openai' ? ['codex'] : ['codex', providerId],
     ) as (RemoteCodexAccountUsagePayload & { providerId?: string }) | null;
+    // A successful empty account read is authoritative (for example after logout).
+    if (fallback === null) return null;
     if (!fallback || !matchesProvider(fallback)) return undefined;
     return fallback;
   },
@@ -127,9 +129,12 @@ export function useRemoteCodexAccountUsage(
   const target = live && isProviderShareAgentDeviceId(deviceId) ? null : deviceId;
   const snapshot = codexAccountMirror.useMirror(live && !web ? null : target, providerId);
   const realtime = codexRateLimitsMirror.useMirror(live ? target : null, providerId);
-  return useMemo(() => live
-    ? realtime && web ? { ...realtime, webSnapshot: snapshot?.webSnapshot } : realtime
-    : snapshot, [live, web, realtime, snapshot]);
+  return useMemo(() => {
+    if (!live) return snapshot;
+    if (!web) return realtime;
+    if (!realtime && !snapshot?.webSnapshot) return null;
+    return { ...realtime, webSnapshot: snapshot?.webSnapshot };
+  }, [live, web, realtime, snapshot]);
 }
 
 export function requestRemoteCodexAccountRefresh(deviceId: string, providerId?: string): void {

@@ -115,7 +115,7 @@ describe('useDeviceProviderSubscriptionCard', () => {
   it('reads live remote Codex quota and timestamps the generic account window', async () => {
     let finish!: (value: ReturnType<typeof liveQuota>) => void;
     invoke.mockImplementation((_device, channel) => channel === 'maker:usage:account'
-      ? Promise.resolve({ webSnapshot: { source: 'openai-web', secondary: { usedPercent: 88 } } })
+      ? Promise.resolve({ secondary: { usedPercent: 99 }, webSnapshot: { source: 'openai-web', secondary: { usedPercent: 88 } } })
       : new Promise((resolve) => { finish = resolve; }));
     const startedAt = Date.now();
     const { result } = renderHook(() => ({
@@ -126,6 +126,10 @@ describe('useDeviceProviderSubscriptionCard', () => {
     expect(invoke.mock.calls.filter(([, channel]) => channel === 'maker:usage:codex-rate-limits')).toEqual([
       ['mini', 'maker:usage:codex-rate-limits', ['openai']],
     ]);
+    await act(async () => {});
+    expect(result.current.models.codex?.web?.secondary?.usedPercent).toBe(88);
+    expect(result.current.models.codex?.buckets).toBeNull();
+    expect(result.current.card).toBeNull();
     await act(async () => { finish(liveQuota()); });
     expect(remaining(result.current.card)).toEqual([['secondary', 42]]);
     expect(result.current.card?.updatedAt).toBeGreaterThanOrEqual(startedAt);
@@ -182,6 +186,12 @@ describe('useDeviceProviderSubscriptionCard', () => {
     invoke.mockRejectedValue(new Error('offline'));
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(remaining(result.current)).toEqual([['secondary', 26]]);
+    invoke.mockImplementation(async (_device, channel) => {
+      if (channel === 'maker:usage:codex-rate-limits') throw new Error(error);
+      return null; // The host cleared its account after logout, not a transport failure.
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(result.current).toBeNull();
   });
 
   it('rejects unscoped legacy replies for named accounts and keeps devices/accounts separate', async () => {

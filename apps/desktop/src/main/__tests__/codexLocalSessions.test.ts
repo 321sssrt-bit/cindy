@@ -271,7 +271,9 @@ beforeEach(() => {
   electronMock.region = 'global';
   originalCodexHome = process.env.CODEX_HOME;
   originalAppData = process.env.APPDATA;
-  rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-local-sessions-'));
+  // macOS may spell tmpdir as /var while discovery resolves it to /private/var.
+  // Keep fixtures canonical; individual alias cases opt into differing spellings.
+  rootDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-local-sessions-')));
   externalHome = path.join(rootDir, 'external-codex-home');
   targetUserData = path.join(rootDir, 'xdt-user-data');
   const fakeHome = path.join(rootDir, 'home');
@@ -1773,7 +1775,11 @@ describe('paginated Codex rollout adoption (#7436)', () => {
     expect(fs.readFileSync(winner, 'utf8')).toBe('new history');
   });
 
-  it.each([false, true])('publishes a native filename and preserves history (Windows namespace=%s)', async namespaced => {
+  // #7458 review, unit: exercise the public importer with a directory alias,
+  // which the Windows namespace cases did not cover. A differing source spelling
+  // takes the existing flat-path fallback but must still preserve native identity,
+  // SQLite ownership, original bytes and repeatable resume.
+  it.each(['canonical', 'windows namespace', 'directory alias'] as const)('publishes a native filename and preserves history (%s)', async spelling => {
     const filename = `rollout-2026-10-14T10-13-41-${threadId}.jsonl`;
     const sourcePath = path.join(externalHome, 'sessions', '2026', '10', '14', filename);
     const contents = `${JSON.stringify({ type: 'session_meta', payload: {
@@ -1781,14 +1787,21 @@ describe('paginated Codex rollout adoption (#7436)', () => {
     } })}\n`;
     fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
     fs.writeFileSync(sourcePath, contents);
+    let recordedPath = sourcePath;
+    if (spelling === 'windows namespace') recordedPath = path.toNamespacedPath(sourcePath);
+    if (spelling === 'directory alias') {
+      const alias = path.join(rootDir, 'external-home-alias');
+      fs.symlinkSync(externalHome, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      recordedPath = path.join(alias, path.relative(externalHome, sourcePath));
+    }
     const sourceDb = createStateDb(externalHome);
-    insertThread(sourceDb, threadId, namespaced ? path.toNamespacedPath(sourcePath) : sourcePath, { updatedAt: 2000 });
+    insertThread(sourceDb, threadId, recordedPath, { updatedAt: 2000 });
     const targetDb = createStateDb(path.join(targetUserData, 'codex-home'));
 
     const prepared = await prepareExternalCodexSessionForResume(threadId);
     expect(path.basename(prepared!)).toBe(filename);
     expect(path.relative(path.join(targetUserData, 'codex-home'), prepared!)).toBe(
-      path.join('sessions', '2026', '10', '14', filename),
+      spelling === 'directory alias' ? path.join('sessions', filename) : path.join('sessions', '2026', '10', '14', filename),
     );
     const db = new Database(targetDb, { readonly: true });
     try {

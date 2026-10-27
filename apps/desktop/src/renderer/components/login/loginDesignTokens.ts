@@ -307,8 +307,7 @@ export const LOGIN_COLORS = {
   brandAccent: 'var(--login-brand-accent)',
   linkText: 'var(--login-link-text)',
   /**
-   * Text_link pressed/hover(figma §4.7:pressed U-9 裁决 #1A1818;hover wave3
-   * 实测 358:792,lead 裁决 2026-07-20 决策表滞后修订追加)。伪类态无法走 inline
+   * Text_link pressed/hover(2026-10-27 墨水口径:pressed 强调档 / hover 说明档)。伪类态无法走 inline
    * style,实际消费在 LoginControls LoginTextLink 的 hover:/active: 类字面量
    * (引用同名 CSS var);此两键保留作 token 登记锚与非伪类场景入口。
    */

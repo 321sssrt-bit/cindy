@@ -1,4 +1,5 @@
 import { UI_MOCK_SHOWCASE_PROJECTS, UI_MOCK_SHOWCASE_TASKS } from './uiMockShowcase';
+export { UI_MOCK_SHOWCASE_PROJECTS };
 
 /**
  * UI mock data shared by Desktop and Mobile dev builds.

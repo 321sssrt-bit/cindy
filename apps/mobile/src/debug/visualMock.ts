@@ -1,5 +1,5 @@
 import { SHARED_REMOTE_CONTROL_FIXTURE } from '@cindy/maker-shared/fixtures';
-import { buildUiMockRows, UI_MOCK_PROJECTS, type UiMockSessionRow } from '@cindy/maker-shared/ui-mock';
+import { buildUiMockRows, UI_MOCK_SHOWCASE_PROJECTS, type UiMockSessionRow } from '@cindy/maker-shared/ui-mock';
 import { projectHistoryView } from '@cindy/maker-shared/message-window';
 import { TASK_TAG_COLORS, type TaskTagRequest, type TaskTagResult } from '@cindy/maker-shared';
 import { BOT_GROUP_CHAT_PRIMITIVE, BOT_GROUP_REMOTE_COLLECTION_ID, BOT_GROUP_REMOTE_RESOURCE_KIND } from '@cindy/maker-shared/botGroupChat';
@@ -816,12 +816,12 @@ function handleVisualMockFileBrowser(input: unknown): unknown {
   return visualMockFileBrowserEntries();
 }
 
-/** Serve the same small project files Desktop seeds, without touching a real filesystem. */
+/** Serve only the showcase project files Desktop seeds, without touching a real filesystem. */
 function sharedUiMockFiles(input: unknown): unknown {
   if (!input || typeof input !== 'object') return undefined;
   const request = input as Record<string, unknown>;
   const workdir = String(request.workdir ?? '').replace(/\\/g, '/').replace(/\/$/, '');
-  const project = UI_MOCK_PROJECTS.find(item => workdir === `/Users/demo/Projects/${item.name}`);
+  const project = UI_MOCK_SHOWCASE_PROJECTS.find(item => workdir === `/Users/demo/Projects/${item.name}`);
   if (!project) return undefined; // Keep the existing media/Markdown regression fixtures.
   const relPath = String(request.relPath ?? '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
   const paths = Object.keys(project.files).sort();

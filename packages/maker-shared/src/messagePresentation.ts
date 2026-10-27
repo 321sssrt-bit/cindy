@@ -848,7 +848,9 @@ function isErrorRecord(value: string): boolean {
     if (status === 'error' || status === 'failed' || status === 'failure') return true;
     return ['error', 'errors', 'exception', 'stderr'].some((key) => {
       const raw = record[key];
-      return typeof raw === 'string' ? raw.trim().length > 0 : raw !== undefined && raw !== null;
+      if (typeof raw === 'string') return raw.trim().length > 0;
+      if (Array.isArray(raw)) return raw.length > 0;
+      return raw !== undefined && raw !== null;
     });
   } catch {
     return false;

@@ -46,6 +46,7 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
   let locations: { owner: string; at: number; value: GhostAgentLocation[] } | null = null;
   const locationReads = new Map<string, Promise<GhostAgentLocation[] | undefined>>();
   const catalogs = new Map<string, { at: number; value: GhostAgentModelsOk }>();
+  const catalogReads = new Map<string, Promise<GhostAgentModelsResult>>();
 
   return {
     locations(
@@ -74,23 +75,37 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
       locationReads.set(owner, pending);
       return pending;
     },
-    async catalog(
+    catalog(
       owner: string,
       agentDeviceId: string,
       read: () => Promise<ProviderView[]>,
     ): Promise<GhostAgentModelsResult> {
       const key = `${owner}\0${agentDeviceId}`;
       const hit = catalogs.get(key);
-      if (hit && now() - hit.at < ttlMs) return hit.value;
-      try {
-        const projected = projectGhostAgentModels(await read(), GHOST_REMOTE_AGENT_MODELS);
-        if (!projected.ok) return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
-        const value = { ...projected, agentDeviceId };
-        catalogs.set(key, { at: now(), value });
-        return value;
-      } catch {
-        return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
-      }
+      if (hit && now() - hit.at < ttlMs) return Promise.resolve(hit.value);
+      const inFlight = catalogReads.get(key);
+      if (inFlight) return inFlight;
+
+      let pending: Promise<GhostAgentModelsResult>;
+      pending = Promise.resolve()
+        .then(read)
+        .then((views): GhostAgentModelsResult => {
+          const projected = projectGhostAgentModels(views, GHOST_REMOTE_AGENT_MODELS);
+          if (!projected.ok) return { ok: false, errorCode: 'NOT_AVAILABLE', message: 'Model catalog unavailable' };
+          const value = { ...projected, agentDeviceId };
+          catalogs.set(key, { at: now(), value });
+          return value;
+        })
+        .catch((): GhostAgentModelsResult => ({
+          ok: false,
+          errorCode: 'NOT_AVAILABLE',
+          message: 'Model catalog unavailable',
+        }))
+        .finally(() => {
+          if (catalogReads.get(key) === pending) catalogReads.delete(key);
+        });
+      catalogReads.set(key, pending);
+      return pending;
     },
   };
 }

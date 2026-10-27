@@ -146,7 +146,7 @@ describe('plugin model projection', () => {
    * - 现有覆盖缺口：既有用例只覆盖已完成的目录结果，没有覆盖空缓存下的并发读取或失败清理。
    * - 最小失败输入：同一 owner 和 device 两次并发读取，首次拒绝、重试返回一个可见模型。
    * - tier：unit。
-   * - 实测耗时：0.62 s（红测单文件运行，macOS arm64）。
+   * - 实测耗时：0.59 s（修复后单文件运行，macOS arm64）。
    */
   it('shares an in-flight catalog read for the same owner and device, then retries after failure', async () => {
     const cache = createGhostAgentModelsCache();

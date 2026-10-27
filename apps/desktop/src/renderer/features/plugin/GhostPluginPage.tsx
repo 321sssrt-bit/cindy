@@ -1429,7 +1429,7 @@ function LocalGhostPluginPage({
   }, [confirm, refreshMarket, selectedDetail, selectedMarketInstall, t]);
 
   const handleSelectMarket = useCallback(
-    async (pluginId: string) => {
+    async (pluginId: string, preferInstalled = false) => {
       // 与 handleMarketUpdate 共用同一互斥锁:更新进行中不叠加其它市场操作。
       const marketBusyLease = acquireMarketBusy(pluginId);
       if (!marketBusyLease) return;
@@ -1441,7 +1441,14 @@ function LocalGhostPluginPage({
           requestId === marketDetailRequestRef.current &&
           isMarketBusyLeaseActive(marketBusyLease)
         ) {
-          setMarketDetail(detail);
+          const installed = preferInstalled && (detail.installState === 'installed' || detail.installState === 'update-available')
+            ? ghosts.find(ghost => marketItemMatchesInstalledGhost(detail, ghost)) : undefined;
+          if (installed) {
+            setMarketDetail(null);
+            setSelectedId(installedGhostStoragePart(installed));
+          } else {
+            setMarketDetail(detail);
+          }
         }
       } catch (error) {
         if (
@@ -1454,7 +1461,7 @@ function LocalGhostPluginPage({
         releaseMarketBusy(marketBusyLease);
       }
     },
-    [acquireMarketBusy, capturePluginCatalogScroll, isMarketBusyLeaseActive, releaseMarketBusy, t],
+    [acquireMarketBusy, capturePluginCatalogScroll, ghosts, isMarketBusyLeaseActive, releaseMarketBusy, t],
   );
   const handleMarketBack = useCallback(() => {
     cancelPendingPluginSuggestion(recommendationNonce ?? undefined);
@@ -1478,12 +1485,12 @@ function LocalGhostPluginPage({
   }, []);
   useEffect(() => {
     const pluginId = searchParams.get('market');
-    if (!pluginId) return;
+    if (!pluginId || marketBusyId !== null) return;
     const next = new URLSearchParams(searchParams);
     next.delete('market');
     setSearchParams(next, { replace: true });
-    void handleSelectMarket(pluginId);
-  }, [handleSelectMarket, searchParams, setSearchParams]);
+    void handleSelectMarket(pluginId, true);
+  }, [handleSelectMarket, marketBusyId, searchParams, setSearchParams]);
   usePluginMarketLocaleRefresh(
     marketLocale,
     async () => {
@@ -1836,6 +1843,7 @@ function LocalGhostPluginPage({
               usageOwnerKey={`${panelOwnerKey}:${dataOwnerGeneration}`}
               confirmClearUsage={() => confirm({ title: t('settings.ghosts.usage.clearTitle'), description: t('settings.ghosts.usage.clearDescription'), confirmText: t('settings.ghosts.usage.clear'), confirmVariant: 'destructive' })}
               ghost={selectedGhost}
+              sharePluginId={selectedMarketInstall?.sourceType === 'server' && selectedMarketInstall.scope === 'public' ? selectedMarketInstall.pluginId : undefined}
               detail={selectedDetail}
               marketItem={selectedMarketInstall}
               panelStatus={panelStatus}

@@ -9771,6 +9771,8 @@
         "viewProcess": "看過程",
         "hideProcess": "收起過程",
         "stop": "停止",
+        "stopping": "正在停止…",
+        "queued": "等待開始…",
         "stopMine": "停止我發起的",
         "stopAll": "全部停止",
         "stopAllHint": "包括其他人發起的"
@@ -10826,7 +10828,9 @@
       "suggestion2": "2. 到 {{service}} 開放平臺為自己另建一個獨立 App，與同事各用各的。",
       "dismiss": "關閉",
       "createOwnApp": "建立我的 App ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ 有 {{count}} 個附件未能傳送：{{names}}",
+    "unnamedAttachment": "未命名附件"
   },
   "markdown": {},
   "diffPanel": {
@@ -16513,6 +16517,7 @@
     "save": "儲存例行任務",
     "deleteConfirm": "刪除這條例行任務，並取消等待中的執行？",
     "keep": "保留例行任務",
+    "openTask": "查看任務",
     "history": "執行歷史",
     "noRuns": "這條例行任務尚未執行",
     "field": "欄位",
@@ -16544,6 +16549,10 @@
       "not-equals": "不等於"
     },
     "quiet": "檢查沒事不說話",
+    "sessionMode": "執行方式",
+    "sessionModePersistent": "沿用同一任務（保留上下文）",
+    "sessionModeFresh": "每次新建任務（隔離上下文）",
+    "sessionModeHint": "沿用同一任務會在同一個例行任務的對話裡繼續；每次新建會為每次觸發建立一個獨立任務，執行結束後關閉。",
     "quietHint": "僅回報變化或問題。提醒和定時傳送可關閉此項。",
     "checkCommand": "前置檢查命令",
     "checkHint": "選填。在電腦上先檢查：結束代碼 2 跳過本次執行，0 繼續執行，異常仍會回報。清空可移除。",
@@ -17635,6 +17644,30 @@
     "taskSource": "[任務來源] 本任務由夥伴發起。",
     "taskId": "任務 ID：",
     "contextReferences": "參考資料："
+  },
+  "sharing": {
+    "includeAttribution": "附上我的暱稱和頭像",
+    "recipientHint": "對方可開啟連結或掃描圖片查看插件，在電腦版 Cindy 中使用。",
+    "linkLabel": "分享連結",
+    "imageLabel": "分享圖片",
+    "title": "分享",
+    "close": "關閉",
+    "loading": "正在準備分享素材…",
+    "notConfigured": "分享服務尚未開放",
+    "unavailable": "插件已下架或不再公開，無法分享",
+    "loadFailed": "無法讀取分享素材，請重新讀取",
+    "retry": "重新讀取",
+    "imageAlt": "{{name}} 的分享圖片",
+    "copyLink": "複製連結",
+    "copyImage": "複製圖片",
+    "saveImage": "儲存圖片",
+    "linkCopied": "連結已複製",
+    "imageCopied": "圖片已複製",
+    "imageSaved": "圖片已儲存",
+    "copyLinkFailed": "無法複製連結",
+    "copyImageFailed": "無法複製圖片，可再次複製",
+    "saveImageFailed": "無法儲存圖片，可再次儲存",
+    "previewFailed": "無法顯示圖片預覽，仍可複製連結"
   },
   "subscriptionFastPolicy": {
     "label": "允許使用 Fast",

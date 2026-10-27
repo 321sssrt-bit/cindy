@@ -1,12 +1,12 @@
 /**
  * Shared sticky top bar for both Plugin detail surfaces (installed + market).
  *
- * Inputs: the back affordance, scroll state, and optional owning page's horizontal frame.
- * Outputs: the back button and, on macOS, the page's own window-drag region.
+ * Inputs: back label/handler, scroll state, optional page actions and owning page's horizontal frame.
+ * Outputs: the back button, page actions and, on macOS, the window-drag region.
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
-import { useCallback, useEffect, useState, type UIEvent } from 'react';
+import { useCallback, useEffect, useState, type ReactNode, type UIEvent } from 'react';
 import { ArrowLeft } from 'lucide-react';
 
 import { WINDOW_DRAG_STYLE, WINDOW_NO_DRAG_STYLE } from '@/components/layout/windowDrag';
@@ -21,6 +21,7 @@ interface PluginDetailTopBarProps {
   scrolled: boolean;
   /** 管理页传入与正文共用的宽度和留白；详情页保留默认阅读宽度。 */
   frameClassName?: string;
+  actions?: ReactNode;
 }
 
 /**
@@ -72,6 +73,7 @@ export function PluginDetailTopBar({
   onBack,
   scrolled,
   frameClassName,
+  actions,
 }: PluginDetailTopBarProps) {
   const { isMac } = useMacFullscreen();
 
@@ -120,7 +122,7 @@ export function PluginDetailTopBar({
     >
       <div
         className={cn(
-          'flex h-16 items-center',
+          'flex h-16 items-center justify-between gap-3',
           frameClassName ?? 'mx-auto w-full max-w-[824px] px-8 max-[760px]:px-6',
         )}
       >
@@ -133,6 +135,11 @@ export function PluginDetailTopBar({
           <ArrowLeft size={16} aria-hidden="true" />
           {label}
         </button>
+        {actions ? (
+          <div className="flex shrink-0 items-center gap-2" style={WINDOW_NO_DRAG_STYLE}>
+            {actions}
+          </div>
+        ) : null}
       </div>
     </div>
   );

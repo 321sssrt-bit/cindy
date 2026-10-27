@@ -82,6 +82,9 @@ export type IpcErrorCode =
   | 'OFFICIAL_PLUGIN_GITHUB_REQUIRED' // 客户端提审限制，不扩展服务端 wire 错误
   | 'VOICE_SPEECH_TIMEOUT' // 本机语音合成等待响应或音频读取超时
   | 'PROVIDER_GROUP_CHANGED' // 编辑期间组设置已变化，拒绝覆盖，需重新读取
+  | 'SHARE_NOT_CONFIGURED'
+  | 'SHARE_UNAVAILABLE'
+  | 'SHARE_READ_FAILED'
   | 'HTML_PREVIEW_TOO_LARGE'
   | 'HTML_PREVIEW_UNSUPPORTED'
   // 本地模型切换窗口保护的可行动失败原因。device-link 继续降级为
@@ -350,6 +353,9 @@ const IPC_ERROR_CODES: ReadonlySet<IpcErrorCode> = new Set<IpcErrorCode>([
   'OFFICIAL_PLUGIN_GITHUB_REQUIRED',
   'VOICE_SPEECH_TIMEOUT',
   'PROVIDER_GROUP_CHANGED',
+  'SHARE_NOT_CONFIGURED',
+  'SHARE_UNAVAILABLE',
+  'SHARE_READ_FAILED',
   'HTML_PREVIEW_TOO_LARGE',
   'HTML_PREVIEW_UNSUPPORTED',
   'MODEL_CONTEXT_USAGE_UNKNOWN',

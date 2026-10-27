@@ -9805,6 +9805,8 @@
         "viewProcess": "Show work",
         "hideProcess": "Hide work",
         "stop": "Stop",
+        "stopping": "Stopping…",
+        "queued": "Waiting to start…",
         "stopMine": "Stop Mine",
         "stopAll": "Stop All",
         "stopAllHint": "Includes other people’s requests"
@@ -10861,7 +10863,9 @@
       "suggestion2": "2. Create your own dedicated App on the {{service}} Open Platform so you and your colleague each have your own.",
       "dismiss": "Dismiss",
       "createOwnApp": "Create my App ↗"
-    }
+    },
+    "outboundAttachmentsIncomplete": "⚠️ Attachment delivery incomplete: {{count}} not sent ({{names}}).",
+    "unnamedAttachment": "Untitled attachment"
   },
   "markdown": {},
   "diffPanel": {
@@ -16569,6 +16573,7 @@
     "save": "Save Routine",
     "deleteConfirm": "Delete this routine and cancel its pending runs?",
     "keep": "Keep Routine",
+    "openTask": "Open Session",
     "history": "Run History",
     "noRuns": "This routine has not run yet.",
     "field": "Field",
@@ -16600,6 +16605,10 @@
       "not-equals": "Does Not Equal"
     },
     "quiet": "Stay quiet when checks find nothing",
+    "sessionMode": "Run session",
+    "sessionModePersistent": "Persistent session (keep context)",
+    "sessionModeFresh": "New session each trigger (isolate context)",
+    "sessionModeHint": "Persistent keeps one routine conversation. New session creates and closes an isolated conversation for each trigger.",
     "quietHint": "Report changes or problems only. Turn off for reminders and scheduled messages.",
     "checkCommand": "Pre-run check command",
     "checkHint": "Optional. Checks on the computer before each run: exit 2 skips the run, exit 0 continues, errors stay visible. Clear to remove.",
@@ -17695,6 +17704,30 @@
     "taskSource": "[Task source] A companion started this task.",
     "taskId": "Task ID:",
     "contextReferences": "Context references:"
+  },
+  "sharing": {
+    "includeAttribution": "Include my name and avatar",
+    "recipientHint": "Open the link or scan the image to view the plugin. Continue in Cindy on a computer.",
+    "linkLabel": "Share link",
+    "imageLabel": "Share image",
+    "title": "Share",
+    "close": "Close",
+    "loading": "Preparing sharing material…",
+    "notConfigured": "Sharing is not available yet",
+    "unavailable": "This plugin is no longer publicly available to share",
+    "loadFailed": "Could not load sharing material. Reload to try again.",
+    "retry": "Reload Material",
+    "imageAlt": "Share image for {{name}}",
+    "copyLink": "Copy Link",
+    "copyImage": "Copy Image",
+    "saveImage": "Save Image",
+    "linkCopied": "Link copied",
+    "imageCopied": "Image copied",
+    "imageSaved": "Image saved",
+    "copyLinkFailed": "Could not copy the link",
+    "copyImageFailed": "Could not copy the image. Try copying it again.",
+    "saveImageFailed": "Could not save the image. Try saving it again.",
+    "previewFailed": "Could not display the image preview. You can still copy the link."
   },
   "subscriptionFastPolicy": {
     "label": "Allow Fast",

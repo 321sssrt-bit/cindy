@@ -23,13 +23,18 @@ interface BotRouteState {
   next?: RuntimeRoute;
 }
 
+function configuredKey(state: BotRouteState, chain = state.chain): string {
+  // Restore defaults is a configuration change even when its routes are equal.
+  return JSON.stringify([chain, state.followsCindyDefault === true]);
+}
+
 function configuredRoute(
   state: BotRouteState,
   previous: string | undefined,
   chain = state.chain,
 ): RuntimeRoute | null {
-  const key = JSON.stringify(chain);
-  const isDraftChange = key !== JSON.stringify(state.chain);
+  const key = configuredKey(state, chain);
+  const isDraftChange = JSON.stringify(chain) !== JSON.stringify(state.chain);
   // An automation owns its temporary route until ordinary input restores it.
   // This also applies to companions following Cindy defaults and after restart.
   if (!isDraftChange && parseScheduledModelBaseline(state.scheduledModelBaseline) && (previous === undefined || previous === key)) return null;
@@ -127,7 +132,7 @@ export function createBotModelRouteReconciler(deps: {
           // A temporary loss of model visibility must not erase that baseline.
           throwIpcError('PRECONDITION_FAILED', '请先选择已开启的伙伴模型');
         }
-        const key = JSON.stringify(state.chain);
+        const key = configuredKey(state);
         const previous = parseScheduledModelBaseline(state.scheduledModelBaseline)?.pendingBotProfileVersion
           ? '' : configured.get(sessionId);
         const route = configuredRoute(state, previous);

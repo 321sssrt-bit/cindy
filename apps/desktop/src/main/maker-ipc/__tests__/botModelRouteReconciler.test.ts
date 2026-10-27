@@ -93,6 +93,26 @@ describe('permanent Bot model selection', () => {
     await reconcile('canonical');
     expect(h.apply).not.toHaveBeenCalled();
   });
+  it.each([
+    { followsCindyDefault: true, pending: false },
+    { followsCindyDefault: true, pending: true },
+    { followsCindyDefault: false, pending: false },
+    { followsCindyDefault: false, pending: true },
+  ])('applies an equal chain after changing its configuration source (default=$followsCindyDefault, pending=$pending)', async ({ followsCindyDefault, pending }) => {
+    const h = harness();
+    h.state.hasRuntimeOverride = true;
+    h.state.followsCindyDefault = !followsCindyDefault;
+    if (pending) h.state.next = { ...h.state.current, model: 'pending-fallback' };
+    await h.reconcile('canonical');
+    expect(h.apply).not.toHaveBeenCalled();
+    // Global Restore defaults changes this flag even when the recommended chain
+    // equals the saved custom chain; no per-profile invalidation is emitted.
+    h.state.followsCindyDefault = followsCindyDefault;
+    const expected = expect.objectContaining({ agentKind: 'codex', model: 'luna' });
+    await expect(h.reconcile.preview('canonical')).resolves.toEqual(expected);
+    await h.reconcile('canonical');
+    expect(h.apply).toHaveBeenCalledExactlyOnceWith('canonical', expected, h.state.current);
+  });
   it('reads a changed default after acquiring the ordinary send lock without deadlocking a lock holder', async () => {
     const h = harness();
     const reconcile = createBotModelRouteReconciler({ ownerEpoch: () => 'owner', read: h.read, apply: h.apply, withSessionLock: withSendToSessionLock });

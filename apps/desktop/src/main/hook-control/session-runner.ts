@@ -463,13 +463,14 @@ export function extractToolResultMediaUrls(toolResultText: string, provider?: st
     xdt_video_urls?: unknown;
     xdt_media_produced?: unknown;
     _xdt_render_image?: unknown;
+    _xdt_forward_media?: unknown;
   };
   try {
     parsed = JSON.parse(toolResultText);
   } catch {
     return [];
   }
-  if (parsed._xdt_render_image === false) return [];
+  if (parsed._xdt_render_image === false || parsed._xdt_forward_media === false) return [];
   const urls: string[] = [];
   if (typeof parsed.xdt_image_url === 'string' && isRenderableImageUrl(parsed.xdt_image_url)) {
     urls.push(parsed.xdt_image_url);

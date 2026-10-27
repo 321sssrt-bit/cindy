@@ -3542,6 +3542,9 @@ SQL NULL 对应缺省；项目 `version: 1` 配置同样允许该字段，旧文
 不把“选本机”误作继承绑定任务的位置。更新可沿用已存的完整选择，恢复跟随时清除显式选择。
 `maker:get-capabilities` 返回 `supportsScheduleAgentDeviceSelection: true`。
 新调用方只有明确看到此能力才向其它电脑提交位置选择；旧端未知字段会被忽略，禁止静默降级。
+跨电脑更新非空 `modelAgentKind` 时，即使省略位置以继承原位置，也必须先确认既有
+`supportsScheduleModelSelection: true`；旧端不支持时在写入前拒绝。同时设置位置或清空模型
+字段时，两项所需能力一起核验，复用一次能力查询及原有账号代次检查，不新增协议字段。
 跨电脑 `schedule_update` 清空 `modelAgentDeviceId` / `modelAgentKind` / `model` / `providerId` /
 `effort` 时，同样先核验此能力，再保留可序列化的 `null` 发送；接收端 IPC 转成带 key 的
 `undefined` 后交给 Scheduler 与存储。省略字段仍是不修改，不在发送前丢掉清空意图。

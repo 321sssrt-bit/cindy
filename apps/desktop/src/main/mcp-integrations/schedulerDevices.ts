@@ -101,11 +101,20 @@ export function createSchedulerRemoteDeps(deps: {
       let response: InvokeResultPayload;
       try {
         const patch = op === 'update' ? args[1] as Record<string, unknown> | undefined : undefined;
-        if (patch && (Object.prototype.hasOwnProperty.call(patch, 'modelAgentDeviceId')
-          || ['modelAgentKind', 'model', 'providerId', 'effort'].some((key) => patch[key] === null))) {
+        const needsModelSelection = patch?.modelAgentKind != null;
+        const needsLocationSelection = patch && (Object.prototype.hasOwnProperty.call(patch, 'modelAgentDeviceId')
+          || ['modelAgentKind', 'model', 'providerId', 'effort'].some((key) => patch[key] === null));
+        if (needsModelSelection || needsLocationSelection) {
           const capabilities = await deps.invoke(deviceId, 'maker:get-capabilities', ['claude-code'], { preSend: assertCurrent });
           assertCurrent();
-          if (!capabilities.ok || !(capabilities.result as { supportsScheduleAgentDeviceSelection?: boolean } | null)?.supportsScheduleAgentDeviceSelection) {
+          const supported = capabilities.ok ? capabilities.result as {
+            supportsScheduleModelSelection?: boolean;
+            supportsScheduleAgentDeviceSelection?: boolean;
+          } | null : null;
+          if (needsModelSelection && supported?.supportsScheduleModelSelection !== true) {
+            return { ok: false, code: 'REMOTE_UNSUPPORTED', message: '目标电脑的版本不支持自动化完整模型选择，请先更新目标电脑' };
+          }
+          if (needsLocationSelection && !supported?.supportsScheduleAgentDeviceSelection) {
             return { ok: false, code: 'REMOTE_UNSUPPORTED', message: '目标电脑的版本不支持自动化选择远程或分享供应商，请先更新目标电脑' };
           }
         }

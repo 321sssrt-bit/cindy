@@ -50,6 +50,7 @@ import { CINDY_MAKE_ENABLED, isCindyMakeSource } from '@cindy/maker-shared/cindy
 
 import { cn } from '@/lib/utils';
 import { provisionalDraftTaskId, subscribeProvisionalDraftTask } from './provisionalDraftTask';
+import { useProvisionalDraftProjectTaskId } from './hooks/useProvisionalDraftProjectTaskId';
 import { toast } from '@/lib/toast';
 import { isDataOwnerPushCurrent } from '@/contexts/dataOwnerGeneration';
 import { useCCSessions } from '@/hooks/useCCSessions';
@@ -249,6 +250,7 @@ import {
 } from './lib/sidebarCollapseConfig';
 import { getSessionListCollapseView } from './lib/sessionListCollapse';
 import { hasSessionSelectionModifier, type SessionClickModifiers } from './sidebar/SessionItem';
+import { sessionMoveFailureFeedback } from '../../../shared/worktreeMoveGuardError';
 import type { SessionMoveTarget } from './sidebar/sessionMoveTarget';
 import {
   DIALOGUE_FILTER_KEY,
@@ -462,6 +464,10 @@ export function CCAgentSidebarUpper() {
   );
   const remoteDevices = useRemoteDevices();
   const selectedMachineId = useEffectiveSelectedMachineId();
+  const projectAliasMembers = useMemo(
+    () => [...allSessionsForAttention, ...remoteProjectSessions],
+    [allSessionsForAttention, remoteProjectSessions],
+  );
   const searchProjectSessions = useMemo(
     () =>
       selectVisibleSessions(
@@ -490,6 +496,8 @@ export function CCAgentSidebarUpper() {
     false,
     searchPersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   const restorableSelectionProjectKeys = useMemo(
     () => new Set(searchProjectGroups.projects.map((project) => project.projectKey)),
@@ -1550,6 +1558,10 @@ function ExpandedView({
     },
     [filter.status, effectiveIncludeArchived],
   );
+  const projectAliasMembers = useMemo(
+    () => [...allSessionsForAttention, ...remoteProjectSessions],
+    [allSessionsForAttention, remoteProjectSessions],
+  );
   const scopedSidebarSessions = useMemo(
     () =>
       selectVisibleSessions(sessions, remoteProjectSessions, selectedMachineId)
@@ -1589,6 +1601,8 @@ function ExpandedView({
     false,
     visiblePersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   // Project pinning is independent from conversation pinning. This catalogue
   // keeps pinned conversations inside their project solely for project identity
@@ -1599,6 +1613,8 @@ function ExpandedView({
     true,
     visiblePersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   const groups = useProjectGroups(
     activityFilteredSessions,
@@ -1610,6 +1626,7 @@ function ExpandedView({
       activityFilteredPersistentLocalProjects === visiblePersistentLocalProjects
       ? allGroups
       : undefined,
+    projectAliasMembers,
   );
   // 普通项目目录也需要保留「所有会话都已单独置顶」的项目身份，供用户继续
   // 从 ProjectNode 菜单置顶整个项目；实际项目子行在渲染前仍会排除已置顶会话。
@@ -1623,6 +1640,7 @@ function ExpandedView({
       activityFilteredPersistentLocalProjects === visiblePersistentLocalProjects
       ? allProjectGroups
       : undefined,
+    projectAliasMembers,
   );
   const activeWorkingDirs = useMemo(
     () => allProjectGroups.projects.map((p) => p.projectKey),
@@ -1648,6 +1666,8 @@ function ExpandedView({
     true,
     persistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   // Visibility is a negative overlay only. Keep the raw universe above for
   // filter/manual-order GC, and expose a separate catalogue to sidebar UI.
@@ -1793,10 +1813,12 @@ function ExpandedView({
     [pinnedProjectKeys, localPlatform],
   );
 
+  const provisionalProjectTaskId = useProvisionalDraftProjectTaskId();
   const restorableProjectKeys = useMemo(
     () =>
       collectRestorableProjectKeys({
         sessions: scopedSidebarSessions,
+        provisionalDraftTaskId: provisionalProjectTaskId,
         persistentLocalProjects: visiblePersistentLocalProjects,
         lastActivityCutoff: cutoffForLastActivity(filter.lastActivity),
         pinnedProjectKeys,
@@ -1805,6 +1827,7 @@ function ExpandedView({
       }),
     [
       filter.lastActivity,
+      provisionalProjectTaskId,
       localPlatform,
       pinnedProjectKeys,
       scopedSidebarSessions,
@@ -1979,7 +2002,7 @@ function ExpandedView({
         waitingSessionIds: waiting,
       },
       [
-        ...visibleProjects.flatMap((project) => project.sessions),
+        ...allProjectGroups.projects.flatMap((project) => project.sessions),
         ...groups.bots.flatMap((bot) => bot.sessions),
         ...visibleDialogues,
         ...visibleUnclassified,
@@ -2014,10 +2037,27 @@ function ExpandedView({
     urgentSet,
     viewedSessionId,
     visibleDialogues,
-    visibleProjects,
+    allProjectGroups.projects,
     visibleUnclassified,
   ]);
   const projectPriorityContext = projectPriorityProjection.context;
+  // 只重排置顶项目的子任务；置顶项自身仍按用户的拖拽顺序排列。
+  const pinnedSortContext = filter.sortBy === 'priority' ? projectPriorityContext : undefined;
+  const sortedPinnedEntries = useMemo(
+    () => visiblePinnedEntries.map((entry) =>
+      entry.kind === 'project'
+        ? {
+            ...entry,
+            displaySessions: sortSessionsForMainList(
+              entry.displaySessions ?? entry.project.sessions,
+              filter.sortBy,
+              pinnedSortContext,
+            ),
+          }
+        : entry,
+    ),
+    [visiblePinnedEntries, filter.sortBy, pinnedSortContext],
+  );
 
   const visibleProjectsWithVendor = useMemo(() => {
     const unpinnedProjects = visibleProjects.filter(
@@ -3051,6 +3091,12 @@ function ExpandedView({
         }
       }
 
+      // worktree 会话的工作区就是它绑定的 worktree：只改 workingDir 会造成半移动
+      // （侧栏按新项目归组，聊天框底部路径仍指旧 worktree）。判定不在这里做：归属只有
+      // 共享写路径一处权威，renderer 的缓存/复核都是异步镜像，任何「先查询再决定」都
+      // 会有一条「查询通过后、写入前恰好回收」的窗口，把主进程本会放行的移动挡在请求
+      // 之前。这里照常发请求，被守卫拒绝时在下面映射成同一条 toast；「移到对话」不改
+      // 目录，不受影响。
       const oldPatch = {
         workingDir: session.workingDir,
         workspaceKind: session.workspaceKind,
@@ -3089,13 +3135,12 @@ function ExpandedView({
         if (expandedProjectKey && wasExpandedProjectCollapsed) {
           collapse.setCollapsed(expandedProjectKey, true);
         }
-        toast.error(
-          t(
-            target.kind === 'dialogue'
-              ? 'ccAgent.sidebar.sessionMenu.moveToDialogueFailed'
-              : 'ccAgent.sidebar.sessionMenu.moveToProjectFailed',
-          ),
-        );
+        // 归属守卫在主进程唯一权威地拒绝跨根移动（在关 runtime / 写库 / 转录迁移之前，
+        // 不留部分写入）；被它拒绝时给产品既定的「暂不支持移出 worktree」说明，其它
+        // 失败照旧用通用报错文案。
+        const feedback = sessionMoveFailureFeedback(target.kind, err);
+        if (feedback.level === 'warning') toast.warning(t(feedback.key));
+        else toast.error(t(feedback.key));
       }
     },
     [collapse.expand, collapse.setCollapsed, effectiveRunningSessionIds, patchLocal, t],
@@ -3106,7 +3151,7 @@ function ExpandedView({
    * archive / archive-now 都直接执行，不弹确认框：归档可逆（菜单里就有「恢复」），
    *   行内入口本身已经是两步确认，菜单入口再弹一次纯属多余摩擦。例外有两个：
    *   worktree 有未提交改动 —— 归档会顺带回收 worktree；任务绑定了 active 自动化
-   *   —— 归档后自动化会暂停。这两种情况升级到 ConfirmDialog 展示对应提醒；
+   *   —— 后续运行会恢复原任务。这两种情况升级到 ConfirmDialog 展示对应提醒；
    * unarchive 是 archive 的反向操作，无副作用，直接 patch 即可，不弹确认。
    *
    * 执行序列（关子进程 / 写库 / 乐观补丁 / 释放内存 / refresh / 跳转）抽在
@@ -3178,7 +3223,7 @@ function ExpandedView({
       // 归档一律不弹确认框:它是可逆的(菜单里就有「恢复」),菜单入口与行内
       // 快捷按钮同一口径直接执行 —— 行内那个本身已经是两步确认。
       // 例外:worktree 有未提交改动(归档会顺带回收 worktree)、或任务绑定了
-      // active 自动化(归档后会暂停),这时升级到确认弹窗展示对应提醒。
+      // active 自动化(后续运行会恢复原任务),这时升级到确认弹窗展示对应提醒。
       if (isArchiveLike) {
         await runSessionAction(sessionId, 'archive', {
           activeSessionId: viewedSessionIdRef.current,
@@ -3801,7 +3846,7 @@ function ExpandedView({
                  * 同样不展示，继续使用本地与已缓存内容即可。
                  */}
                 <PinnedSection
-                  entries={visiblePinnedEntries}
+                  entries={sortedPinnedEntries}
                   allKnownProjects={visibleProjectUniverse}
                   renderProject={(
                     project,

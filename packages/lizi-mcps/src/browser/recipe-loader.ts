@@ -1,3 +1,5 @@
+/// <reference path="../vite-env.d.ts" />
+
 /**
  * Site Recipe + SiteGuide registry.
  *
@@ -17,6 +19,7 @@
  * across sessions.
  */
 import { z } from 'zod';
+import upstreamCatalog from '@jackwener/opencli/catalog';
 
 import { ExtractSpecSchema } from './extract.js';
 
@@ -78,19 +81,37 @@ export const RecipeSchema = z.object({
   /** Host substrings this recipe applies to (advisory, surfaced via siteguide). */
   match: z.array(z.string()).optional(),
   description: z.string().optional(),
-  inputs: z.record(z.string(), z.object({ required: z.boolean().optional() })).optional(),
-  steps: z.array(RecipeStepSchema).min(1),
+  inputs: z.record(z.string(), z.object({ required: z.boolean().optional(), type: z.string().optional(), default: z.unknown().optional(), description: z.string().optional(), choices: z.array(z.string()).optional() })).optional(),
+  /** A fixed bundled command id, never an arbitrary module path. */
+  adapter: z.string().optional(),
+  adapterInputMap: z.record(z.string(), z.string()).optional(),
+  access: z.enum(['read', 'write']).optional(),
+  steps: z.array(RecipeStepSchema).default([]),
   /** Output template, e.g. "{{results}}". A bare single-var ref returns that var verbatim. */
   output: z.string().optional(),
   /** Host-owned state; authored drafts cannot supply this. Legacy files remain runnable. */
   validation: z.object({
     site: z.string(),
-    state: z.enum(['active', 'suspended']),
+    state: z.enum(['candidate', 'active', 'suspended']),
+    /** Newly learned recipes stay in their browser profile; legacy files omit it. */
+    profile: z.string().optional(),
   }).optional(),
-});
+}).refine(recipe => recipe.adapter ? recipe.steps.length === 0 : recipe.steps.length > 0, 'recipe requires steps or a bundled adapter, exclusively');
 
 export type Recipe = z.infer<typeof RecipeSchema>;
 export type RecipeStep = z.infer<typeof RecipeStepSchema>;
+
+/** Deferred candidates can only compose known read primitives, never authored
+ * page code or interactive steps. This is a capability check, not a promise
+ * about a remote site's GET side effects; normal recipe approval still applies. */
+export function deferredRecipeIssue(recipe: Recipe): string | undefined {
+  if (recipe.access !== 'read') return '延后验证仅支持声明为 read 的新流程';
+  if (recipe.adapter || recipe.steps.some(step => step.fn !== undefined
+    || !['navigate', 'wait', 'extract', 'requests', 'responseBody'].includes(step.action))) {
+    return '延后验证仅支持 navigate、无 fn 的 wait、extract、requests、responseBody；交互、evaluate 或脚本步骤必须在当次真实操作中验证后再保存，不能为测试重放写操作';
+  }
+  return undefined;
+}
 
 /** SiteGuide is loose, agent-facing knowledge; we validate only the shape we rely on. */
 export const SiteGuideSchema = z
@@ -197,20 +218,60 @@ export function mergeSiteGuides(
 
 /** Glob recipe JSON bundled at build time (Vite), then parse. */
 export function loadRecipes(): Map<string, Recipe> {
-  const mods = import.meta.glob('./recipes/*/recipe.json', {
+  const mods = import.meta.glob(['./recipes/*/recipe.json', './cindy-recipes/*/*.recipe.json'], {
     query: '?raw',
     import: 'default',
     eager: true,
   }) as Record<string, string>;
-  return parseRecipes(mods);
+  const recipes = parseRecipes(mods);
+  for (const entry of upstreamCatalog) {
+    const id = `opencli:${entry.site}/${entry.name}`;
+    recipes.set(id, {
+      id, adapter: `${entry.site}/${entry.name}`, access: entry.access as 'read' | 'write',
+      description: entry.description, match: entry.domain ? [entry.domain] : [], steps: [],
+      inputs: Object.fromEntries(entry.args.map(arg => [arg.name, {
+        required: arg.required, type: arg.type, default: 'default' in arg ? arg.default : undefined,
+        description: arg.help, choices: 'choices' in arg ? arg.choices as string[] : undefined,
+      }])),
+    });
+  }
+  return recipes;
 }
 
 /** Glob siteguide JSON bundled at build time (Vite), then parse. */
 export function loadSiteGuides(): Map<string, SiteGuide> {
-  const mods = import.meta.glob('./recipes/*/siteguide.json', {
+  const mods = import.meta.glob(['./recipes/*/siteguide.json', './cindy-recipes/*/siteguide.json'], {
     query: '?raw',
     import: 'default',
     eager: true,
   }) as Record<string, string>;
-  return parseSiteGuides(mods);
+  const guides = parseSiteGuides(mods);
+  const siteKeys = new Map<string, string>();
+  for (const recipe of loadRecipes().values()) {
+    if (recipe.id.startsWith('opencli:') || !recipe.adapter) continue;
+    const host = recipe.match?.find(host => guides.has(host));
+    if (host) siteKeys.set(recipe.adapter.split('/')[0], host);
+  }
+  for (const entry of upstreamCatalog) {
+    if (!siteKeys.has(entry.site)) siteKeys.set(entry.site, entry.domain || entry.site);
+  }
+  for (const entry of upstreamCatalog) {
+    const site = siteKeys.get(entry.site)!;
+    const id = `opencli:${entry.site}/${entry.name}`;
+    const guide = guides.get(site) ?? { site, recipes: [], notes: '内置 OpenCLI 适配器；先查看参数与 read/write 分类。登录、API 凭据和平台依赖按具体命令要求准备。' };
+    guide.recipes = [...(guide.recipes ?? []), id];
+    const aliases = Array.isArray(guide.aliases) ? guide.aliases as string[] : [];
+    guide.aliases = [...new Set([...aliases, entry.site, ...(entry.domain ? [entry.domain] : [])])];
+    guides.set(site, guide);
+  }
+  // Cindy additions can extend an existing site's capabilities (e.g. Steam
+  // reviews) without replacing its upstream guide or duplicating the site.
+  for (const recipe of loadRecipes().values()) {
+    if (recipe.adapter) continue;
+    const host = recipe.match?.find(host => guides.has(host));
+    if (!host) continue;
+    const guide = guides.get(host)!;
+    guide.recipes = [...new Set([...(guide.recipes ?? []), recipe.id])];
+  }
+  return guides;
 }

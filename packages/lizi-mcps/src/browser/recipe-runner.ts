@@ -13,9 +13,14 @@ import type { BrowserControlRequest, BrowserControlResult } from '@cindy/browser
 import { buildExtractFnSource, type ExtractSpec } from './extract.js';
 import type { Recipe, RecipeStep } from './recipe-loader.js';
 import { isHttpUrl } from './url-guard.js';
+import { runOpenCliAdapter } from './opencli-page.js';
+import type { RecipeFiles } from '@jackwener/opencli/cindy';
 
 export interface RecipeRunDeps {
   call: (req: BrowserControlRequest) => Promise<BrowserControlResult>;
+  targetId?: string;
+  recipeSecrets?: { read(key: string): string | null; write(key: string, value: string): boolean };
+  recipeFiles?: () => Promise<RecipeFiles>;
   logger?: { warn?: (message: string, meta?: unknown) => void };
 }
 
@@ -195,7 +200,8 @@ export function stepToRequest(step: RecipeStep, vars: Record<string, unknown>): 
       if (!step.extract) throw new Error('extract step requires `extract`');
       return {
         action: 'act',
-        request: { kind: 'evaluate', fn: buildExtractFnSource(step.extract as ExtractSpec), timeoutMs: step.timeoutMs },
+        request: { kind: 'evaluate', fn: buildExtractFnSource(step.extract as ExtractSpec),
+          domRead: { kind: 'extract', extract: step.extract as ExtractSpec }, timeoutMs: step.timeoutMs },
       };
     case 'evaluate':
       // Raw page-context JS (function-expression source). Unlike `extract` (which
@@ -306,6 +312,24 @@ export async function runRecipe(
   inputs: Record<string, unknown> | undefined,
   deps: RecipeRunDeps,
 ): Promise<RecipeRunResult> {
+  if (recipe.adapter) {
+    let started = false;
+    try {
+      const args = { ...(inputs ?? {}) };
+      for (const [from, to] of Object.entries(recipe.adapterInputMap ?? {})) {
+        if (Object.hasOwn(args, from)) { args[to] = args[from]; if (from !== to) delete args[from]; }
+      }
+      const output = await runOpenCliAdapter(recipe.adapter, args, {
+        ...deps,
+        onExecutionStart: () => { started = true; },
+      });
+      return { ok: true, recipe: recipe.id, steps: [{ action: 'adapter', ok: true }], output };
+    } catch (error) {
+      return { ok: false, recipe: recipe.id, steps: started ? [{ action: 'adapter', ok: false }] : [],
+        ...(started ? { failedStep: 0, failedAction: 'adapter' } : {}),
+        failureKind: started ? 'action' : 'input', message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const vars: Record<string, unknown> = { ...(inputs ?? {}) };
   for (const [name, spec] of Object.entries(recipe.inputs ?? {})) {
     if (spec.required && (vars[name] === undefined || vars[name] === null)) {
@@ -373,6 +397,9 @@ export async function runRecipe(
           if (!((${guard.request!.fn})())) return { matched: false };
           return { matched: true, value: await ((${extractFn})()) };
         }` } };
+        // The fixed read path ignores fn, so a composite guard must use the
+        // regular evaluate path instead of bypassing its identity check.
+        delete req.request!.domRead;
         combinedGuard = true;
       } else if (guard) {
         let matched = false;

@@ -648,7 +648,13 @@ export interface ResolvedBrowserScreenshot {
 
 /** Browser automation MCP host deps. Core browser execution is injected by host. */
 export interface BrowserMcpDeps {
+  /** Local structural observations only; no URLs, scripts, selectors or input values. */
+  experienceStore?: import('./browser/experience.js').BrowserExperienceStore;
   getRuntime(): BrowserControlRuntime;
+  /** Resolve the actual host profile before validation, discovery and execution. */
+  resolveProfile?(profile?: string): string;
+  /** Existing host lifecycle/backend identities; changes invalidate session evidence. */
+  getBackendScope?(): { lifecycle: object; backend: object };
   /**
    * Resolve a successful screenshot runtime result into verified image bytes.
    * The host owns file-system access so this package never receives a generic
@@ -665,6 +671,10 @@ export interface BrowserMcpDeps {
   supportsResourceDownloads?(): boolean;
   /** Whether the active backend accepts semantic element queries. */
   supportsSemanticQueries?(): boolean;
+  /** Trusted host-only credential IO; never exposed as a tool or page input. */
+  recipeSecrets?: { read(key: string): string | null; write(key: string, value: string): boolean };
+  /** Creates invocation-local file access using the host's existing upload policy. */
+  recipeFiles?: (sessionId?: string) => Promise<{ read(file: string): Buffer; open(file: string): number }>;
   /**
    * 代输入: true while the target tab still shows a page where the owner just
    * typed a secret. Page-state reads (evaluate, requests, response bodies,
@@ -953,6 +963,8 @@ export interface LiziMcpSessionContext {
   mcpCallerKind?: LiziMcpCallerKind;
   /** True only when the harness bridge has installed provenance enforcement. */
   mcpCallerAttested?: boolean;
+  /** In-process host callback; only the attested Codex root route may use it. */
+  nativeHarnessHook?: (input: unknown, metadata: unknown) => Promise<Record<string, unknown>>;
 }
 
 export interface CodexHttpMcpConfig {

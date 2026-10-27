@@ -9549,8 +9549,8 @@
         "speaking": "{{name}} 正在说…",
         "planning": "{{name}} 正在安排…"
       },
-      "memberCount_one": "{{count}} 位伙伴",
-      "memberCount_other": "{{count}} 位伙伴",
+      "memberCount_one": "{{count}} 位成员",
+      "memberCount_other": "{{count}} 位成员",
       "nameLabel": "群名称",
       "waitingConfirm": "{{name}}在等你确认",
       "loadFailedTitle": "无法加载这个群聊",

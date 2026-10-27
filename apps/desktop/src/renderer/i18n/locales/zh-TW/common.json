@@ -9549,8 +9549,8 @@
         "speaking": "{{name}} 正在說…",
         "planning": "{{name}} 正在安排…"
       },
-      "memberCount_one": "{{count}} 位夥伴",
-      "memberCount_other": "{{count}} 位夥伴",
+      "memberCount_one": "{{count}} 位成員",
+      "memberCount_other": "{{count}} 位成員",
       "nameLabel": "群聊名稱",
       "waitingConfirm": "{{name}}在等你確認",
       "loadFailedTitle": "無法載入這個群聊",

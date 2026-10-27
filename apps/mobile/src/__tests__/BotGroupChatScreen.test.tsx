@@ -515,7 +515,9 @@ describe('group timeline', () => {
     expect(byId('botGroup.file')?.textContent).toBe('页面想法.md');
     expect(byId('botGroup.olderOnComputer')).not.toBeNull();
     expect(byId('botGroup.organizerTag')?.textContent).toBe('groupChat.organizer');
-    expect(node.textContent).toContain('咪咪groupChat.memberSeparator阿布groupChat.memberSeparator小满');
+    // The header reads the group's size, not every member (the names stay in its accessibility label).
+    expect(node.textContent).toContain('groupChat.memberCount(count=3)');
+    expect(node.textContent).not.toContain('咪咪groupChat.memberSeparator阿布');
   });
 
   it('continues the round and explains files that stay on the computer', async () => {

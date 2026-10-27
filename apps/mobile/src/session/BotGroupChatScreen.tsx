@@ -35,6 +35,7 @@ import {
   BOT_GROUP_REMOTE_COLLECTION_ID,
   isBotGroupRuntimeFailureCode,
   resolveBotGroupQuote,
+  BOT_GROUP_MEMBER_LINK_REL,
   botGroupQuoteFromMessage,
   isBotGroupMessageQuotable,
   type BotGroupQuoteView,
@@ -379,9 +380,14 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
   const title = group?.name ?? (cachedRow ? resolveRemoteText(cachedRow.item.display.title, i18n.language) : '');
   const direct = group?.conversationKind === 'direct';
   const peer = direct ? group.members.find(member => !member.isSelf) : undefined;
-  const memberLine = direct ? '' : group
+  // The header reads the group's size, not a roll call (owner request 2026-10-26); the names stay
+  // in the accessibility label and in group settings. The list row's member links seed the count.
+  const memberNames = direct ? '' : group
     ? botGroupMemberNames(group.members, t('groupChat.memberSeparator'))
     : cachedRow?.item.display.subtitle ? resolveRemoteText(cachedRow.item.display.subtitle, i18n.language) : '';
+  const memberCount = group ? group.members.length
+    : cachedRow?.item.links?.filter((link) => link.rel === BOT_GROUP_MEMBER_LINK_REL).length ?? 0;
+  const memberLine = direct || memberCount === 0 ? '' : t('groupChat.memberCount', { count: memberCount });
   const headerMembers = group ? group.members.map((member) => identityFor(member.botId, member.name)) : [];
 
   const header = <ChatIdentityHeader testIDPrefix="botGroup" settingsTestID="botGroup.settingsButton" nativeHeader={nativeHeader}
@@ -389,7 +395,7 @@ export function BotGroupChatScreen({ deviceId, deviceName, groupId, messageId, n
       working={group?.round.status === 'running'} />}
     title={title}
     subtitle={threadRootId ? t('message.renderer.reply') : memberLine}
-    identityLabel={[title, memberLine].filter(Boolean).join(', ')}
+    identityLabel={[title, memberLine, memberNames].filter(Boolean).join(', ')}
     identityHint={t('groupChat.settings.open')}
     controlsReady={!!group}
     onBack={threadRootId ? () => router.replace(`/companions/groups/${groupId}?messageId=${threadRootId}` as never) : leave}

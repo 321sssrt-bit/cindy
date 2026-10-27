@@ -14,6 +14,8 @@ import { fontWeight, lineHeight, monoFont, radius, spacing, textStyles, typeScal
 
 const TEXT_ATTACHMENT_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 const JSON_ATTACHMENT_PREVIEW_MAX_LINES = 10_000;
+const JSON_ATTACHMENT_PREVIEW_MAX_CHARACTERS = 100_000;
+const JSON_ATTACHMENT_PREVIEW_MAX_LINE_CHARACTERS = 4_096;
 const NO_EXTERNAL_IMAGES: ReadonlyMap<string, { uri: string }> = new Map();
 
 export type BotGroupTextAttachmentPreviewKind = 'html' | 'markdown' | 'json';
@@ -21,9 +23,10 @@ export type BotGroupTextAttachmentPreviewKind = 'html' | 'markdown' | 'json';
 type PreviewState =
   | { status: 'loading' }
   | { status: 'ready'; text: string }
+  | { status: 'empty' }
   | { status: 'failed' }
-  | { status: 'too-large'; url: string }
-  | { status: 'binary'; url: string };
+  | { status: 'too-large' }
+  | { status: 'binary' };
 
 type ResolveServerMedia = (id: string, signal?: AbortSignal) => Promise<BotGroupAttachment>;
 
@@ -74,13 +77,16 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
         },
         request.signal,
         () => { tooLarge = true; },
+        { allowEmpty: true },
       );
       if (request.signal.aborted) return;
       if (!result) {
-        setState(tooLarge ? { status: 'too-large', url: attachment.url } : { status: 'failed' });
+        setState(tooLarge ? { status: 'too-large' } : { status: 'failed' });
         return;
       }
-      setState(result.kind === 'binary' ? { status: 'binary', url: attachment.url } : { status: 'ready', text: result.text });
+      setState(result.kind === 'binary'
+        ? { status: 'binary' }
+        : result.text.length === 0 ? { status: 'empty' } : { status: 'ready', text: result.text });
     } catch {
       if (!request.signal.aborted) setState({ status: 'failed' });
     }
@@ -99,13 +105,24 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
     ? t('groupChat.server.attachmentPreviewTooLarge')
     : state.status === 'binary'
       ? t('groupChat.server.attachmentPreviewBinary')
-      : t('groupChat.server.attachmentPreviewFailed');
-  const openOutside = async (url: string) => {
+      : state.status === 'empty'
+        ? t('groupChat.server.attachmentPreviewEmpty')
+        : t('groupChat.server.attachmentPreviewFailed');
+  const openOutside = async () => {
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    setState({ status: 'loading' });
     try {
-      await openBrowserAsync(url);
-      onClose();
+      const attachment = await resolveRef.current(attachmentId, request.signal);
+      if (request.signal.aborted) return;
+      if (attachment.category !== 'file' || !attachment.url || !isCredentialFreeHttpsUrl(attachment.url)) {
+        throw new Error('ATTACHMENT_PREVIEW_URL_INVALID');
+      }
+      await openBrowserAsync(attachment.url);
+      if (!request.signal.aborted) onClose();
     } catch {
-      setState({ status: 'failed' });
+      if (!request.signal.aborted) setState({ status: 'failed' });
     }
   };
 
@@ -130,7 +147,7 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
             <Text style={[textStyles.footnote, { color: colors.textSecondary }]}>{t('groupChat.server.attachmentPreviewLoading')}</Text>
           </View>
         ) : null}
-        {state.status === 'failed' || state.status === 'too-large' || state.status === 'binary' ? (
+        {state.status === 'failed' || state.status === 'too-large' || state.status === 'binary' || state.status === 'empty' ? (
           <View style={styles.messageState} testID={'groupChat.server.attachmentPreview.' + state.status}>
             <Text style={[textStyles.footnote, styles.stateCopy, { color: colors.textSecondary }]}>{message}</Text>
             {state.status === 'failed' || state.status === 'too-large' ? (
@@ -139,7 +156,7 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
               </Pressable>
             ) : null}
             {kind !== 'html' && (state.status === 'too-large' || state.status === 'binary') ? (
-              <Pressable accessibilityRole="button" onPress={() => { void openOutside(state.url); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewOpenOutside">
+              <Pressable accessibilityRole="button" onPress={() => { void openOutside(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewOpenOutside">
                 <ExternalLink color={colors.textPrimary} size={16} />
                 <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewOpenOutside')}</Text>
               </Pressable>
@@ -187,22 +204,23 @@ function isCredentialFreeHttpsUrl(value: string): boolean {
 }
 
 function isLikelyBinaryText(value: string): boolean {
-  return /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(value);
+  return /[\x00-\x08\x0B\x0E-\x1F]/.test(value);
 }
 
 function splitJsonPreviewLines(text: string): { lines: string[]; truncated: boolean } {
   const lines: string[] = [];
   let start = 0;
-  while (lines.length < JSON_ATTACHMENT_PREVIEW_MAX_LINES) {
+  let characters = 0;
+  while (lines.length < JSON_ATTACHMENT_PREVIEW_MAX_LINES && characters < JSON_ATTACHMENT_PREVIEW_MAX_CHARACTERS) {
     const end = text.indexOf('\n', start);
-    if (end < 0) {
-      const lastLine = text.slice(start);
-      lines.push(lastLine.endsWith('\r') ? lastLine.slice(0, -1) : lastLine);
-      return { lines, truncated: false };
-    }
-    const lineEnd = end > start && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
-    lines.push(text.slice(start, lineEnd));
-    start = end + 1;
+    const lineEnd = end < 0 ? text.length : end > start && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
+    const line = text.slice(start, lineEnd);
+    const visible = line.slice(0, Math.min(JSON_ATTACHMENT_PREVIEW_MAX_LINE_CHARACTERS, JSON_ATTACHMENT_PREVIEW_MAX_CHARACTERS - characters));
+    lines.push(visible);
+    characters += visible.length;
+    start = end < 0 ? text.length : end + 1;
+    if (visible.length < line.length) return { lines, truncated: true };
+    if (end < 0) return { lines, truncated: false };
   }
   return { lines, truncated: start < text.length };
 }

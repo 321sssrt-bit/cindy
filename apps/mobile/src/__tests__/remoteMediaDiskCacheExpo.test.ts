@@ -197,6 +197,23 @@ describe('bounded temporary media downloads', () => {
     expect(io.remove).toHaveBeenCalledOnce();
   });
 
+  it('reads an empty text file when the caller explicitly allows it', async () => {
+    io.size = 0;
+    const read = vi.fn(async file => 'read-' + file.size);
+    const result = await withDownloadedRemoteMediaFile(
+      'https://example.com/empty.json',
+      'application/json',
+      8,
+      read,
+      undefined,
+      undefined,
+      { allowEmpty: true },
+    );
+    expect(result).toBe('read-0');
+    expect(read).toHaveBeenCalledOnce();
+    expect(io.remove).toHaveBeenCalledOnce();
+  });
+
   it.each(['download', 'read'])('removes partial files after a %s failure', async (failure) => {
     const read = vi.fn(async () => { throw new Error('read failed'); });
     if (failure === 'download') io.download.mockRejectedValueOnce(new Error('interrupted'));

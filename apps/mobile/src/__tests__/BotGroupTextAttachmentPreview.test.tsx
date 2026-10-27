@@ -124,12 +124,18 @@ function makeAttachment(id: string, name: string, url: string): BotGroupAttachme
   return { id, name, category: 'file', mimeType: 'application/octet-stream', size: 32, path: null, url };
 }
 
-async function renderPreview(kind: 'html' | 'markdown' | 'json', fileName: string, text: string, url = 'https://files.example.test/' + fileName) {
+async function renderPreview(kind: 'html' | 'markdown' | 'json', fileName: string, text: string, urls: string | readonly string[] = 'https://files.example.test/' + fileName) {
   downloadState.text = text;
+  const resolvedUrls = typeof urls === 'string' ? [urls] : [...urls];
+  let resolveIndex = 0;
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  const resolve = vi.fn(async (id: string, _signal?: AbortSignal) => makeAttachment(id, fileName, url));
+  const resolve = vi.fn(async (id: string, _signal?: AbortSignal) => {
+    const url = resolvedUrls[Math.min(resolveIndex, resolvedUrls.length - 1)]!;
+    resolveIndex += 1;
+    return makeAttachment(id, fileName, url);
+  });
   const onClose = vi.fn();
   await act(async () => {
     root!.render(createElement(BotGroupTextAttachmentPreview, {
@@ -137,7 +143,7 @@ async function renderPreview(kind: 'html' | 'markdown' | 'json', fileName: strin
     }));
     await new Promise(done => setTimeout(done, 0));
   });
-  return { container: host, resolve, onClose, url };
+  return { container: host, resolve, onClose, url: resolvedUrls[0]! };
 }
 
 describe('bot-group text attachment preview kinds', () => {
@@ -163,6 +169,13 @@ describe('BotGroupTextAttachmentPreview', () => {
     expect(reader?.getAttribute('data-javascript-enabled')).toBe('false');
     expect(reader?.textContent).toContain('Report');
     expect(openBrowserAsync).not.toHaveBeenCalled();
+  });
+
+  it('keeps valid HTML form-feed whitespace readable', async () => {
+    const { container } = await renderPreview('html', 'report.html', '<div\fclass="report">Form feed</div>');
+    const reader = container.querySelector('[data-testid="groupChat.server.attachmentHtmlPreview"]');
+    expect(reader).not.toBeNull();
+    expect(reader?.textContent).toContain('Form feed');
   });
 
   it('sends Markdown through the existing reader without allowing remote image sources', async () => {
@@ -192,6 +205,42 @@ describe('BotGroupTextAttachmentPreview', () => {
     const { container } = await renderPreview('json', 'large.json', body);
     expect(container.querySelector('[data-testid="groupChat.server.attachmentJsonPreview"]')?.getAttribute('data-row-count')).toBe('10000');
     expect(container.textContent).toContain('groupChat.server.attachmentPreviewTruncated');
+  });
+
+  it('caps the rendered length of a single-line JSON file', async () => {
+    const { container } = await renderPreview('json', 'compact.json', '{"value":"' + 'x'.repeat(256_000) + '"}');
+    const list = container.querySelector('[data-testid="groupChat.server.attachmentJsonPreview"]');
+    expect(list?.textContent?.length).toBeLessThanOrEqual(4_097);
+    expect(container.textContent).toContain('groupChat.server.attachmentPreviewTruncated');
+  });
+
+  it('caps the total character budget across JSON lines', async () => {
+    const body = Array.from({ length: 32 }, () => 'x'.repeat(4_096)).join('\n');
+    const { container } = await renderPreview('json', 'many-lines.json', body);
+    const list = container.querySelector('[data-testid="groupChat.server.attachmentJsonPreview"]');
+    expect(list?.getAttribute('data-row-count')).toBe('25');
+    expect(container.textContent).toContain('groupChat.server.attachmentPreviewTruncated');
+  });
+
+  it('shows an explicit empty state for an empty text attachment', async () => {
+    const { container } = await renderPreview('json', 'empty.json', '');
+    expect(container.querySelector('[data-testid="groupChat.server.attachmentPreview.empty"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="groupChat.server.attachmentPreview.failed"]')).toBeNull();
+  });
+
+  it('renews the attachment URL before opening the browser fallback', async () => {
+    downloadState.tooLargeCount = 1;
+    const expiredUrl = 'https://files.example.test/expired.md';
+    const renewedUrl = 'https://files.example.test/renewed.md';
+    const { container, resolve, onClose } = await renderPreview('markdown', 'notes.md', 'body', [expiredUrl, renewedUrl]);
+    const openOutside = container.querySelector('[data-testid="groupChat.server.attachmentPreviewOpenOutside"]') as HTMLButtonElement;
+    await act(async () => {
+      openOutside.click();
+      await new Promise(done => setTimeout(done, 0));
+    });
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(openBrowserAsync).toHaveBeenCalledWith(renewedUrl);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('rejects local file URLs and offers browser fallback only for a user-selected binary Markdown file', async () => {

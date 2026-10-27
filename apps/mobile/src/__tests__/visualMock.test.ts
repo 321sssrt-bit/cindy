@@ -4,6 +4,8 @@ import { getRemoteResource, listRemoteCollection, normalizeRemoteCollectionItems
 import { invokePlugin } from '@/plugins/pluginClient';
 import { projectHistoryView } from '@cindy/maker-shared/message-window';
 import type { RemoteMessage } from '@/session/types';
+import { UI_MOCK_PROJECTS } from '@cindy/maker-shared/ui-mock';
+import type { FileBrowserReadFileResult, FileBrowserListAllFilesResult } from '@/device-link/mobileMakerTransport';
 
 const config = vi.hoisted(() => ({ MOBILE_VISUAL_MOCK_REALDATA_URL: '' }));
 vi.mock('@/config/env', () => config);
@@ -13,6 +15,35 @@ vi.mock('@/session/remoteSessionStore', () => ({ remoteSessionStore: {
 } }));
 beforeEach(() => { vi.resetModules(); config.MOBILE_VISUAL_MOCK_REALDATA_URL = ''; });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+
+it('opens the same showcase folders and files as Desktop through the real mock transport', async () => {
+  const mock = await import('@/debug/visualMock');
+  const link = mock.createVisualMockDeviceLinkContext();
+  const project = UI_MOCK_PROJECTS.find(item => item.name === 'orbit-garden-zh')!;
+  const request = <T>(args: Record<string, unknown>) => link.invoke<T>(mock.VISUAL_MOCK_DEVICE_ID, 'file-browser:remote-op', [{ workdir: `/Users/demo/Projects/${project.name}`, ...args }]);
+  expect(await request({ op: 'listDir', relPath: '' })).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'directory', name: 'reports', relPath: 'reports' }),
+    expect.objectContaining({ type: 'file', name: 'README.md' }),
+  ]));
+  expect(await request({ op: 'listDir', relPath: 'reports' })).toEqual([
+    expect.objectContaining({ type: 'file', name: 'playtest.md', relPath: 'reports/playtest.md' }),
+  ]);
+  const result = await request<FileBrowserReadFileResult>({ op: 'readFile', relPath: 'reports/playtest.md' });
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.data.content).toBe(project.files['reports/playtest.md']);
+    expect(result.data.size).toBe(new TextEncoder().encode(result.data.content).byteLength);
+  }
+  expect(await request({ op: 'readFile', relPath: '../private.md' })).toMatchObject({ ok: false, code: 'READ_FAILED' });
+  expect(await request({ op: 'listDir', relPath: '../' })).toEqual([]);
+  const all = await request<FileBrowserListAllFilesResult>({ op: 'listAllFiles', cap: 2 });
+  expect(all.files).toHaveLength(2);
+  expect(all.truncated).toBe(true);
+  expect(await request({ op: 'searchCollect', query: '24' })).toMatchObject({ matches: expect.arrayContaining([expect.objectContaining({ relPath: 'reports/playtest.md' })]) });
+  expect(await request({ op: 'searchCollect', query: 'does-not-exist' })).toMatchObject({ matches: [], totalFiles: 0, totalMatches: 0, truncated: false });
+  expect(await request({ op: 'searchCollect', query: 'orbit garden', caseSensitive: true })).toMatchObject({ matches: [], totalFiles: 0 });
+  expect(await request({ op: 'searchCollect', query: 'orbit garden', maxMatches: 1 })).toMatchObject({ matches: [expect.any(Object)], totalFiles: 1, totalMatches: 1, truncated: true });
+});
 
 it('supplies valid demo plugin projections and confirms enable/disable through the real client', async () => {
   const mock = await import('@/debug/visualMock');

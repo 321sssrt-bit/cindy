@@ -1,3 +1,5 @@
+import { UI_MOCK_SHOWCASE_PROJECTS, UI_MOCK_SHOWCASE_TASKS } from './uiMockShowcase';
+
 /**
  * UI mock data shared by Desktop and Mobile dev builds.
  *
@@ -41,6 +43,7 @@ export interface UiMockTask {
 }
 
 export const UI_MOCK_PROJECTS: readonly UiMockProject[] = [
+  ...UI_MOCK_SHOWCASE_PROJECTS,
   {
     name: 'cindy-demo',
     files: {
@@ -88,6 +91,7 @@ const RICH_ANSWER = [
  * ordinary tasks because those states live in the agent runtime, not the database.
  */
 export const UI_MOCK_TASKS: readonly UiMockTask[] = [
+  ...UI_MOCK_SHOWCASE_TASKS,
   {
     id: 'visual-running',
     title: '重构登录页布局',

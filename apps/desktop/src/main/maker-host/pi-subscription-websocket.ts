@@ -1,4 +1,7 @@
-import { type ProxyOptions } from '@cindy/anthropic-compat-proxy';
+import { PassThrough } from 'node:stream';
+import { standardSpeedRequest } from '@cindy/maker-core';
+import { subscriptionRequestAllowsFast } from './subscription-fast-request-policy.js';
+import { createWebSocketMessageTransform, type ProxyOptions } from '@cindy/anthropic-compat-proxy';
 import { activeOwnerScopeKey, isAppSessionBoundaryPending } from '../appSessionState.js';
 import { getChatgptBridgeAuthForDispatch } from './anthropic-responses-bridge-host.js';
 import { isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
@@ -59,3 +62,18 @@ export function createPiWebSocketRequestPreparer(
     } };
   };
 }
+
+/** Enforce live account/task Fast restrictions at each response.create dispatch. */
+export const piWebSocketTransforms: NonNullable<ProxyOptions['webSocketTransforms']> = (ctx) => {
+  const route = authenticatedRoute(ctx);
+  if (!route) throw new Error('PI_WEBSOCKET_ROUTE_UNAVAILABLE');
+  return {
+    outbound: createWebSocketMessageTransform(true, message => {
+      // Check after the complete message arrives, including fragmented requests.
+      if (subscriptionRequestAllowsFast(route.sessionId, route.providerId)) return message;
+      const restricted = standardSpeedRequest(JSON.parse(message.toString('utf8')));
+      return restricted === null ? message : Buffer.from(JSON.stringify(restricted));
+    }),
+    inbound: new PassThrough(),
+  };
+};

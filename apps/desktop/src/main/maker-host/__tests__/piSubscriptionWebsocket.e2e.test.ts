@@ -19,7 +19,9 @@ vi.mock('../codex-account-auth.js', () => ({ isOpenAiSubscriptionProviderId: (id
 vi.mock('../session-provider-store.js', () => ({ getSessionProvider: () => null, hasHostedSessionModelAccess: () => false }));
 vi.mock('../guest-provider-route-store.js', () => ({ guestProviderRouteForSession: () => null }));
 vi.mock('../anthropic-responses-bridge-host.js', () => ({ getChatgptBridgeAuthForDispatch: vi.fn() }));
-import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream } from '../pi-subscription-websocket.js';
+const fastPolicy = vi.hoisted(() => ({ allowed: true }));
+vi.mock('../subscription-fast-request-policy.js', () => ({ subscriptionRequestAllowsFast: () => fastPolicy.allowed }));
+import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream, piWebSocketTransforms } from '../pi-subscription-websocket.js';
 import { registerPiProxySession } from '../pi-proxy-session-auth.js';
 
 const binary = process.env.CINDY_TEST_PI_BINARY ?? resolve('../../apps/pi-bin', `${process.platform}-${process.arch}`, process.platform === 'win32' ? 'pi.exe' : 'pi');
@@ -60,8 +62,10 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
     { label: 'native SSE fallback', source: 'openai', provider: 'openai-codex', fast: false, fallback: true, reconnect: false },
     { label: 'original SSE baseline', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, baseline: true },
     { label: 'live Fast change', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, toggleFast: true },
+    { label: 'Fast restriction between tool steps', source: 'openai', provider: 'openai-codex', fast: true, fallback: false, reconnect: false, restrictFast: true },
     { label: 'missing continuation', source: 'openai', provider: 'openai-codex', fast: false, fallback: false, reconnect: false, missingContinuation: true },
   ])('preserves tool/image history and native recovery: $label', async scenario => {
+    fastPolicy.allowed = true;
     const directory = await mkdtemp(join(tmpdir(), 'cindy-pi-ws-'));
     const requests: Array<Record<string, any>> = [];
     const handshakes: Array<Record<string, any>> = [];
@@ -87,6 +91,7 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
             return;
           }
           if (scenario.toggleFast && index === 0) await writeFile(join(directory, 'options.json'), JSON.stringify({ fast: true }));
+          if (scenario.restrictFast && index === 0) fastPolicy.allowed = false;
           for (const event of responseEvents(index, index < 3)) client.send(JSON.stringify(event));
           if (scenario.reconnect && index === 1) client.close();
         });
@@ -100,6 +105,7 @@ describe.skipIf(!existsSync(binary))('actual Pi subscription incremental transpo
       upstream: upstreamUrl, transformRequest: [],
       resolveWebSocketUpstream: ctx => resolvePiWebSocketUpstream(ctx) ? upstreamUrl : null,
       prepareWebSocketRequest: prepare,
+      webSocketTransforms: piWebSocketTransforms,
       routingTransform: () => ({ localHandler: async ({ rawBody, parsedBody, ctx, res }) => {
         const index = requests.length;
         const decoded = parsedBody ?? JSON.parse((ctx.headers['content-encoding'] === 'zstd' ? zstdDecompressSync(rawBody) : rawBody).toString());
@@ -167,7 +173,12 @@ export default async function(pi: any) {
       } else if (scenario.fallback) {
         expect(requests.every(body => body.fallback)).toBe(true);
       } else {
-        expect(requests.every((body, index) => body.model === 'gpt-6-astra' && body.service_tier === (scenario.fast || (scenario.toggleFast && index > 0) ? 'priority' : undefined))).toBe(true);
+        for (const [index, body] of requests.entries()) {
+          const tier = scenario.restrictFast && index > 0 ? 'default'
+            : scenario.fast || (scenario.toggleFast && index > 0) ? 'priority' : undefined;
+          expect(body.model).toBe('gpt-6-astra');
+          expect(body.service_tier, `request ${index}`).toBe(tier);
+        }
         expect(JSON.stringify(requests[0]).length).toBeGreaterThan(900_000);
         expect(JSON.stringify(requests[1].input)).toContain('data:image/png;base64,');
         expect(requests[1].previous_response_id).toBe(scenario.toggleFast ? undefined : 'resp_0');

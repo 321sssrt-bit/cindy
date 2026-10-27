@@ -53,7 +53,7 @@ import { outboundFetch } from './outbound-fetch.js';
 import { invocationModelRecord, requiresNativeProviderAuth } from './pi-provider-transport.js';
 import { createClaudeProviderBridge } from './claude-provider-bridge.js';
 import { isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
-import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream } from './pi-subscription-websocket.js';
+import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream, piWebSocketTransforms } from './pi-subscription-websocket.js';
 import { isClaudeSubscriptionProviderId, isXaiSubscriptionProviderId } from './subscription-account-auth.js';
 import {
   getPiNativeSubscriptionHandler,
@@ -1166,6 +1166,7 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
       upstream: () => claudeUpstreamEndpoint(),
       resolveWebSocketUpstream: resolvePiWebSocketUpstream,
       prepareWebSocketRequest: createPiWebSocketRequestPreparer(),
+      webSocketTransforms: piWebSocketTransforms,
       oversizedRequestRecovery: createAttachmentRecovery(headers => {
         const piSessionId = headerValue(headers, 'x-cindy-pi-session-id');
         if (piSessionId) {

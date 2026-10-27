@@ -84,6 +84,23 @@ describe('Agent Island activity text stream', () => {
       .toBe('检查结果 网络检查完成 可以继续使用。');
   });
 
+  // Screenshot regression: completed local Markdown and flattened remote rich
+  // previews both reached the native Text label verbatim (unit tier).
+  it('projects Markdown before shortening the final reply', () => {
+    const source = '分两部分：**更新已完成**；见[改动](https://example.com/' + 'x'.repeat(300) + ')。';
+    expect(normalizeActivityText(source)).toBe('分两部分：更新已完成；见改动。');
+    const stream = createActivityTextStreamState();
+    expect(appendActivityTextStream(stream, '分两部分：**已完成**')).toBe('分两部分：已完成');
+    expect(normalizeActivityText('`foo_bar **literal**`')).toBe('foo_bar **literal**');
+  });
+
+  it('hides irrecoverable rich protocol from old remote summaries', () => {
+    const collapsed = richAnswer.replace(/\s+/g, ' ');
+    expect(normalizeActivityText(collapsed)).toBe('');
+    expect(normalizeActivityText(collapsed.slice(0, 80) + '...')).toBe('');
+    expect(normalizeActivityText('已完成\n' + collapsed)).toBe('已完成');
+  });
+
   it('keeps rich protocol out of streamed previews across delta boundaries', () => {
     const stream = createActivityTextStreamState();
     for (const chunk of ['```cindy-', 'ui\n', '{"version":1,',
@@ -95,19 +112,25 @@ describe('Agent Island activity text stream', () => {
 
   it('preserves ordinary code and explicitly quoted rich protocol examples', () => {
     const example = `\`\`\`\`markdown\n${richAnswer}\n\`\`\`\``;
-    expect(normalizeActivityText(example)).toBe(legacyNormalizeActivityText(example));
+    expect(normalizeActivityText(example)).toBe(richAnswer.replace(/\s+/g, ' '));
     const code = '```json\n{"status":"ok"}\n```';
-    expect(normalizeActivityText(code)).toBe(legacyNormalizeActivityText(code));
+    expect(normalizeActivityText(code)).toBe('{"status":"ok"}');
   });
 
-  // Review regressions: only unfinished rich opening fences may be hidden.
-  // Ordinary closing fences and inline/quoted examples must survive every delta.
-  it.each(['`', '~'])('preserves %s code fences and examples during streaming', (fenceCharacter) => {
+  // Review regression: closing ordinary code fences must not retract their
+  // content; explicitly quoted component examples remain literal code.
+  it.each(['`', '~'])('preserves %s code content and examples during streaming', (fenceCharacter) => {
     const fence = fenceCharacter.repeat(3);
-    expectEveryStreamingStepToMatchLegacyNormalization([`${fence}json\n`, ...`{"status":"ok"}\n${fence}`]);
+    const codeStream = createActivityTextStreamState();
+    appendActivityTextStream(codeStream, `${fence}json\n`);
+    appendActivityTextStream(codeStream, '{"status":"ok"}\n');
+    for (const character of fence) {
+      expect(appendActivityTextStream(codeStream, character)).toContain('{"status":"ok"}');
+    }
+    expect(appendActivityTextStream(codeStream, '')).toBe('{"status":"ok"}');
     const quoted = `${fenceCharacter.repeat(4)}markdown\n${fence}cindy-ui\n{}\n${fence}\n${fenceCharacter.repeat(4)}`;
     const stream = createActivityTextStreamState();
-    expect(appendActivityTextStream(stream, quoted)).toBe(legacyNormalizeActivityText(quoted));
+    expect(appendActivityTextStream(stream, quoted)).toBe(`${fence}cindy-ui {} ${fence}`);
   });
 
   it('does not turn leading whitespace into a line break inside an inline example', () => {
@@ -125,10 +148,10 @@ describe('Agent Island activity text stream', () => {
     expect(normalizeActivityText(source)).toBe('检查完成。'.repeat(100).slice(0, AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH));
   });
 
-  it('preserves the existing display text across whitespace, markdown, emoji, and the 280-code-unit boundary', () => {
+  it('preserves plain text across whitespace, emoji, and the 280-code-unit boundary', () => {
     expectEveryStreamingStepToMatchLegacyNormalization([
       '\n  ',
-      'I will **inspect**',
+      'I will inspect',
       '\t  the logs',
       '\r\n\r\n',
       'before editing. ',

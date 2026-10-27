@@ -1010,6 +1010,30 @@ describe('Agent Island display state', () => {
       .toMatchObject({ compactDetail: '网络检查完成', phase: 'completed' });
   });
 
+  // Local screenshot regression, including the native messagePreview/activityLines
+  // fields: compactDetail alone does not cover the expanded native row.
+  it('projects Markdown once for both native preview fields and completed cards', () => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'markdown' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const text = '分两部分：**更新已完成**；`foo_bar **literal**`';
+    const expected = '分两部分：更新已完成；foo_bar **literal**';
+    applyAgentIslandEvent(state, meta, finalTextEvent(text), 1_100);
+    const running = buildAgentIslandDisplayState(state, 1_200).sessions[0];
+    expect(running?.messagePreview?.text).toBe(expected);
+    expect(running?.activityLines.at(-1)?.text).toBe(expected);
+    expect(running?.compactDetail).toBe(expected);
+    applyAgentIslandEvent(state, meta, doneEvent(), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 4_000).sessions[0];
+    expect(completed?.activityLines.at(-1)?.text).toBe(expected);
+    expect(completed?.compactDetail).toBe(expected);
+    const userState = createAgentIslandState();
+    applyAgentIslandUserPrompt(userState, { sessionId: 'user-code' }, '`foo_bar **literal**`', 5_000);
+    const user = buildAgentIslandDisplayState(userState, 5_000).sessions[0];
+    expect(user?.messagePreview?.text).toBe('foo_bar **literal**');
+    expect(user?.compactDetail).toBe('foo_bar **literal**');
+  });
+
   // Review regression: a removed/emptied rich node must retract this message's
   // streamed line from both the activity log and active/queued preview (unit tier).
   it.each([

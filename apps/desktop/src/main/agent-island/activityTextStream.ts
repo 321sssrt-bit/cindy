@@ -1,4 +1,5 @@
 import { richAnswerText, splitRichAnswer } from '@cindy/maker-shared/rich-answer';
+import { markdownPreviewText } from '../../shared/markdownPreviewText.js';
 
 export const AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH = 280;
 
@@ -261,7 +262,14 @@ function rawPreviewText(state: ActivityTextStreamState): string {
 }
 
 function normalizePlainActivityText(text: string): string {
-  return text
+  // Older remote hosts send an already collapsed/truncated preview. Its fence
+  // boundaries and JSON tail are gone: never show that transport as a reply.
+  const collapsedRich = /(?:^|\n)[ \t]*(`{3,}|~{3,})cindy-ui[ \t]+\{\s*"(?:version|seq|op)"\s*:/.exec(text);
+  const source = collapsedRich ? text.slice(0, collapsedRich.index) : text;
+  // Keep the hot path for plain bounded streaming prefixes cheap; formatted
+  // answers use the same projection as notifications and the session list.
+  const plain = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(source) ? markdownPreviewText(source) : source;
+  return plain
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)

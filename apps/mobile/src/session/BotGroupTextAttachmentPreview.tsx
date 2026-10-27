@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, X } from 'lucide-react-native';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { openBrowserAsync } from 'expo-web-browser';
 import type { BotGroupAttachment } from '@cindy/maker-shared/botGroupChat';
 import { extractRemoteFileExt, isHtmlFilePreviewCandidate, remoteFilePreviewKind } from '@cindy/maker-shared/file-preview';
@@ -128,68 +128,70 @@ export function BotGroupTextAttachmentPreview({ attachmentId, fileName, kind, re
 
   return (
     <Modal visible animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
-      <SafeAreaView edges={['top', 'bottom']} style={[styles.fill, { backgroundColor: colors.surface }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('groupChat.server.attachmentPreviewClose')}
-            onPress={onClose}
-            style={styles.closeButton}
-            testID="groupChat.server.attachmentPreviewCloseButton"
-          >
-            <X color={colors.textSecondary} size={20} />
-          </Pressable>
-          <Text numberOfLines={1} style={[textStyles.body, styles.title, { color: colors.textPrimary }]}>{fileName}</Text>
-        </View>
-        {state.status === 'loading' ? (
-          <View style={styles.messageState} testID="groupChat.server.attachmentPreviewLoading">
-            <ActivityIndicator color={colors.textSecondary} />
-            <Text style={[textStyles.footnote, { color: colors.textSecondary }]}>{t('groupChat.server.attachmentPreviewLoading')}</Text>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top', 'bottom']} style={[styles.fill, { backgroundColor: colors.surface }]}>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('groupChat.server.attachmentPreviewClose')}
+              onPress={onClose}
+              style={styles.closeButton}
+              testID="groupChat.server.attachmentPreviewCloseButton"
+            >
+              <X color={colors.textSecondary} size={20} />
+            </Pressable>
+            <Text numberOfLines={1} style={[textStyles.body, styles.title, { color: colors.textPrimary }]}>{fileName}</Text>
           </View>
-        ) : null}
-        {state.status === 'failed' || state.status === 'too-large' || state.status === 'binary' || state.status === 'empty' ? (
-          <View style={styles.messageState} testID={'groupChat.server.attachmentPreview.' + state.status}>
-            <Text style={[textStyles.footnote, styles.stateCopy, { color: colors.textSecondary }]}>{message}</Text>
-            {state.status === 'failed' || state.status === 'too-large' ? (
-              <Pressable accessibilityRole="button" onPress={() => { void load(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewRetry">
-                <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewRetry')}</Text>
-              </Pressable>
-            ) : null}
-            {kind !== 'html' && (state.status === 'too-large' || state.status === 'binary') ? (
-              <Pressable accessibilityRole="button" onPress={() => { void openOutside(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewOpenOutside">
-                <ExternalLink color={colors.textPrimary} size={16} />
-                <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewOpenOutside')}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
-        {state.status === 'ready' && kind === 'html' ? (
-          <HtmlFileReader html={state.text} javaScriptEnabled={false} testID="groupChat.server.attachmentHtmlPreview" />
-        ) : null}
-        {state.status === 'ready' && kind === 'markdown' ? (
-          <MarkdownFileReader markdown={state.text} imageSources={NO_EXTERNAL_IMAGES} testID="groupChat.server.attachmentMarkdownPreview" />
-        ) : null}
-        {state.status === 'ready' && kind === 'json' ? (
-          <View style={styles.fill}>
-            {jsonPreview?.truncated ? (
-              <Text style={[textStyles.footnote, styles.truncated, { color: colors.textSecondary }]}>{t('groupChat.server.attachmentPreviewTruncated')}</Text>
-            ) : null}
-            <FlatList
-              data={jsonPreview?.lines ?? []}
-              keyExtractor={(_, index) => String(index)}
-              renderItem={({ item, index }) => (
-                <View style={styles.codeRow}>
-                  <Text selectable={false} style={[textStyles.caption, styles.lineNumber, { color: colors.textTertiary }]}>{index + 1}</Text>
-                  <Text selectable style={[styles.codeText, { color: colors.textPrimary }]}>{item || ' '}</Text>
-                </View>
-              )}
-              style={styles.fill}
-              contentContainerStyle={styles.codeList}
-              testID="groupChat.server.attachmentJsonPreview"
-            />
-          </View>
-        ) : null}
-      </SafeAreaView>
+          {state.status === 'loading' ? (
+            <View style={styles.messageState} testID="groupChat.server.attachmentPreviewLoading">
+              <ActivityIndicator color={colors.textSecondary} />
+              <Text style={[textStyles.footnote, { color: colors.textSecondary }]}>{t('groupChat.server.attachmentPreviewLoading')}</Text>
+            </View>
+          ) : null}
+          {state.status === 'failed' || state.status === 'too-large' || state.status === 'binary' || state.status === 'empty' ? (
+            <View style={styles.messageState} testID={'groupChat.server.attachmentPreview.' + state.status}>
+              <Text style={[textStyles.footnote, styles.stateCopy, { color: colors.textSecondary }]}>{message}</Text>
+              {state.status === 'failed' || state.status === 'too-large' ? (
+                <Pressable accessibilityRole="button" onPress={() => { void load(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewRetry">
+                  <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewRetry')}</Text>
+                </Pressable>
+              ) : null}
+              {kind !== 'html' && (state.status === 'too-large' || state.status === 'binary') ? (
+                <Pressable accessibilityRole="button" onPress={() => { void openOutside(); }} style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]} testID="groupChat.server.attachmentPreviewOpenOutside">
+                  <ExternalLink color={colors.textPrimary} size={16} />
+                  <Text style={[textStyles.body, { color: colors.textPrimary }]}>{t('groupChat.server.attachmentPreviewOpenOutside')}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
+          {state.status === 'ready' && kind === 'html' ? (
+            <HtmlFileReader html={state.text} javaScriptEnabled={false} testID="groupChat.server.attachmentHtmlPreview" />
+          ) : null}
+          {state.status === 'ready' && kind === 'markdown' ? (
+            <MarkdownFileReader markdown={state.text} imageSources={NO_EXTERNAL_IMAGES} testID="groupChat.server.attachmentMarkdownPreview" />
+          ) : null}
+          {state.status === 'ready' && kind === 'json' ? (
+            <View style={styles.fill}>
+              {jsonPreview?.truncated ? (
+                <Text style={[textStyles.footnote, styles.truncated, { color: colors.textSecondary }]}>{t('groupChat.server.attachmentPreviewTruncated')}</Text>
+              ) : null}
+              <FlatList
+                data={jsonPreview?.lines ?? []}
+                keyExtractor={(_, index) => String(index)}
+                renderItem={({ item, index }) => (
+                  <View style={styles.codeRow}>
+                    <Text selectable={false} style={[textStyles.caption, styles.lineNumber, { color: colors.textTertiary }]}>{index + 1}</Text>
+                    <Text selectable style={[styles.codeText, { color: colors.textPrimary }]}>{item || ' '}</Text>
+                  </View>
+                )}
+                style={styles.fill}
+                contentContainerStyle={styles.codeList}
+                testID="groupChat.server.attachmentJsonPreview"
+              />
+            </View>
+          ) : null}
+        </SafeAreaView>
+      </SafeAreaProvider>
     </Modal>
   );
 }

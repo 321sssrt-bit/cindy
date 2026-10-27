@@ -60,7 +60,10 @@ vi.mock('@/session/MarkdownFileReader', async () => {
 });
 vi.mock('react-native-safe-area-context', async () => {
   const React = await import('react');
-  return { SafeAreaView: ({ children }: any) => React.createElement('div', null, children) };
+  return {
+    SafeAreaProvider: ({ children }: any) => React.createElement('div', null, children),
+    SafeAreaView: ({ children }: any) => React.createElement('div', null, children),
+  };
 });
 vi.mock('react-native', async () => {
   const React = await import('react');

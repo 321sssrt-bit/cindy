@@ -423,6 +423,7 @@ export function useDeviceLinkRemoteProjects(
     }
 
     let disposed = false;
+    const finishInitialDiscovery = remoteProjectsStore.beginInitialDiscovery();
     /**
      * 「已明确离场、不许被冷缓存种回来」的设备 id。删除 / 撤销访问 / 关闭被控 / 本机停用控制
      * 路径都会往里加 —— 它们清盘是异步的,而 mount 时那次 readCachedSessionList 可能早已
@@ -720,9 +721,9 @@ export function useDeviceLinkRemoteProjects(
     };
 
     /** 全量重播(初始 + WS 重连):listDevices 带 isSelf,权威。 */
-    const reseed = (): void => {
+    const reseed = (): Promise<void> => {
       const generation = directoryGeneration;
-      void window.electronAPI.deviceLink
+      return window.electronAPI.deviceLink
         .listDevices()
         .then(({ devices }) => {
           if (disposed || generation !== directoryGeneration) return;
@@ -774,7 +775,7 @@ export function useDeviceLinkRemoteProjects(
     // 账号里删掉设备的情形,都靠补这一轮收敛(reseed 末尾还会清掉权威列表中缺席的分片)。
     // 仍在 listDevices 里但离线的设备照既有语义保留为 disconnected —— 与「断连保留最近
     // 一次快照让 All Sessions 稳定」一致,不是本次引入的行为。
-    void readCachedSessionList().then((devices) => {
+    const initialCacheRead = readCachedSessionList().then((devices) => {
       if (disposed || devices.length === 0) return;
       // 读快照这一跳期间被**明确移除**的设备(撤销访问 / 关闭被控 / 本机停用控制)不许种回来:
       // 那些路径已经删了分片并清了盘,而这次种入拿的是它们之前读到的旧快照;紧随的 reseed
@@ -782,8 +783,8 @@ export function useDeviceLinkRemoteProjects(
       const usable = devices.filter((device) => !cacheHydrationBlocked.has(device.deviceId));
       if (usable.length === 0) return;
       remoteProjectsStore.hydrateFromCache(usable);
-      reseed();
-    });
+      return reseed();
+    }).catch((err) => log.debug('initial remote cache read failed', err));
 
     // 用户点击失败态重试 → 重走 subscribe + bootstrap，恢复 loading 与完整重试语义。
     setRemoteSessionBootstrapRetryImpl((deviceId) => {
@@ -879,7 +880,7 @@ export function useDeviceLinkRemoteProjects(
       }
     });
 
-    void window.electronAPI.deviceLink
+    const initialDirectoryRead = window.electronAPI.deviceLink
       .getState()
       .then((state) => {
         if (disposed) return;
@@ -898,12 +899,17 @@ export function useDeviceLinkRemoteProjects(
             unresponsiveDevicesStore.apply(deviceId, true);
           }
         }
-        reseed();
+        return reseed();
       })
       .catch((err) => {
         log.debug('getState before device-link reseed failed', err);
-        if (!disposed) reseed();
+        if (!disposed) return reseed();
       });
+
+    // Neither an empty bootstrap set nor the first completed read alone proves
+    // the remembered remote task is absent. Per-device loading takes over once
+    // discovery starts bootstrap; failures and cleanup must release this gate.
+    void Promise.allSettled([initialCacheRead, initialDirectoryRead]).then(finishInitialDiscovery);
 
     const offPresence = window.electronAPI.deviceLink.onPresenceChanged((snap) => {
       applyDevice({

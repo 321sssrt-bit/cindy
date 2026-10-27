@@ -199,7 +199,6 @@ export function PluginPublishDialog({
                   <p className="whitespace-pre-wrap break-words">{currentPickerDraft.prepared.releaseNotes}</p>
                 </> : null}
                 <p>{t(`${copy}.confirmPublic`)}</p>
-                {!pickerBlocker && currentPickerDraft.prepared.preflight?.actions.canSubmit ? <p>{t(`${copy}.versionConsumedHint`)}</p> : null}
               </> : pickerReady && !selectedPickerUnavailable && !currentPickerDraft?.error && !selectedVersionRead?.failure ? <p role="status">{t(`${copy}.${versionReady ? 'preparing' : 'loading'}`)}</p> : null}
             </section>
           ) : null}

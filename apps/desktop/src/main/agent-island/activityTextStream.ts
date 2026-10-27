@@ -14,7 +14,7 @@ export interface ActivityTextStreamState {
   jsonClosingStack: Array<'}' | ']'>;
   jsonInString: boolean;
   jsonEscapePending: boolean;
-  structuredDisplayText: string;
+  displayText: string;
 }
 
 /** Deterministic work counters used by the performance regression test. */
@@ -35,7 +35,7 @@ export function createActivityTextStreamState(): ActivityTextStreamState {
     jsonClosingStack: [],
     jsonInString: false,
     jsonEscapePending: false,
-    structuredDisplayText: '',
+    displayText: '',
   };
 }
 
@@ -54,15 +54,17 @@ export function appendActivityTextStream(
   chunk: string,
   metrics?: ActivityTextStreamMetrics,
 ): string {
+  const previousPreview = state.rawPreview;
   appendRawPreview(state, chunk, metrics);
+  const previewChanged = state.rawPreview !== previousPreview;
 
   if (state.mode === 'plain') {
-    return rawPreviewText(state);
+    return rawPreviewText(state, previewChanged);
   }
 
   if (state.mode === 'structured-extracted') {
     if (firstNonWhitespaceIndex(chunk, metrics) < 0) {
-      return state.structuredDisplayText;
+      return state.displayText;
     }
     switchToPlain(state);
     return rawPreviewText(state);
@@ -71,27 +73,27 @@ export function appendActivityTextStream(
   if (state.mode === 'pending') {
     appendRetainedRawChunk(state, chunk);
     const firstContentIndex = firstNonWhitespaceIndex(chunk, metrics);
-    if (firstContentIndex < 0) return rawPreviewText(state);
+    if (firstContentIndex < 0) return rawPreviewText(state, previewChanged);
 
     const firstContent = chunk[firstContentIndex];
     if (firstContent !== '{' && firstContent !== '[') {
       switchToPlain(state);
-      return rawPreviewText(state);
+      return rawPreviewText(state, previewChanged);
     }
 
     state.mode = 'structured';
     state.jsonClosingStack.push(firstContent === '{' ? '}' : ']');
     if (!scanStructuredChunk(state, chunk, firstContentIndex + 1, metrics)) {
-      return rawPreviewText(state);
+      return rawPreviewText(state, previewChanged);
     }
   } else {
     appendRetainedRawChunk(state, chunk);
     if (!scanStructuredChunk(state, chunk, 0, metrics)) {
-      return rawPreviewText(state);
+      return rawPreviewText(state, previewChanged);
     }
   }
 
-  if (state.jsonClosingStack.length > 0) return rawPreviewText(state);
+  if (state.jsonClosingStack.length > 0) return rawPreviewText(state, previewChanged);
 
   const rawText = state.rawChunks.join('');
   if (metrics) metrics.jsonParseCodeUnits += rawText.length;
@@ -101,9 +103,9 @@ export function appendActivityTextStream(
     if (extracted) {
       state.mode = 'structured-extracted';
       if (metrics) metrics.normalizationCodeUnits += extracted.length;
-      state.structuredDisplayText = normalizePlainActivityText(richAnswerText(extracted));
+      state.displayText = normalizePlainActivityText(richAnswerText(extracted));
       releaseStructuredParserState(state);
-      return state.structuredDisplayText;
+      return state.displayText;
     }
   } catch {
     // Once the outer object/array has closed, a parse failure cannot be repaired
@@ -111,7 +113,7 @@ export function appendActivityTextStream(
   }
 
   switchToPlain(state);
-  return rawPreviewText(state);
+  return rawPreviewText(state, previewChanged);
 }
 
 function appendRetainedRawChunk(state: ActivityTextStreamState, chunk: string): void {
@@ -133,6 +135,25 @@ function appendRetainedRawChunk(state: ActivityTextStreamState, chunk: string): 
 
 export function normalizeActivityText(text: string): string {
   return normalizePlainActivityText(richAnswerText(extractActivityDisplayText(text)));
+}
+
+/** New hosts send display text; only unmarked legacy summaries need recovery. */
+export function normalizeRemoteActivityText(text: string, summaryFormat?: 'plain-text'): string {
+  if (summaryFormat === 'plain-text') return boundActivityText(text);
+  // Old hosts flattened both the opening newline and any prose/fence boundary.
+  // Check a reconstructed opening with the shared parser so quoted code remains code.
+  const collapsedRich = /(^|\s)(`{3,}|~{3,})cindy-ui[ \t]+\{\s*"(?:version|seq|op)"\s*:/g;
+  for (const match of text.matchAll(collapsedRich)) {
+    const start = match.index! + match[1].length;
+    const prefix = text.slice(0, start);
+    const boundary = prefix && !prefix.endsWith('\n') ? '\n' : '';
+    const key = prefix.length + boundary.length;
+    const candidate = prefix + boundary + match[2] + 'cindy-ui\n';
+    if (splitRichAnswer(candidate).some(part => part.kind === 'rich' && part.key === key)) {
+      return normalizeActivityText(prefix);
+    }
+  }
+  return normalizeActivityText(text);
 }
 
 function appendRawPreview(
@@ -229,7 +250,6 @@ function scanStructuredChunk(
 
 function switchToPlain(state: ActivityTextStreamState): void {
   state.mode = 'plain';
-  state.structuredDisplayText = '';
   releaseStructuredParserState(state);
 }
 
@@ -240,7 +260,8 @@ function releaseStructuredParserState(state: ActivityTextStreamState): void {
   state.jsonEscapePending = false;
 }
 
-function rawPreviewText(state: ActivityTextStreamState): string {
+function rawPreviewText(state: ActivityTextStreamState, changed = true): string {
+  if (!changed) return state.displayText;
   // A fence header may itself arrive in several deltas. Do not leave that
   // temporary header as the last visible activity when the rich block is empty.
   let source = state.rawPreview;
@@ -258,18 +279,19 @@ function rawPreviewText(state: ActivityTextStreamState): string {
       source = source.slice(0, start);
     }
   }
-  return normalizePlainActivityText(richAnswerText(source));
+  state.displayText = normalizePlainActivityText(richAnswerText(source));
+  return state.displayText;
 }
 
 function normalizePlainActivityText(text: string): string {
-  // Older remote hosts send an already collapsed/truncated preview. Its fence
-  // boundaries and JSON tail are gone: never show that transport as a reply.
-  const collapsedRich = /(?:^|\n)[ \t]*(`{3,}|~{3,})cindy-ui[ \t]+\{\s*"(?:version|seq|op)"\s*:/.exec(text);
-  const source = collapsedRich ? text.slice(0, collapsedRich.index) : text;
   // Keep the hot path for plain bounded streaming prefixes cheap; formatted
   // answers use the same projection as notifications and the session list.
-  const plain = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(source) ? markdownPreviewText(source) : source;
-  return plain
+  const plain = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(text) ? markdownPreviewText(text) : text;
+  return boundActivityText(plain);
+}
+
+function boundActivityText(text: string): string {
+  return text
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)

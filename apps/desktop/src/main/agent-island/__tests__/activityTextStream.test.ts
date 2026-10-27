@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as previewText from '../../../shared/markdownPreviewText.js';
 
 import {
   AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH,
   appendActivityTextStream,
   createActivityTextStreamState,
   normalizeActivityText,
+  normalizeRemoteActivityText,
   type ActivityTextStreamMetrics,
 } from '../activityTextStream.js';
 
@@ -96,9 +98,9 @@ describe('Agent Island activity text stream', () => {
 
   it('hides irrecoverable rich protocol from old remote summaries', () => {
     const collapsed = richAnswer.replace(/\s+/g, ' ');
-    expect(normalizeActivityText(collapsed)).toBe('');
-    expect(normalizeActivityText(collapsed.slice(0, 80) + '...')).toBe('');
-    expect(normalizeActivityText('已完成\n' + collapsed)).toBe('已完成');
+    expect(normalizeRemoteActivityText(collapsed)).toBe('');
+    expect(normalizeRemoteActivityText(collapsed.slice(0, 80) + '...')).toBe('');
+    expect(normalizeRemoteActivityText('已完成\n' + collapsed)).toBe('已完成');
   });
 
   it('keeps rich protocol out of streamed previews across delta boundaries', () => {
@@ -115,6 +117,34 @@ describe('Agent Island activity text stream', () => {
     expect(normalizeActivityText(example)).toBe(richAnswer.replace(/\s+/g, ' '));
     const code = '```json\n{"status":"ok"}\n```';
     expect(normalizeActivityText(code)).toBe('{"status":"ok"}');
+  });
+
+  // #7566 review: transport recovery must not strip a valid local code example.
+  it('preserves a flattened component example inside an outer code fence', () => {
+    const example = '```cindy-ui {"version":1}';
+    expect(normalizeActivityText('````markdown\n' + example + '\n````\n继续说明'))
+      .toBe(example + ' 继续说明');
+    expect(normalizeRemoteActivityText('````markdown\n' + example + '\n````\n继续说明'))
+      .toBe(example + ' 继续说明');
+  });
+
+  // Deterministic work assertion plus visible result; no wall-clock timing.
+  it.each(['', '{"content":"'])('does not parse an unchanged formatted streaming prefix again (%s)', prefix => {
+    const parse = vi.spyOn(previewText, 'markdownPreviewText');
+    try {
+      const stream = createActivityTextStreamState();
+      const visible = appendActivityTextStream(stream, prefix + '**完成** ' + 'x'.repeat(280));
+      expect(visible).toContain('完成');
+      expect(visible).not.toContain('**');
+      const calls = parse.mock.calls.length;
+      expect(calls).toBeGreaterThan(0);
+      for (let i = 0; i < 128; i++) {
+        expect(appendActivityTextStream(stream, ' more output')).toBe(visible);
+      }
+      expect(parse.mock.calls.length).toBe(calls);
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   // Review regression: closing ordinary code fences must not retract their
@@ -227,7 +257,7 @@ describe('Agent Island activity text stream', () => {
       metrics.jsonParseCodeUnits;
     expect(stream.mode).toBe('structured-extracted');
     expect(stream.rawChunks).toHaveLength(0);
-    expect(stream.structuredDisplayText).toBe(legacyNormalizeActivityText(payload));
+    expect(stream.displayText).toBe(legacyNormalizeActivityText(payload));
     expect(metrics.jsonParseCodeUnits).toBe(payload.length);
     expect(measuredWork).toBeLessThanOrEqual(payload.length * 3 + 300);
   });

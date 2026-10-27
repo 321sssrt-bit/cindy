@@ -189,6 +189,8 @@ describe('Agent Island device sessions', () => {
     expect(buildAgentIslandDisplayState(state, 3_000).sessions[0]?.compactDetail).toBe('预览已完成');
     sync('completed', detail, 4_000);
     expect(buildAgentIslandDisplayState(state, 4_000).sessions[0]?.compactDetail).toBe('Done');
+    sync('completed', '更新完成 ' + detail, 5_000);
+    expect(buildAgentIslandDisplayState(state, 5_000).sessions[0]?.compactDetail).toBe('更新完成');
   });
 
   it('does not repeat events for an unchanged phase', () => {

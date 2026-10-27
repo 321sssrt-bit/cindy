@@ -433,6 +433,7 @@ export function useAskUserDictation(
         if (runIdRef.current) {
           if (stateRef.current === 'listening') setVoiceState('submitting');
           const result = await window.electronAPI.voiceInput.stop();
+          if (attemptRef.current !== attempt) return false;
           if (!result.ok) {
             await fail(formatError(result.error));
             return false;
@@ -474,7 +475,8 @@ export function useAskUserDictation(
       await restoreMute();
       if (runId) await window.electronAPI.voiceInput.cancel({ runId }).catch(() => undefined);
       if (attemptRef.current === attempt) {
-        stopInFlightRef.current = null;
+        // Only the stopping promise releases its lock: main's old stop cleanup
+        // must finish before another recording can become active.
         setVoiceState('idle');
         targetRef.current.focus();
       }

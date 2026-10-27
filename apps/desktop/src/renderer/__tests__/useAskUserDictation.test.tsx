@@ -93,6 +93,57 @@ describe('useAskUserDictation', () => {
     hook.unmount();
   });
 
+  // PR #7438, unit: cancel during a pending stop must not allow a new take
+  // until that IPC settles. Startup-cancel tests never reached this phase.
+  it.each(['success', 'failure', 'reject'] as const)('keeps the stop lock through cancellation and ignores a late %s', async (outcome) => {
+    let onEvent: ((event: VoiceInputRendererEvent) => void) | undefined;
+    let settleStop!: (value: { ok: true } | { ok: false; error: string }) => void;
+    let rejectStop!: (error: Error) => void;
+    let run = 0;
+    const start = vi.fn(async () => ({ ok: true, runId: `run-${++run}` }));
+    const stop = vi.fn(() => new Promise<{ ok: true } | { ok: false; error: string }>((resolve, reject) => {
+      settleStop = resolve;
+      rejectStop = reject;
+    }));
+    const setText = vi.fn();
+    window.electronAPI = {
+      platform: 'darwin',
+      voiceInput: {
+        onEvent: (callback: typeof onEvent) => { onEvent = callback; return () => { onEvent = undefined; }; },
+        getDataSnapshot: () => ({ settings: { playInteractionSound: false, muteSystemAudio: false, refinementEnabled: false, dictionaryEntries: [], language: 'auto', refinementInstructions: '' } }),
+        getHistoryForRefinement: () => [],
+        start, stop, cancel: async () => ({ ok: true }), drainAudioQueue: async () => ({ ok: true }),
+      },
+    } as unknown as typeof window.electronAPI;
+    const hook = renderHook(() => useAskUserDictation({
+      getText: () => '已有', setText,
+      getSelection: () => ({ start: 2, end: 2 }), focus: () => {},
+    }));
+    await act(async () => { expect(hook.result.current.start()).toBe(true); });
+    let stopping!: Promise<boolean>;
+    await act(async () => { stopping = hook.result.current.stop(); });
+    expect(stop).toHaveBeenCalledOnce();
+    await act(async () => { await hook.result.current.cancel(); });
+    expect(hook.result.current.isBusy).toBe(false);
+    act(() => { expect(hook.result.current.start()).toBe(false); });
+    expect(start).toHaveBeenCalledOnce();
+    await act(async () => {
+      if (outcome === 'reject') rejectStop(new Error('old stop failed'));
+      else settleStop(outcome === 'success' ? { ok: true } : { ok: false, error: 'old stop failed' });
+      expect(await stopping).toBe(false);
+    });
+    expect(hook.result.current.state).toBe('idle');
+    expect(hook.result.current.lastError).toBeNull();
+    await act(async () => { expect(hook.result.current.start()).toBe(true); });
+    expect(start).toHaveBeenCalledTimes(2);
+    act(() => onEvent?.({ type: 'state', runId: 'run-1', state: 'error' } as VoiceInputRendererEvent));
+    expect(hook.result.current.state).toBe('listening');
+    act(() => onEvent?.({ type: 'draft', runId: 'run-2', text: '新回答', source: 'partial' } as VoiceInputRendererEvent));
+    expect(hook.result.current.liveText).toBe('已有新回答');
+    expect(setText).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
   it.each(['done', 'error'] as const)('keeps the final text and reports terminal %s to the submitter', async (terminal) => {
     let onEvent: ((event: VoiceInputRendererEvent) => void) | undefined;
     let text = '已有';

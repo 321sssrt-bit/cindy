@@ -14,6 +14,8 @@ describe('markdownToTelegramHtml', () => {
     const { html } = markdownToTelegramHtml('A & B < C');
     expect(stripTelegramHtmlTags(html)).toBe('A & B < C');
     expect(stripTelegramHtmlTags('&lt;b&gt;')).toBe('<b>');
+    // 只解码渲染新增的一层,保留用户原文中的实体拼写。
+    expect(stripTelegramHtmlTags('&amp;lt;b&amp;gt;')).toBe('&lt;b&gt;');
   });
 
   it('粗体/斜体/删除线/行内 code', () => {

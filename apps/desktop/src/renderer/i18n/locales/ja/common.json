@@ -10575,7 +10575,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "App Secret を貼り付け"
+          "appSecretPlaceholder": "App Secret を貼り付け",
+          "description": "接続すると、{{service}} で {{name}} にメッセージを送れます。",
+          "createPrompt": "{{service}} ボットをお持ちでない場合",
+          "createLink": "{{service}} オープンプラットフォームで作成",
+          "credentialsHint": "作成後、アプリの「認証情報と基本情報」から App ID と App Secret をコピーし、ここに入力してください。",
+          "stepsLabel": "設定手順を見る",
+          "stepCreate": "オープンプラットフォームでカスタムアプリを作成し、ボット機能を追加します。",
+          "stepCredentials": "アプリの「認証情報と基本情報」を開き、App ID と App Secret をコピーします。",
+          "stepConnect": "下の欄に認証情報を入力し、「{{service}} に接続」をクリックします。",
+          "confirm": "{{service}} に接続"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

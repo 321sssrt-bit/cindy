@@ -10610,7 +10610,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "Paste the app secret"
+          "appSecretPlaceholder": "Paste the app secret",
+          "description": "Once connected, you can message {{name}} in {{service}}.",
+          "createPrompt": "Need a {{service}} bot?",
+          "createLink": "Create one on {{service}} Open Platform",
+          "credentialsHint": "After creating the app, copy its App ID and App Secret from Credentials & Basic Info and enter them here.",
+          "stepsLabel": "View setup steps",
+          "stepCreate": "Create a custom app on the Open Platform and add the bot capability.",
+          "stepCredentials": "Open Credentials & Basic Info in your app and copy the App ID and App Secret.",
+          "stepConnect": "Enter the credentials below and click “Connect {{service}}”.",
+          "confirm": "Connect {{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

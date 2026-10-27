@@ -10575,7 +10575,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "貼上 App Secret"
+          "appSecretPlaceholder": "貼上 App Secret",
+          "description": "連線後，可以在{{service}}中給 {{name}} 傳訊息。",
+          "createPrompt": "還沒有{{service}}機器人？",
+          "createLink": "前往{{service}}開放平台建立",
+          "credentialsHint": "建立後，從「憑證與基礎資訊」複製 App ID 和 App Secret，回到這裡填寫。",
+          "stepsLabel": "查看設定步驟",
+          "stepCreate": "在開放平台建立企業自建應用程式，並新增機器人功能。",
+          "stepCredentials": "開啟應用程式的「憑證與基礎資訊」，複製 App ID 和 App Secret。",
+          "stepConnect": "將憑證填入下方，點擊「連線{{service}}」。",
+          "confirm": "連線{{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

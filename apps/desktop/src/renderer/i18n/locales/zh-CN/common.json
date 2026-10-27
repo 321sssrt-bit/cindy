@@ -10575,7 +10575,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "粘贴 App Secret"
+          "appSecretPlaceholder": "粘贴 App Secret",
+          "description": "连接后，可以在{{service}}中给 {{name}} 发消息。",
+          "createPrompt": "还没有{{service}}机器人？",
+          "createLink": "前往{{service}}开放平台创建",
+          "credentialsHint": "创建后，从「凭证与基础信息」复制 App ID 和 App Secret，回到这里填写。",
+          "stepsLabel": "查看配置步骤",
+          "stepCreate": "在开放平台创建企业自建应用，并添加机器人能力。",
+          "stepCredentials": "打开应用的「凭证与基础信息」，复制 App ID 和 App Secret。",
+          "stepConnect": "将凭证填入下方，点击「连接{{service}}」。",
+          "confirm": "连接{{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

@@ -2137,11 +2137,16 @@ export function sendMobileSessionNotify(payload: {
    * 过期丢弃,不得把旧账号的通知发进新账号的链路。
    */
   generation?: number;
+  /**
+   * 这条提醒来自其它设备(device-link)的任务:本机上可能恰有同 id 的无关任务行,
+   * 那一行的静音标记管不到这条远端事件,不参与手机通道的免打扰判定。
+   */
+  muteExempt?: boolean;
 }): boolean {
   if (!client) return false;
   // 「消息免打扰」任务不推手机。放在这里而不是各调用方:代输入等旁路不经过
   // notification:show-session-event,这里是所有发起方的唯一出口。
-  if (isSessionNotificationsMutedSync(payload.sessionId)) return false;
+  if (!payload.muteExempt && isSessionNotificationsMutedSync(payload.sessionId)) return false;
   if (payload.generation !== undefined && payload.generation !== mobileNotifyGeneration) {
     log.debug(
       `mobile notify dropped: link generation changed (account/ownership boundary), session=${payload.sessionId.slice(0, 8)}`,

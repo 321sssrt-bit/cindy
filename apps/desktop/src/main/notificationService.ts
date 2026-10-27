@@ -272,8 +272,9 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
       const wantFeishu = channels?.feishu === true;
       if (markAttention) markSessionNeedsAttention(sessionId);
       // 「消息免打扰」任务不再走任何外向提醒通道（系统 toast / 灵动岛 / 手机 / 飞书）；
-      // 未读与角标已在上一行照常记账，任务内的提醒不受影响。
-      if (isSessionNotificationsMutedSync(sessionId)) return;
+      // 未读与角标已在上一行照常记账，任务内的提醒不受影响。静音标记属于本机那行任务，
+      // 其它设备的任务（markAttention === false）可能与本机有同 id 的无关任务行，不查。
+      if (markAttention && isSessionNotificationsMutedSync(sessionId)) return;
 
       // Content is read from main's transcript. Bound only enrichment, not delivery;
       // a timeout is not a dedupe window and never causes a second late toast.
@@ -373,7 +374,7 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
         }
         // 取正文 / 等交接判定期间用户可能刚开了免打扰:真正发之前再确认一次。
         // 手机通道在 sendMobileSessionNotify 内另有同一道门。
-        if (isSessionNotificationsMutedSync(sessionId)) return;
+        if (markAttention && isSessionNotificationsMutedSync(sessionId)) return;
         if (kind === 'done' && handledByTeammate) {
           // Consume this event in the existing per-channel ledger. Removing a
           // delegation later must not replay a completion already handed off.
@@ -405,6 +406,7 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
               ...(fallbackBody ? { fallbackBody } : {}), ...(mobileEventId ? { eventId: mobileEventId } : {}),
               ...(mobileTeammateBotId ? { teammateBotId: mobileTeammateBotId } : {}),
               ...(preview?.teammateAvatar ? { teammateAvatar: preview.teammateAvatar } : {}),
+              ...(markAttention ? {} : { muteExempt: true }),
             });
             if (kind === 'done' && accepted) {
               notifiedReplies.set(mobileKey, eventId ? { eventId } : { fallbackSentAt: Date.now() });

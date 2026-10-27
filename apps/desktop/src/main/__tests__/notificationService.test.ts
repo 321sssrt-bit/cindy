@@ -280,6 +280,29 @@ describe('notificationService — channels 分发', () => {
     expect(notificationCtor).toHaveBeenCalledOnce();
   });
 
+  it('keeps remote-device notifications when a local task with the same id is muted', async () => {
+    const { initNotificationService } = await freshService();
+    const feishuIm = makeFeishuIm('owner');
+    initNotificationService(baseDeps(feishuIm));
+    isSessionNotificationsMutedSync.mockReturnValue(true);
+
+    // 还原/复制过的库里可能留着同 id 的本地任务行，那是另一条任务：它的静音标记
+    // 不得把其它设备发来的事件压掉（renderer 对远端任务传 markAttention: false）。
+    await invokeHandler({
+      sessionId: 'collision',
+      title: 'Remote',
+      kind: 'needs-reply',
+      markAttention: false,
+      channels: { desktop: true, feishu: true, mobile: true },
+    });
+
+    expect(notificationCtor).toHaveBeenCalledOnce();
+    expect(feishuIm.sendMarkdownText).toHaveBeenCalledOnce();
+    expect(sendMobileSessionNotify).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'collision', muteExempt: true }),
+    );
+  });
+
   it('keeps every channel for a task that is not muted', async () => {
     const { initNotificationService } = await freshService();
     const feishuIm = makeFeishuIm('owner');

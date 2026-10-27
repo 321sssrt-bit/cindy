@@ -2101,6 +2101,10 @@ function hasActiveBlockingReveal(state: AgentIslandState, now: number): boolean 
 function getActiveBlockingReveal(state: AgentIslandState, now: number): AgentIslandSessionState | null {
   return Array.from(state.sessions.values())
     .filter((session) => isBlockingSession(session) && !isBlockingRevealSuppressed(state, session))
+    // 静音任务不上岛面，也不能占着「当前阻塞卡」的位：否则这里会选中它，随后
+    // dismissPublishedBlockingReveal 发现 id 与真实展示卡不一致而拒绝 dismiss，
+    // 用户点岛外只收起 hover，确认卡一直展开。和 hasBlockingSession 同一集合。
+    .filter((session) => !state.displaySuppressedSessionIds.has(session.sessionId))
     .sort((a, b) => compareSessionsForDisplay(state, a, b, now))[0] ?? null;
 }
 

@@ -1655,6 +1655,29 @@ describe('Agent Island display state', () => {
     expect(restoredOlder.currentSessionId).toBe('older');
   });
 
+  it('keeps a muted pending task out of the blocking-card arbitration so outside clicks still dismiss the visible card', () => {
+    const state = createAgentIslandState();
+    applyAgentIslandInteractionRequest(state, { sessionId: 'visible', title: 'Visible' }, permissionRequest('r1'), 1_000);
+    applyAgentIslandInteractionRequest(state, { sessionId: 'muted', title: 'Muted' }, permissionRequest('r2'), 1_100);
+    setAgentIslandSessionDisplaySuppressed(state, 'muted', true);
+
+    const display = buildAgentIslandDisplayState(state, 1_200);
+    expect(display.mode).toBe('expanded');
+    expect(display.displaySurface).toBe('interactionCard');
+    expect(display.currentSessionId).toBe('visible');
+
+    // 静音任务更新、排序靠前，但不上岛面：点岛外必须落实到那张真的可见的确认卡上。
+    expect(dismissAgentIslandActiveReveal(state, 2_300)).toBe(true);
+    expect(buildAgentIslandDisplayState(state, 2_350).mode).toBe('compact');
+    expect(dismissAgentIslandActiveReveal(state, 2_360)).toBe(false);
+
+    // 静音任务自己的确认卡不受影响，取消静音后照旧上岛。
+    expect(setAgentIslandSessionDisplaySuppressed(state, 'muted', false)).toBe(true);
+    const unmuted = buildAgentIslandDisplayState(state, 2_400);
+    expect(unmuted.mode).toBe('expanded');
+    expect(unmuted.currentSessionId).toBe('muted');
+  });
+
   it('keeps completion reminders on their card when the pointer hovers the expanded panel', () => {
     const state = createAgentIslandState();
     applyAgentIslandEvent(state, { sessionId: 'running', title: 'Running' }, statusEvent(true, 'Working'), 1_000);

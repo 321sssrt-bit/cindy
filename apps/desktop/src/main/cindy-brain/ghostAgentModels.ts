@@ -9,6 +9,9 @@ import type { GhostAgentModelsResult } from '../../shared/ghost.js';
 export const GHOST_AGENT_MODELS_CACHE_MS = 60_000;
 export const GHOST_REMOTE_AGENT_MODELS = ['codex', 'claude-code', 'pi'] as const;
 export type GhostAgentLocation = { agentDeviceId: string; name: string };
+export type GhostAgentLocationsReadResult =
+  | { status: 'complete'; locations: GhostAgentLocation[] }
+  | { status: 'degraded'; locations: GhostAgentLocation[] };
 type GhostAgentModelsOk = Extract<GhostAgentModelsResult, { ok: true }>;
 
 /** Project each provider separately: the same model can support different efforts per route. */
@@ -44,10 +47,12 @@ export function createGhostAgentModelsCache(options: { now?: () => number; ttlMs
   const catalogs = new Map<string, { at: number; value: GhostAgentModelsOk }>();
 
   return {
-    async locations(owner: string, read: () => Promise<GhostAgentLocation[]>): Promise<GhostAgentLocation[] | undefined> {
+    async locations(owner: string, read: () => Promise<GhostAgentLocationsReadResult>): Promise<GhostAgentLocation[] | undefined> {
       if (locations && locations.owner === owner && now() - locations.at < ttlMs) return locations.value;
       try {
-        const value = await read();
+        const result = await read();
+        if (result.status !== 'complete') return undefined;
+        const value = result.locations;
         locations = { owner, at: now(), value };
         return value;
       } catch {

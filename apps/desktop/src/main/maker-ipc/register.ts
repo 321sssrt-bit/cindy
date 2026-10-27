@@ -1066,7 +1066,7 @@ import {
   registerOrcaRemoteWorkerHandlers,
 } from './orcaRemoteWorkerHost.js';
 import { createOrcaRemoteWorkers, invokeDeviceValue, type OrcaRemoteWorkers } from './orcaRemoteWorkers.js';
-import { listWorkerAgentLocations } from './workerAgentLocations.js';
+import { listWorkerAgentLocations, readWorkerAgentLocations } from './workerAgentLocations.js';
 import {
   ORCA_EXECUTION_DEVICES_CHANNEL,
   ORCA_REMOTE_WORKER_BRIDGE_CHANNEL,
@@ -14636,7 +14636,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // cindy-brain 反向依赖 maker-ipc / localDb 形成模块环。
   setGhostLibraryExtraDirSync(syncLibraryReadonlyExtraDir);
   setGhostAgentModelLocationSources({
-    listLocations: listWorkerAgentLocations,
+    listLocations: readWorkerAgentLocations,
     readRemoteViews: (agentDeviceId) => readDeviceProviderViews(remoteBackgroundInvoke, agentDeviceId),
   });
   getGhostFsSlot().setSessionSnapshotResolver(async (sessionId, instanceId) =>

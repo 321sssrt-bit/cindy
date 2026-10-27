@@ -936,7 +936,7 @@ describe('read-only agent model directory', () => {
     let now = 1_000;
     const listLocations = vi.fn()
       .mockRejectedValueOnce(new Error('cloud down'))
-      .mockResolvedValue([{ agentDeviceId: 'claude', name: 'Claude' }]);
+      .mockResolvedValue({ status: 'complete', locations: [{ agentDeviceId: 'claude', name: 'Claude' }] });
     const readRemote = vi.fn()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue([] as ProviderView[]);

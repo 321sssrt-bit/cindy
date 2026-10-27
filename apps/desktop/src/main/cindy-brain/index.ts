@@ -77,7 +77,11 @@ async function resolveMobilePluginMedia(instanceId: string, url: string, current
   return file && /^[a-f0-9]{64}\.[a-z0-9]+$/.test(file) ? { path: `/media/${file}`, mediaKind: result.kind } : null;
 }
 import { getModelVisibilityOverride, waitForModelVisibilityMirror } from '../maker-host/model-visibility-mirror.js';
-import { createGhostAgentModelsCache, projectGhostAgentModels } from './ghostAgentModels.js';
+import {
+  createGhostAgentModelsCache,
+  projectGhostAgentModels,
+  type GhostAgentLocationsReadResult,
+} from './ghostAgentModels.js';
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
 import { PluginDownloadSlot } from './downloadSlot.js';
 import { createDownloader } from '../downloader/index.js';
@@ -2166,12 +2170,12 @@ export function setGhostAgentTurnRunner(runner: GhostAgentTurnRunner | null): vo
 }
 
 const ghostAgentModelsCache = createGhostAgentModelsCache();
-let listGhostAgentLocations: (() => Promise<Array<{ agentDeviceId: string; name: string }>>) | null = null;
+let listGhostAgentLocations: (() => Promise<GhostAgentLocationsReadResult>) | null = null;
 let readGhostAgentRemoteViews: ((agentDeviceId: string) => Promise<ProviderView[]>) | null = null;
 
 /** maker-ipc 注入设备列表与跨设备目录读取；静态 import device-link 会成环。 */
 export function setGhostAgentModelLocationSources(sources: {
-  listLocations: () => Promise<Array<{ agentDeviceId: string; name: string }>>;
+  listLocations: () => Promise<GhostAgentLocationsReadResult>;
   readRemoteViews: (agentDeviceId: string) => Promise<ProviderView[]>;
 } | null): void {
   listGhostAgentLocations = sources?.listLocations ?? null;

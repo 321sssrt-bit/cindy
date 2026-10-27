@@ -1,11 +1,11 @@
 /**
  * 测试价值
- * - 生产入口与可观察结果：位置读取和插件模型缓存使用真实 listWorkerAgentLocations；完整读取后显示远程电脑，失败时省略 locations，恢复后可重读
+ * - 生产入口与可观察结果：插件模型缓存使用真实 readWorkerAgentLocations；完整读取后显示远程电脑，失败时省略 locations，恢复后可重读
  * - Bug／规则依据：makecindy/cindy#7452 SC1；makecindy/cindy#7472 Greptile 失败位置缓存；plugin-agent-models.md §4.0.3a
  * - 现有覆盖缺口：现有用例只验证读取函数的降级列表，没有验证插件缓存不会保存该降级结果
  * - 最小失败输入：handleListDevices 首次拒绝、随后返回一台远程电脑；同时有一个 active 分享
  * - tier：unit
- * - 实测耗时：4.54 s（单文件红测，macOS arm64）
+ * - 实测耗时：4.70 s（修复后单文件运行，macOS arm64）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceLinkDeviceView } from '../../../shared/deviceLinkIpc.js';
@@ -30,7 +30,7 @@ vi.mock('../../device-link/providerShareGuest.js', () => ({
   providerShareAgentDeviceId: io.providerShareAgentDeviceId,
 }));
 
-import { listWorkerAgentLocations } from '../workerAgentLocations.js';
+import { listWorkerAgentLocations, readWorkerAgentLocations } from '../workerAgentLocations.js';
 import { createGhostAgentModelsCache } from '../../cindy-brain/ghostAgentModels.js';
 
 function device(overrides: Partial<DeviceLinkDeviceView>): DeviceLinkDeviceView {
@@ -96,8 +96,8 @@ describe('listWorkerAgentLocations', () => {
       { shareId: 's1', status: 'active', providerLabel: 'Claude API', owner: { displayName: 'Ann' } },
     ]);
 
-    await expect(cache.locations('owner', listWorkerAgentLocations)).resolves.toBeUndefined();
-    await expect(cache.locations('owner', listWorkerAgentLocations)).resolves.toEqual([
+    await expect(cache.locations('owner', readWorkerAgentLocations)).resolves.toBeUndefined();
+    await expect(cache.locations('owner', readWorkerAgentLocations)).resolves.toEqual([
       { agentDeviceId: 'mac-mini', name: 'Mac mini' },
       { agentDeviceId: 'share:s1', name: 'Claude API · Ann' },
     ]);

@@ -445,6 +445,11 @@ function ensureKeepAlivePowerReleaseListener(): void {
     powerReleaseGeneration += 1;
     releaseDirectCaptureEngines(payload.reason);
     void disposeKeepAliveVoiceInputMicrophone(payload.reason);
+    // Suspend / lock means the user walked away, so the fast-activation window
+    // ends here as well: coming back half an hour later must not relight the
+    // microphone from a stale "last use", and stop() triggered by this release
+    // (which runs synchronously above) must not count as a fresh dictation.
+    lastVoiceInputUseAt = undefined;
   });
 }
 
@@ -1058,6 +1063,21 @@ function isWithinVoiceInputUseWindow(): boolean {
 }
 
 /**
+ * When does the current idle window end?
+ *
+ * Always 30 minutes after the last real dictation, never 30 minutes after
+ * "now". A session is routinely rebuilt inside the window (devicechange,
+ * automatic-fallback microphone, a stale session replaced on the next press);
+ * anchoring to `now` would hand the user a fresh window he never asked for —
+ * dictating at minute 0 and switching devices at minute 29 would keep the
+ * indicator lit until minute 59.
+ */
+function keepAliveDeadlineAfterLastUse(now: number): number {
+  const useAt = lastVoiceInputUseAt ?? now;
+  return useAt + KEEP_ALIVE_MIC_IDLE_TTL_MS;
+}
+
+/**
  * Arm the bounded idle window that releases the warm microphone.
  *
  * `refresh` separates real dictation from bookkeeping. The user-facing copy
@@ -1091,7 +1111,7 @@ function scheduleKeepAliveIdleDispose(
     return;
   }
   if (refresh || keepAliveIdleDeadlineAt === undefined) {
-    keepAliveIdleDeadlineAt = now + KEEP_ALIVE_MIC_IDLE_TTL_MS;
+    keepAliveIdleDeadlineAt = keepAliveDeadlineAfterLastUse(now);
   }
   const deadlineAt = keepAliveIdleDeadlineAt;
   keepAliveIdleDisposeTimer = window.setTimeout(() => {
@@ -1148,6 +1168,11 @@ export class WebMicAudioEngine {
   // session reuses it for fast startup.
   private usingSharedContext = false;
   private usingKeepAliveSession = false;
+  // Power-release generation when this capture started. A release during capture
+  // means the user walked away, so the forced stop() that follows must not be
+  // recorded as a fresh dictation (it would resurrect the use window the release
+  // listener just cleared).
+  private powerGenerationAtStart = 0;
   private pcmCallback: (chunk: PcmChunk) => void = () => {};
 
   constructor(options: WebMicAudioEngineOptions) {
@@ -1169,6 +1194,7 @@ export class WebMicAudioEngine {
 
   async start(): Promise<void> {
     if (this.context) return;
+    this.powerGenerationAtStart = currentPowerReleaseGeneration();
     if (this.keepAlive) {
       try {
         await this.startKeepAlive();
@@ -1410,9 +1436,19 @@ export class WebMicAudioEngine {
 
   async stop(): Promise<void> {
     liveDirectCaptureEngines.delete(this);
+    const wasRecording = this.ready;
     this.stopped = true;
     this.ready = false;
     this.clearWatchdog();
+    // A recording that actually delivered audio just ended — that is "use" on
+    // every path: the keep-alive session that stays warm, the one released after
+    // a devicechange, and direct capture. Recording this only on the
+    // keep-alive-stays branch left the other two timing from the *start* of the
+    // recording, so fast activation silently expired early for them. A capture
+    // interrupted by suspend/lock is not use: the user walked away.
+    if (wasRecording && currentPowerReleaseGeneration() === this.powerGenerationAtStart) {
+      noteVoiceInputUse();
+    }
     if (this.usingKeepAliveSession) {
       const session = this.keepAliveSession;
       if (this.releaseAfterUse) session?.markStaleForReplacement();
@@ -1432,9 +1468,8 @@ export class WebMicAudioEngine {
         } else {
           // Real use just ended — this is the only event allowed to restart the
           // full 30-minute window the settings copy promises. The use timestamp
-          // moves with it, so "last use" and the idle deadline (which starts at
-          // the *end* of a recording) never disagree about when the window ends.
-          noteVoiceInputUse();
+          // has already moved in stop(), so the idle deadline and "last use"
+          // never disagree about when the window ends.
           scheduleKeepAliveIdleDispose(session, 'idle_timeout_after_recording', { refresh: true });
         }
       }

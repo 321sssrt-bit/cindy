@@ -182,6 +182,47 @@ describe('keep-alive microphone idle window', () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  it('keeps the original deadline when the session is rebuilt late in the window', async () => {
+    mod.noteVoiceInputUse();
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    await vi.advanceTimersByTimeAsync(29 * 60 * 1000);
+
+    // A devicechange released the warm session 29 minutes in. The next mount may
+    // rebuild it, but the window still ends 30 minutes after the last dictation —
+    // anchoring to "now" would keep the indicator lit until minute 59 for a user
+    // who never spoke again.
+    await mod.disposeKeepAliveVoiceInputMicrophone('devicechange');
+    track.stopped = false;
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(track.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(59 * 1000);
+    expect(track.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(2 * 1000);
+    expect(track.stopped).toBe(true);
+  });
+
+  it('refreshes the window when a direct capture recording ends', async () => {
+    mod.noteVoiceInputUse();
+    await vi.advanceTimersByTimeAsync(25 * 60 * 1000);
+
+    const engine = new mod.WebMicAudioEngine({ workletUrl: WORKLET_URL, keepAlive: false });
+    await engine.start();
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await engine.stop();
+
+    // 35 minutes after that recording *started*, but only 20 after it ended: the
+    // window must have been refreshed by the stop, or fast activation would have
+    // silently expired. The use timestamp used to move only on the
+    // keep-alive-stays branch.
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
   it('reopens the warm microphone from a later mount inside the use window', async () => {
     mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });

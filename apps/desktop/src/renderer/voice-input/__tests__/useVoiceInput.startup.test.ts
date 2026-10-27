@@ -188,7 +188,12 @@ describe('local voice capture independent of startup checks and cloud', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COMPOSER_LONG_PRESS_VOICE_INPUT_MS);
     });
-    expect(h.api.prewarm).toHaveBeenCalledOnce();
+    // A short click never reaches the hold threshold, so neither the capture
+    // device nor the main-side prewarm runs: prepare() is only invoked after the
+    // hold is recognized (see composerLongPressGesture). The previous assertion
+    // here expected one prewarm call, which the implementation has not done since
+    // prepare() moved behind the hold threshold.
+    expect(h.api.prewarm).not.toHaveBeenCalled();
     // Opening even an authorized device can switch Bluetooth headphones to call audio.
     expect(mocks.prepareMicrophone).not.toHaveBeenCalled();
     expect(mocks.startEngine).not.toHaveBeenCalled();

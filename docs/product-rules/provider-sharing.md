@@ -426,6 +426,12 @@ Desktop「设置 → 模型供应商」的左栏(2026-10-08 用户裁决)：
    实现：Claude Code 用 SDK `tools` 白名单，Codex 按功能清单关闭白名单之外的功能，Pi 只放行 Cindy
    扩展注册的工具（`packages/maker-core/src/agents/{shared/device-hosted,codex/device-hosted-guest,pi/cindy-bridge-source}.ts`）；
    受邀者电脑上的 WebFetch 见 `apps/desktop/src/main/remote-agent/executor/webFetch.ts`。
+   **重建同样保持隔离**（2026-10-27）：Codex 原生 `thread/fork` 会重新加载进程默认配置，不能
+   假定它继承源线程的覆盖项。回退／编辑重发必须和正常启动、恢复一样带上任务的执行环境、远程 MCP
+   路由与完整能力隔离配置。受邀者复制历史的一次性 fork 不接入任何本机 MCP 或连接器，不能检查
+   功能清单时拒绝创建子线程，用后关闭独立进程；子线程正式恢复时再接入受邀者工具。
+   回归：`packages/maker-core/src/agents/codex/__tests__/device-hosted-guest{,.native}.test.ts`，
+   覆盖回退后续发、历史复制与功能检查失败；真实 Codex 0.159.2 验证本机默认能力不会重新进入受邀者线程。
 6. **受邀者隐私**：申请前明确告知对话与文件内容会经过分享者的电脑，并保存在实际运行任务的那台电脑上
    （有供应商组时可能是分享者安排的其他电脑）。运行中疑似工具循环时，与分享者自己的任务一样，由运行任务
    那台电脑的辅助模型复核：用户目标与最新要求、主模型已有的公开行动说明，以及最近十余次工具调用的

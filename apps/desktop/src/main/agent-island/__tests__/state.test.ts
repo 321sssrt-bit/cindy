@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent, InteractionRequest } from '@cindy/maker-core';
 import { DEFAULT_TOOL_ROW_WORDING } from '@cindy/maker-shared/message-presentation';
 import { DEFAULT_AGENT_ISLAND_STRINGS } from '../../../shared/agentIsland.js';
+import { buildMenubarActivities } from '../../menubar/activity.js';
 
 import {
   acknowledgeAgentIslandSessionRead,
@@ -38,6 +39,35 @@ import {
   setAgentIslandVisibleSession,
   type AgentIslandCompanionChatProjection,
 } from '../state.js';
+
+// Unit regression: the menu re-sorted the island overview on every output event.
+// Existing island ordering tests did not exercise the menu adapter. Two running
+// tasks with an older task emitting newer output are the minimal failure input.
+describe('menu bar task ordering', () => {
+  it('updates previews without reordering output, but promotes new prompts and waiting tasks', () => {
+    const state = createAgentIslandState();
+    const a = { sessionId: 'a', title: 'A' };
+    const b = { sessionId: 'b', title: 'B' };
+    const rows = (now: number) => buildMenubarActivities(
+      buildAgentIslandTaskOverview(state, now), false, key => key,
+    );
+    applyAgentIslandUserPrompt(state, a, 'First task', 1_000);
+    applyAgentIslandUserPrompt(state, b, 'Second task', 2_000);
+    expect(rows(3_000).map(row => row.sessionId)).toEqual(['b', 'a']);
+
+    applyAgentIslandEvent(state, a, { type: 'text', data: { text: 'Progress from A' } }, 10_000);
+    const updated = rows(10_001);
+    expect(updated.map(row => row.sessionId)).toEqual(['b', 'a']);
+    expect(updated.find(row => row.sessionId === 'a')?.preview).toBe('Progress from A');
+
+    applyAgentIslandUserPrompt(state, a, 'Continue A', 20_000);
+    expect(rows(20_001).map(row => row.sessionId)).toEqual(['a', 'b']);
+    applyAgentIslandInteractionRequest(state, b, {
+      kind: 'ask_user_question', requestId: 'question', questions: [],
+    }, 21_000);
+    expect(rows(21_001).map(row => row.sessionId)).toEqual(['b', 'a']);
+  });
+});
 
 // Regression: a chat can be unread after runtime expiry/restart; existing tests only supplied
 // runtime events. Exercise the public display builder with one old unread chat (unit tier).

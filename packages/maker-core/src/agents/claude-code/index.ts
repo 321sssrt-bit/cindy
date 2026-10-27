@@ -1768,8 +1768,11 @@ export class ClaudeCodeAgent extends BaseAgent {
     let memoryFlushController: MemoryFlushController | null = null;
     let mutableModel = opts.model;
     let mutableProviderId = opts.providerId ?? null;
-    const getAutoCompactThresholdPct = (): number | undefined =>
-      this.deps.resolveModelCompactionPct?.(mutableProviderId, mutableModel)
+    const getAutoCompactThresholdPct = (
+      model = mutableModel,
+      provider = mutableProviderId,
+    ): number | undefined =>
+      this.deps.resolveModelCompactionPct?.(provider, model)
         ?? this.deps.runtimeConfig.autoCompactThresholdPct;
     const autoCompactController =
       getAutoCompactThresholdPct() === undefined
@@ -7487,9 +7490,12 @@ export class ClaudeCodeAgent extends BaseAgent {
       requiresModelSwitchRebuild: (model, target) => {
         const provider = target?.providerId !== undefined ? target.providerId : mutableProviderId;
         const window = resolveModelContextWindow(model, provider);
-        const expected = typeof window === 'number' && window > 0 ? String(Math.floor(window)) : undefined;
+        const expected: Record<string, string> = {};
+        // Use the spawn normalizer, including native scaling for windows below 100K.
+        applyClaudeContextWindow(expected, window, getAutoCompactThresholdPct(model, provider));
         const liveEnv = opts.remoteHostId ? remoteEnv : env;
-        return expected !== liveEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+        return expected.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== liveEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+          || expected.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE !== liveEnv?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
       },
 
       async setModel(

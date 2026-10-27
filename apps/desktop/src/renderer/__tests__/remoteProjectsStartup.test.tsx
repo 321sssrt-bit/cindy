@@ -61,6 +61,7 @@ afterEach(() => {
   state.refresh.mockReset().mockResolvedValue('ok');
   state.readCache.mockReset().mockResolvedValue([]);
   state.navigate.mockReset();
+  state.localSessions = [{ id: 'local-B', status: 'active', source: 'desktop' }] as import('@/lib/ccAgent.types').Session[];
   clearLastView();
   vi.mocked(clearCachedDevice).mockClear();
   setDataOwnerGeneration(null, 0);
@@ -71,7 +72,7 @@ afterEach(() => {
 // #7437 / unit: real startup hook + redirect + mirror. Earlier tests seeded
 // bootstrap before mount, missing local-B arriving before cache/device discovery.
 // Deferred IPC replies verify the visible route without network or real waits.
-// Standalone on Windows: 3.38s Vitest / 57ms tests (17 cases, one worker).
+// Standalone on Windows: 5.51s wall / 3.74s Vitest / 61ms tests (18 cases, one worker).
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
@@ -211,6 +212,35 @@ it('restores a known local task while remote initialization is still pending', a
   saveLastChatView({ kind: 'session', sessionId: 'local-B' });
   await act(async () => { render(<StartupRoute />); });
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith('/cc-agent/local-B', { replace: true });
+});
+
+// PR #7453: clear() leaves discovery settled after unmount/logout. With no local
+// rows, the child used to navigate synchronously before the parent's effect reset
+// discovery; local-B in earlier cases accidentally added an await to the fallback.
+it('waits for remote discovery after remount when the local task list is empty', async () => {
+  const previous = setupStartup();
+  state.localSessions = [];
+  let view!: ReturnType<typeof render>;
+  await act(async () => { view = render(<StartupRoute />); });
+  view.unmount();
+  state.navigate.mockClear();
+  const current = setupStartup();
+  await act(async () => { render(<StartupRoute />); });
+  expect(state.navigate).not.toHaveBeenCalled();
+  await act(async () => {
+    previous.cache.resolve([]);
+    previous.link.resolve({ linkStatus: 'connecting' });
+    previous.directory.resolve({ devices: [] });
+  });
+  expect(state.navigate).not.toHaveBeenCalled();
+  await act(async () => {
+    current.link.resolve({ linkStatus: 'connecting' });
+    current.directory.resolve({ devices: [{ deviceId: 'peer', name: 'Peer', online: false, remoteControlEnabled: false, isSelf: false }] });
+    current.cache.resolve([{ deviceId: 'peer', deviceName: 'Peer', sessions: [
+      { id: 'remote-A', status: 'active', source: 'desktop' } as import('@/lib/ccAgent.types').Session,
+    ] }]);
+  });
+  expect(state.navigate).toHaveBeenCalledExactlyOnceWith('/cc-agent/remote-A', { replace: true });
 });
 
 it.each(['deleted', 'refused'] as const)('handles confirmed deletion before the old cold cache returns: %s', async (outcome) => {

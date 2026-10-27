@@ -23,6 +23,7 @@ import { CINDY_MAKE_ENABLED, isCindyMakeSource } from '@cindy/maker-shared/cindy
 import { useCCSessions } from '@/hooks/useCCSessions';
 import {
   getSessionDeviceId,
+  remoteProjectsStore,
   useRemoteBootstrapLoadingDeviceIds,
   useRemoteInitialDiscoverySettled,
   useRemoteProjectSessions,
@@ -100,7 +101,12 @@ export function CCAgentIndexRedirect() {
         // Known archived/hidden rows may fall back immediately. Existing mirrors
         // remain usable offline; no network request or reconnect is started here.
         if (!lastSession && !allSessions.some((s) => s.id === last.sessionId)) {
-          if (!remoteInitialDiscoverySettled) return;
+          // Descendant passive effects run before the synchronizer's mount
+          // effect. Let that commit finish resetting discovery after a previous
+          // unmount/logout, then read live state instead of the render snapshot.
+          // In particular, an empty fallback has no other await before navigation.
+          await Promise.resolve();
+          if (cancelled || !remoteProjectsStore.getInitialDiscoverySettled()) return;
           const deviceId = getSessionDeviceId(last.sessionId);
           if (deviceId ? remoteLoadingDeviceIds.has(deviceId) : remoteLoadingDeviceIds.size > 0)
             return;

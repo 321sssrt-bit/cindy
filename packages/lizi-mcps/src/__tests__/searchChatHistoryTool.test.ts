@@ -108,8 +108,10 @@ describe('search_chat_history tool', () => {
   it('日历上不存在的日期 → INVALID_ARGS, 不静默滚到下个月; 合法闰日照常查询', async () => {
     const { registry, searchChatHistory } = setup(makeResult());
     // new Date('2024-02-30') 会被归一化成 2024-03-01, 查询范围静默偏移。
-    const res = await registry.call('search_chat_history', { query: 'x', from: '2024-02-30' });
-    expect(parse(res)).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
+    for (const from of ['2024-02-30', ' 2024-02-30']) {
+      const res = await registry.call('search_chat_history', { query: 'x', from });
+      expect(parse(res)).toMatchObject({ ok: false, errorCode: 'INVALID_ARGS' });
+    }
     expect(searchChatHistory).not.toHaveBeenCalled();
 
     await registry.call('search_chat_history', { query: 'x', to: '2024-02-29T23:59:59Z' });

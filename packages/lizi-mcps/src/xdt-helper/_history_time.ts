@@ -14,7 +14,8 @@ export function parseIsoMs(s: string | undefined): number | null | 'invalid' {
   if (s === undefined || s === '') return null;
   const t = new Date(s).getTime();
   if (!Number.isFinite(t)) return 'invalid';
-  const date = /^(\d{4})-(\d{2})-(\d{2})(?![\d])/.exec(s);
+  // new Date 会忽略前导空白, 日期部分的定位也要跳过它, 否则 ' 2024-02-30' 绕过校验。
+  const date = /^(\d{4})-(\d{2})-(\d{2})(?![\d])/.exec(s.trimStart());
   if (date) {
     const year = Number(date[1]);
     const month = Number(date[2]);

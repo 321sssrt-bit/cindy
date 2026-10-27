@@ -166,7 +166,7 @@ describe('keep-alive microphone idle window', () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
-  it('does not relight the microphone from a later mount after the idle release', async () => {
+  it.each([0, 60 * 1000])('does not relight the microphone %i ms after the idle release', async (delay) => {
     mod.noteVoiceInputUse();
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
     await vi.advanceTimersByTimeAsync(IDLE_TTL_MS);
@@ -176,7 +176,7 @@ describe('keep-alive microphone idle window', () => {
     // Past the window the user stopped dictating: remounting the ChatInput (a new
     // task, a settings change) must not start a fresh 30-minute window, otherwise
     // the indicator never goes out while the user just keeps working.
-    await vi.advanceTimersByTimeAsync(60 * 1000);
+    await vi.advanceTimersByTimeAsync(delay);
     await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
 
     expect(getUserMedia).not.toHaveBeenCalled();
@@ -304,6 +304,8 @@ describe('keep-alive microphone idle window', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(track.stopped).toBe(true);
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 
   it('stops a stream that arrives after the session was released mid-startup', async () => {
@@ -510,6 +512,11 @@ describe('keep-alive microphone idle window', () => {
     // happen until the machine wakes up.
     expect(onInterrupted).toHaveBeenCalledTimes(1);
     expect(track.stopped).toBe(true);
+    // The UI stops the interrupted engine after the power notification. That
+    // cleanup must not create a fresh use window when the window remounts.
+    await engine.stop();
+    await mod.prewarmVoiceInputMicrophone({ workletUrl: WORKLET_URL });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 
   it('reports cancellation when the shared context fails after a release', async () => {

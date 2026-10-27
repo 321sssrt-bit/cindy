@@ -1059,7 +1059,7 @@ export function noteVoiceInputUse(): void {
  */
 function isWithinVoiceInputUseWindow(): boolean {
   if (lastVoiceInputUseAt === undefined) return false;
-  return keepAliveMonotonicNow() - lastVoiceInputUseAt <= KEEP_ALIVE_MIC_IDLE_TTL_MS;
+  return keepAliveMonotonicNow() - lastVoiceInputUseAt < KEEP_ALIVE_MIC_IDLE_TTL_MS;
 }
 
 /**

@@ -62,7 +62,7 @@ vi.mock('../store.js', () => ({
     save = mock.save;
   },
 }));
-import { configureRoutineHost, getRoutineEngine, routineTools, stopRoutines, updateBotRoutineLifecycle } from '../service.js';
+import { configureRoutineHost, getRoutineEngine, readRoutineLaneModel, routineTools, stopRoutines, updateBotRoutineLifecycle } from '../service.js';
 import { handleRoutineRequest } from '../../cindy-brain/routineSlot.js';
 import type { InstalledGhost } from '../../../shared/ghost.js';
 import { companionHomes } from '../../companion-cloud/homes.js';
@@ -117,6 +117,7 @@ it('creates and closes an isolated lane for each fresh routine trigger', async (
   const routine = await routineTools.save('bot', {
     name: 'Fresh review', prompt: 'Check only this trigger', enabled: true,
     sessionMode: 'fresh', triggers: [{ id: 'tick', kind: 'interval', intervalMs: 60000 }],
+    modelOverride: { agentKind: 'codex', model: 'budget', providerId: 'subscription' },
   });
   await routineTools.runNow('bot', routine.id);
   await vi.waitFor(async () => expect((await routineTools.history('bot', routine.id))[0].status).toBe('success'));
@@ -124,6 +125,9 @@ it('creates and closes an isolated lane for each fresh routine trigger', async (
     routineId: expect.stringMatching(new RegExp(`^${routine.id}:`)),
   }));
   expect(mock.closeRoutineSession).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^lane-${routine.id}:`)));
+  // The per-trigger lane must still send with the routine's own model, not the companion's.
+  const laneRoutineId = mock.ensureRoutineSession.mock.calls[0][0].routineId;
+  expect(await readRoutineLaneModel('bot', `routine:${laneRoutineId}`)).toMatchObject({ agentKind: 'codex', model: 'budget' });
 });
 
 it('turns the teammate\'s weekday todo check on and off as one built-in routine', async () => {

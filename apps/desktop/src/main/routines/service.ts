@@ -702,6 +702,8 @@ export async function importCompanionRoutines(botId: string, routines: Companion
   for (const id of remove) if (existing.has(id) && !builtinIds.has(id)) await routineTools.remove(botId, id);
 }
 
+const FRESH_LANE_KEY = /^(routine:.+):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Read without starting the scheduler: previews and manual sends may precede engine startup. */
 export async function readRoutineLaneModel(botId: string, routeKey: string | null): Promise<RoutineModel | null> {
   if (!routeKey?.startsWith('routine:')) return null;
@@ -710,5 +712,10 @@ export async function readRoutineLaneModel(botId: string, routeKey: string | nul
   const routines = current?.scope === scope ? current.engine.list(botId)
     : (await new RoutineFileStore(ownerScopedUserDataPath()).load())?.routines ?? [];
   assertScope(scope);
-  return routines.find((routine) => routine.botId === botId && `routine:${routine.id}` === routeKey)?.modelOverride ?? null;
+  const owned = routines.filter((routine) => routine.botId === botId);
+  // Fresh-session lanes append `:<uuid>` per trigger; they still use the routine's model.
+  const freshKey = FRESH_LANE_KEY.exec(routeKey)?.[1];
+  const match = owned.find((routine) => `routine:${routine.id}` === routeKey)
+    ?? (freshKey ? owned.find((routine) => `routine:${routine.id}` === freshKey) : undefined);
+  return match?.modelOverride ?? null;
 }

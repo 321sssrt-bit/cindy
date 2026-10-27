@@ -64,6 +64,7 @@ export function BotRoutines({
   const routinesApi = settingsTarget.routines;
   const navigate = useNavigate();
   const supportsModels = settingsTarget.kind === 'local' || settingsTarget.routineModels === true;
+  const supportsSessionModes = settingsTarget.kind === 'local' || settingsTarget.routineSessionModes === true;
   const inFlight = useRef(false);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
@@ -429,7 +430,7 @@ export function BotRoutines({
               fastMode: route.fastMode, agentDeviceId: route.agentDeviceId ?? null,
             } : null })}
           />}
-          <div className="space-y-2">
+          {supportsSessionModes && <div className="space-y-2">
             <span aria-hidden className={fieldLabelClass}>{t('routines.sessionMode')}</span>
             <Select
               label={t('routines.sessionMode')}
@@ -444,7 +445,7 @@ export function BotRoutines({
               aria-describedby="routine-session-mode-hint"
             />
             <p id="routine-session-mode-hint" className="text-12 text-[var(--text-secondary)]">{t('routines.sessionModeHint')}</p>
-          </div>
+          </div>}
           <fieldset disabled={!!saved?.builtin} className="min-w-0 space-y-5">
           <details className="space-y-3">
             <summary className="min-h-8 cursor-pointer rounded-full py-2 focus-visible:outline focus-visible:outline-[var(--focus-ring)]">{t('routines.advancedSettings')}</summary>

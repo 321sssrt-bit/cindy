@@ -328,6 +328,7 @@ function harness() {
       handleWorkerTurnStarted: effects.fn('worker-start'),
       captureWorkerText: vi.fn(),
       captureWorkerTerminalTurn: vi.fn(() => ({ owner: 'old-turn' })),
+      noteWorkerProductTerminal: vi.fn(),
       handleWorkerTerminalTurn: effects.fn('worker-terminal'),
     },
     turnModelPromiseBySession: new Map<string, Promise<string>>(),
@@ -678,6 +679,23 @@ describe('production Session event pipeline', () => {
     } finally { close(); await h.dispose(); }
   });
 
+  it('shows the accepted owner reply during a quiet run without changing scheduler attribution', async () => {
+    const h = harness();
+    const close = beginQuietScheduledOutput('check', 'owner-steer-run');
+    const origin = { kind: 'scheduler' as const, scheduleId: 'check', scheduleName: 'Check', runId: 'owner-steer-run' };
+    const ownerAuthored = vi.fn(() => false);
+    Object.assign(h.deps.agentInputCoordinatorHolder, { isActiveInputOwnerAuthored: ownerAuthored });
+    try {
+      h.emit(event('text', { text: 'Background preamble' }, { turnOrigin: origin }));
+      expect(effects.fn('onAssistantTextEvent')).not.toHaveBeenCalled();
+      ownerAuthored.mockReturnValue(true);
+      h.emit(event('text', { text: 'Here is the progress', isFinal: true }, { turnOrigin: origin }));
+      expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledOnce();
+      expect(JSON.stringify(h.deps.broadcastToAllWindows.mock.calls)).toContain('owner-steer-run');
+      expect(origin.kind).toBe('scheduler');
+    } finally { close(); await h.dispose(); }
+  });
+
   it('keeps redacted terminal fields redacted for quiet scheduler output', async () => {
     const h = harness();
     const close = beginQuietScheduledOutput('check', 'redaction-run');
@@ -969,6 +987,7 @@ describe('production Session event pipeline', () => {
     expect(effects.fn('resetTurnPersistState')).toHaveBeenCalledOnce();
     await microtasks();
     expect(h.deps.orcaTeamServiceForEvents.handleWorkerTerminalTurn).not.toHaveBeenCalled();
+    expect(h.deps.orcaTeamServiceForEvents.noteWorkerProductTerminal).not.toHaveBeenCalled();
     effects.fn('recordTurnUsageOnMessage').mockClear();
     vi.setSystemTime(5000);
     h.emit(event('done', { total_cost_usd: 0, duration_ms: 20 }, { source }));
@@ -1293,6 +1312,7 @@ describe('production Session event pipeline', () => {
     expect(effects.fn('markAssistantTurnCompleted')).not.toHaveBeenCalled();
     expect(h.deps.autoResumeBookkeeping.stashOrcaSuppressedTerminal).toHaveBeenCalledOnce();
     expect(h.deps.orcaTeamServiceForEvents.handleWorkerTerminalTurn).not.toHaveBeenCalled();
+    expect(h.deps.orcaTeamServiceForEvents.noteWorkerProductTerminal).not.toHaveBeenCalled();
     expect(h.deps.onUnsuccessfulProductTurn).not.toHaveBeenCalled();
     await h.dispose();
   });
@@ -1479,6 +1499,8 @@ describe('production Session event pipeline', () => {
     );
     expect(effects.fn('refreshSessionListPreview')).not.toHaveBeenCalled();
     expect(h.deps.orcaTeamServiceForEvents.handleWorkerTerminalTurn).not.toHaveBeenCalled();
+    // Seal A synchronously before the start barrier lets queued B report against A's debt.
+    expect(h.deps.orcaTeamServiceForEvents.noteWorkerProductTerminal).toHaveBeenCalledWith({ owner: 'old-turn' });
     h.deps.orcaTeamServiceForEvents.captureWorkerTerminalTurn.mockReturnValue({
       owner: 'new-turn',
     });
@@ -1550,7 +1572,11 @@ describe('provider turn observer on real Session.send', () => {
     } finally { unsubscribe(); dispose(); await h.dispose(); }
   });
 
-  it('announces a harness wake-up as a provider-wake channel turn before its first event', async () => {
+  it.each([
+    [undefined, 'provider-wake-local'],
+    [{ kind: 'user' as const, surface: 'im' as const }, 'provider-wake'],
+    [{ kind: 'scheduler' as const, scheduleId: 'hook:slack', surface: 'im' as const }, 'provider-wake'],
+  ])('inherits the dispatched origin %j when announcing a harness wake-up', async (origin, expectedSource) => {
     const pushed: Array<AgentEvent | null> = [];
     let wake: (() => void) | null = null;
     let running = false;
@@ -1587,12 +1613,12 @@ describe('provider turn observer on real Session.send', () => {
     });
     const off = session.onEvent((value) => order.push(value.type));
     try {
-      await session.send('typed on desktop');
+      await session.send('launch background work', { origin });
       await emit(event('text', { text: 'launched agents' }));
       await emit(event('done'));
       await emit(event('text', { text: 'agent result' }));
       await emit(event('done'));
-      expect(order).toEqual(['starting:none', 'text', 'done', 'starting:provider-wake', 'text', 'done']);
+      expect(order).toEqual(['starting:none', 'text', 'done', `starting:${expectedSource}`, 'text', 'done']);
     } finally { off(); unsubscribe(); dispose(); await session.close(); }
   });
 

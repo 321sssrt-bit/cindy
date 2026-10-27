@@ -986,6 +986,12 @@ export interface AgentDeps {
     modelId: string,
   ) => number | null;
 
+  /** Host-resolved model percentage. Hosts without a policy retain their runtime defaults. */
+  resolveModelCompactionPct?: (
+    providerId: string | null | undefined,
+    modelId: string,
+  ) => number | null;
+
   /** Resolve native metadata using the exact app-server config and usage report. */
   resolveCodexContextWindowInfo?: (
     modelId: string,
@@ -1170,7 +1176,7 @@ export interface AgentDeps {
 
   /**
    * Claude Code 工具循环疑似命中时的辅助模型复核入口(与 MakerDeps.toolLoopReviewer
-   * 同一实现)。缺省 = 疑似即中断。
+   * 同一实现)。缺省放行疑似,保留最终上限。
    */
   toolLoopReviewer?: import('./shared/tool-loop-review.js').ToolLoopReviewer;
 

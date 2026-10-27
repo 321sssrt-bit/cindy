@@ -2531,15 +2531,18 @@ export class PiAgent extends BaseAgent {
     // Agent-level retries stay with Pi (provider maxRetries stays 0 — Pi docs:
     // SDK retries can swallow quota errors before the agent sees them).
     const compactionModelOverrides: Record<string, { reserveTokens: number }> = {};
-    const addBudget = (provider: string, id: string, window: number, workingWindow?: number) => {
+    const addBudget = (provider: string, id: string, window: number, workingWindow?: number,
+      source = provider, sourceModel = id) => {
       // 任务级预算优先:预算存在时**每个**可选模型都按预算生成保留量(与预演、切后写盘
       // 同一口径)，否则顶层 reserveTokens 会被同模型的 model-level override 盖掉。
       const effectiveWorkingWindow = opts.sessionContextWindowBudget ?? workingWindow;
-      const settings = JSON.parse(buildPiSettingsJsonContent(window, opts.piCompactionPct, [], effectiveWorkingWindow));
+      const pct = this.deps.resolveModelCompactionPct?.(source, sourceModel) ?? opts.piCompactionPct;
+      const settings = JSON.parse(buildPiSettingsJsonContent(window, pct, [], effectiveWorkingWindow));
       compactionModelOverrides[`${provider}/${id}`] = { reserveTokens: settings.compaction?.reserveTokens ?? 16_384 };
     };
     for (const model of models) addBudget(PI_PROVIDER_ID, model.id, model.contextWindow,
-      this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', model.id) ?? undefined);
+      this.deps.resolveModelContextLimit?.(gatewayProviderId ?? 'xd', model.id) ?? undefined,
+      gatewayProviderId ?? 'xd');
     for (const provider of nativeProviders) {
       if (provider.id === PI_PROVIDER_ID) continue;
       for (const model of provider.models) {
@@ -2564,7 +2567,7 @@ export class PiAgent extends BaseAgent {
           ? workingWindow
           : Math.max(model.contextWindow ?? learnedWindow ?? 128_000, workingWindow ?? 0);
         addBudget(provider.id, model.wireId ?? model.id,
-          budgetWindow, workingWindow);
+          budgetWindow, workingWindow, provider.sourceProviderId ?? provider.id, model.id);
       }
     }
     const settingsJsonContent = await this.buildSettingsJsonPreservingUserKeys(
@@ -6731,7 +6734,8 @@ export class PiAgent extends BaseAgent {
       model: string,
       budget: number | null = sessionContextWindowBudget,
     ): number => {
-      const settings = JSON.parse(buildPiSettingsJsonContent(window, sessionPiAutoCompactPct, [],
+      const settings = JSON.parse(buildPiSettingsJsonContent(window,
+        this.deps.resolveModelCompactionPct?.(source, model) ?? sessionPiAutoCompactPct, [],
         budget ?? this.deps.resolveModelContextLimit?.(source, model) ?? undefined));
       return settings.compaction?.reserveTokens ?? 16_384;
     };

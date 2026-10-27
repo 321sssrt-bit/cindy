@@ -24636,9 +24636,16 @@ describe('CodexAgent.forkSdkSession', () => {
       }
       return { extraArgs: [], extraEnv: {}, onHostRetired };
     });
-    MockCodexTransport.onCreate = transport => transport.setMockResponse('account/login/start', {
-      result: { type: 'chatgptAuthTokens' },
-    });
+    MockCodexTransport.onCreate = transport => {
+      transport.setMockResponse('account/login/start', { result: { type: 'chatgptAuthTokens' } });
+      transport.setMockResponse('experimentalFeature/list', { result: {
+        data: [{ name: 'apps', stage: 'stable', enabled: true }], nextCursor: null,
+      } });
+      transport.setMockResponse('config/read', { result: { config: {
+        cli_auth_credentials_store: 'ephemeral',
+        mcp_servers: { node_repl: { command: 'synthetic-node-repl' } },
+      } } });
+    };
     const agent = new CodexAgent(createDeps({}, {
       prepareCodexExtraSpawnConfig: prepare,
       createCodexAuthTokenReader: () => async () => ({ accessToken: 'test-guest-token', chatgptAccountId: 'shared-account' }),
@@ -24670,7 +24677,11 @@ describe('CodexAgent.forkSdkSession', () => {
     const agent = new CodexAgent(createDeps({}, { resolveCodexThreadStorage, prepareCodexResumeSession }));
     const home = path.join(os.tmpdir(), 'guest-fork-fixture');
     const codexHome = path.join(home, 'codex');
-    const host = installFakeHost(agent, undefined, { userAgent: 'mock-codex/0.153.4', codexHome });
+    const host = installFakeHost(agent, method => {
+      if (method === Method.ExperimentalFeatureList) return {
+        data: [{ name: 'apps', stage: 'stable', enabled: true }], nextCursor: null,
+      };
+    }, { userAgent: 'mock-codex/0.153.4', codexHome });
     await expect(agent.forkSdkSession({ sourceSdkSessionId: 'guest-source', upToMessageId: undefined,
       lastTurnId: 'guest-turn', hostedGuestHome: home, providerId: 'xd' }))
       .resolves.toMatchObject({ newSdkSessionId: 'fork-thread-id' });
@@ -25463,12 +25474,12 @@ describe('CodexAgent rewind', () => {
       threadId: 'start-thread-id',
       numTurns: 1,
     });
-    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, {
+    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
       threadId: 'start-thread-id',
       lastTurnId: 'boundary-turn',
       excludeTurns: true,
       cwd: '/repo',
-    });
+    }), expect.objectContaining({ timeoutMs: 60_000 }));
     expect(commitResult).toEqual({ sdkSessionId: 'fork-thread-id' });
     expect(host.subscribeThread).toHaveBeenCalledTimes(2);
     expect(host.subscribeThread).toHaveBeenLastCalledWith('fork-thread-id', expect.any(Object));
@@ -25498,7 +25509,7 @@ describe('CodexAgent rewind', () => {
     expect(host.request).not.toHaveBeenCalledWith(Method.ThreadTurnsList, expect.anything());
     expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
       threadId: 'start-thread-id', lastTurnId: 'persisted-boundary',
-    }));
+    }), expect.objectContaining({ timeoutMs: 60_000 }));
     await handle.close();
   });
 
@@ -25573,12 +25584,12 @@ describe('CodexAgent rewind', () => {
     const commitResult = await commitRewindFiles('', '', { tailTurnsToDrop: 1, forkAtTimestampMs: 150_500 });
 
     expect(host.request).not.toHaveBeenCalledWith(Method.ThreadRollback, expect.anything());
-    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, {
+    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
       threadId: 'start-thread-id',
       lastTurnId: 'boundary-turn',
       excludeTurns: true,
       cwd: '/repo',
-    });
+    }), expect.objectContaining({ timeoutMs: 60_000 }));
     expect(commitResult).toEqual({ sdkSessionId: 'fork-thread-id' });
     expect(host.subscribeThread).toHaveBeenLastCalledWith('fork-thread-id', expect.any(Object));
     expect(await nextEvent(iterator)).toMatchObject({
@@ -25614,7 +25625,7 @@ describe('CodexAgent rewind', () => {
     });
     expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
       threadId: 'start-thread-id', lastTurnId: 'persisted-boundary',
-    }));
+    }), expect.objectContaining({ timeoutMs: 60_000 }));
     expect(host.subscribeThread).toHaveBeenLastCalledWith('fork-thread-id', expect.any(Object));
     await handle.close();
   });
@@ -25638,12 +25649,12 @@ describe('CodexAgent rewind', () => {
 
     await expect(commitRewindFiles('', '', { tailTurnsToDrop: 1, lastTurnId: 'persisted-boundary' }))
       .resolves.toEqual({ sdkSessionId: 'fork-thread-id' });
-    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, {
+    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({
       threadId: 'start-thread-id',
       lastTurnId: 'persisted-boundary',
       excludeTurns: true,
       cwd: '/repo',
-    });
+    }), expect.objectContaining({ timeoutMs: 60_000 }));
     await handle.close();
   });
 
@@ -25668,7 +25679,7 @@ describe('CodexAgent rewind', () => {
     await expect(commitRewindFiles('', '', { tailTurnsToDrop: 1, forkAtTimestampMs: 150_500 }))
       .resolves.toEqual({ sdkSessionId: 'fork-thread-id' });
     expect(host.request).toHaveBeenCalledWith(Method.ThreadTurnsList, expect.objectContaining({ threadId: 'start-thread-id' }));
-    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({ lastTurnId: 'boundary-turn' }));
+    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({ lastTurnId: 'boundary-turn' }), expect.objectContaining({ timeoutMs: 60_000 }));
     await handle.close();
   });
 
@@ -25734,7 +25745,9 @@ describe('CodexAgent rewind', () => {
     await handle.close();
   });
 
-  it('holds MCP discovery identity around the fresh rewind thread/start (#4994)', async () => {
+  // Rewind forks must discover tools under the same task identity as fresh
+  // threads; the original test covered only first-turn replacement.
+  it.each([false, true])('holds MCP discovery identity during rewind (native fork: %s)', async (nativeFork) => {
     const order: string[] = [];
     const deps = createDeps();
     deps.withCodexMcpDiscoveryContext = async (ctx, run) => {
@@ -25752,7 +25765,7 @@ describe('CodexAgent rewind', () => {
     }, { userAgent: 'mock-codex/0.156.0' });
     const original = host.request.getMockImplementation()!;
     host.request.mockImplementation(async (...args) => {
-      if (args[0] === Method.ThreadStart) {
+      if (args[0] === Method.ThreadStart || args[0] === Method.ThreadFork) {
         expect(order.at(-1)).toBe('discovery');
         order.push('native');
       }
@@ -25769,8 +25782,10 @@ describe('CodexAgent rewind', () => {
     const commitRewindFiles = handle.commitRewindFiles;
     if (!commitRewindFiles) throw new Error('expected commitRewindFiles');
 
-    await expect(commitRewindFiles('', '', { tailTurnsToDrop: 1, rewindsToNativeThreadStart: true }))
-      .resolves.toEqual({ sdkSessionId: 'fresh-thread-id' });
+    await expect(commitRewindFiles('', '', {
+      tailTurnsToDrop: 1,
+      ...(nativeFork ? { lastTurnId: 'persisted-boundary' } : { rewindsToNativeThreadStart: true }),
+    })).resolves.toEqual({ sdkSessionId: nativeFork ? 'fork-thread-id' : 'fresh-thread-id' });
     expect(order).toEqual(['discovery', 'native', 'released']);
     await handle.close();
   });
@@ -25876,7 +25891,7 @@ describe('CodexAgent rewind', () => {
       lastTurnId: 'persisted-boundary',
       rewindsToNativeThreadStart: true,
     })).resolves.toEqual({ sdkSessionId: 'fork-thread-id' });
-    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({ lastTurnId: 'persisted-boundary' }));
+    expect(host.request).toHaveBeenCalledWith(Method.ThreadFork, expect.objectContaining({ lastTurnId: 'persisted-boundary' }), expect.objectContaining({ timeoutMs: 60_000 }));
     expect(host.request.mock.calls.filter(([method]) => method === Method.ThreadStart)).toHaveLength(1);
     await handle.close();
   });
@@ -32977,6 +32992,27 @@ describe('CodexAgent context window reporting', () => {
     expect(resolveCodexContextWindowInfo).toHaveBeenLastCalledWith(GATEWAY_MODEL,
       expect.objectContaining({ model_context_window: 1_000_000 }), 950_000);
     await handle.close();
+  });
+
+  it('keeps per-model catalog settings free of global window overrides and preserves in-flight compaction facts', async () => {
+    let pct: number | null = 75;
+    const resolveCodexContextWindowInfo = vi.fn(async () => null);
+    const agent = new CodexAgent(createDeps({}, {
+      resolveModelCompactionPct: () => pct,
+      resolveCodexThreadContextWindow: () => 400_000,
+      resolveCodexContextWindowInfo,
+    }));
+    const host = installFakeHost(agent, method => method === Method.ConfigRead ? { config: {} } : undefined);
+    const handle = await agent.startSession({ sessionId: 'model-compaction-policy', model: GATEWAY_MODEL, workingDir: '/repo' });
+    try {
+      const start = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as { config?: Record<string, unknown> };
+      expect(start.config?.model_context_window).toBeUndefined();
+      expect(start.config?.model_auto_compact_token_limit).toBeUndefined();
+      pct = 60;
+      await handle.getCodexContextWindowInfo?.();
+      expect(resolveCodexContextWindowInfo).toHaveBeenLastCalledWith(GATEWAY_MODEL,
+        expect.objectContaining({ model_auto_compact_token_limit: 300_000 }), null);
+    } finally { await handle.close(); }
   });
 
   it('reads the bound CLI configuration without changing it or using the provider catalog', async () => {

@@ -11,6 +11,15 @@ Profile 版本）。它是显式接受模型的意图；宿主重新校验模型
 返回成功视为完成恢复，必须读回版本及发送结果。现有 `update_teammate_profile` 显式提交
 `modelChain` 时走同一接受入口，包括重复选择当前值；省略模型字段不改变恢复状态。
 
+## 设置中的引擎更新准备
+
+Desktop 新增本机 `update-harness-prepare` IPC（Claude Code/Codex、用户看到的目标版本），
+只供可信应用顶层 renderer 在重启确认前准备下载，不暴露到 device-link allowlist。
+原 `update-harness-relaunch` 追加可选 `preparedVersion`：宿主只接受本轮准备成功的目标，
+下次启动只消费缓存，避免确认期间清单变化又触发启动下载。省略参数的旧设置入口仍写
+原 scoped 修复标记，回复保持兼容。应用更新 IPC、手机与设备间 wire protocol 不变；后台归档只放新缓存目录，旧客户端
+忽略它，不改变原安装目录、凭证、数据库或持久偏好。
+
 ## 任务链接保留所属电脑
 
 任务查询返回可选 `sessionUrl`，沿用 `cindy://session/<id>?device=<deviceId>`。
@@ -69,8 +78,21 @@ Server 保留原市场资源 ID 和不可变旧 Release；无能力声明的客�
 仅拉取确认远程分支不存在后，在本次胶囊选择内置灰；换分支或重新挂载即重新判断。
 同步仅由用户点击触发，按配置的 tracking remote/ref（否则 origin 同名分支）拉取一个显式
 refspec，再按需快进本地分支。
-设备互联对单次同步预留 90 秒（网络 Git 30 秒及清理、本地探测），失败不重放写请求、
-不重置 peer 或 relay；创建和发送不等待同步，不改用其它源引用。手机本轮不提供入口。
+手动 fetch 使用 `--progress`，连续 60 秒没有新增对象、接收字节或解包进度才超时；
+重复进度行与普通输出不续期。本地探测仍有 5 秒上限，超时沿用整棵进程树清理。
+单次命令用 `-c fetch.unpackLimit=1` 让小批对象也经过会报告字节进度的 `index-pack`，
+避免单个大对象被 `unpack-objects` 静默接收时误判停滞；不修改用户 Git 配置。
+新版控制端在 `worktree:sync-branch` 请求追加可选 `waitForResult: true`，被控端至多等待
+10 秒，未完成时返回 `{ pending: true, operationId }`。后续请求带同一 `operationId`，
+只等待原操作，绝不重新 fetch；句柄绑定账号代次、控制设备、仓库和分支。
+运行中操作上限 64 个；已完成结果独立保留最多 64 个、最长 5 分钟，超量淘汰最早完成者，
+不占用运行配额，也不淘汰运行中的操作。轮询连接错误后保留已收到的句柄，用户再次点击
+只续接原操作；收到终态、终态错误或切换选择后清除句柄，不自动重放初始写请求。
+未知、过期或不匹配的句柄报 `branch-sync:changed`，不自动重新执行。每次 invoke 仍沿用
+90 秒传输预算，不修改共享链路的超时、重试或恢复策略；两个控制端的句柄互不通用。
+旧控制端不传新字段，新被控端仍返回原终态；新控制端连接旧被控端时接受原终态，沿用旧端
+Git 超时。长下载的完整体验需要两端更新。失败不重放写请求、不重置 peer 或 relay；
+创建和发送不等待同步，不改用其它源引用。手机本轮不提供入口。无服务端或数据库变更。
 实现见 `apps/desktop/src/main/worktree/branchSync.ts`；真实 Git 回归在
 `branchSync.git-integration.test.ts`。
 
@@ -153,6 +175,14 @@ worktree 资源等待后复核。控制端先按既有工作区／自动化预�
 请求，不重放。原生 helper 的完成动作追加同一标识，缺失时不执行。无需服务端、Mobile
 原生配置或数据库 migration 更新。回归见 `agentIslandRemoteSessions.test.ts`、
 `agent-island/__tests__/service.test.ts` 和 `localDb/ipc/__tests__/sessionsUpdate.test.ts`。
+
+## 灵动岛群消息展示
+
+Desktop Main 向随包分发的原生灵动岛 helper 追加可选 `groupChat` 展示字段（成员头像与本地化 @ 标记），缺省时沿用原卡片。
+群卡使用独立 UI 标识，点击仍走现有群消息深链；不签发任务 `completionToken`，不进入任务活动广播或 device-link relay。
+服务端已读／关注／静音判据与系统通知共用，未新增服务端接口、数据库、Mobile 原生配置或远程 IPC。
+旧 helper 忽略可选字段后仍可显示标题和摘要、点击进入群消息；旧 Main 配合新 helper 保持原样。
+回归见 `agent-island/__tests__/{state,service,deviceSessions}.test.ts` 与 `maker-ipc/__tests__/chatServer.test.ts`。
 
 ## 限额恢复时间查询
 
@@ -3521,6 +3551,22 @@ namespace + id 下同一插件的有界 JSON 请求；`deviceSync: true` 是独�
 不改变已装批准、凭证、KV、版本或原生指纹。实现与时序验证见
 [原配置页协议](../remote-plugin-oauth.md#手机原配置页授权的增量能力)。
 
+## 公共插件分享（未发布首版）
+
+`shareBaseUrl` 是端点清单的可选字段；缺失/空值关闭分享素材准备，不猜测域名。旧客户端忽略字段，既有市场和安装协议不变。公开 DTO `PublicPluginPresentation` v1 由两仓的 `packages/plugin-protocol` 同步维护，不含包或安装批准。
+
+`plugin-market:prepare-share` 接受可选 `ShareOptions {includeAttribution:boolean}`，省略时匿名。Main 向构建区域固定 Share Server `POST /api/shares`，请求 `{kind:'plugin',reference,includeAttribution,region,lang,authRealm?}`。CN/Dev 是 cn/zh-CN，Global 是 global/en；Auth 权威区域随当前身份冻结，可以与构建区域不同。只有署名创建携带当前用户 Access Token，固定账号代次；仅遇到明确的 TOKEN_EXPIRED 时复用登录续期并重试一次，续期前后及请求前复核原身份，不降为匿名。匿名请求无凭证。Renderer 不持有 token、不指定用户或上游服务。
+
+Share Server 以独立 PostgreSQL 库唯一保存分享关系；返回既有素材字段及 `shareId`、`includeAttribution`。Main 校验随机分享编号、固定同源且无查询参数的 `/s/:shareId` 与署名方式。区域语言仍由创建请求明确携带并存入记录。转发同一编号保留原署名；开关或重新分享选择另一条绑定，不修改既有记录。链接不含 source、内部身份、版本、包或批准；请求结果在切账号/资源后丢弃。
+
+落地页、二维码和图片使用同一无参 `/s/:shareId`，资源、署名、区域和默认语言以服务器记录为准；页面显式切换语言时，合法 `lang` 仅覆盖当前页面、JSON、SVG 的展示语言，向插件服务透传，不改写原记录或创建新编号。每次检查当前公开上架及可交付资格，显示当前公开版本；作者原文保留。当前昵称头像通过 Auth 实时读取，不可用则隐藏，不把已署名绑定降为匿名。生成时身份验证失败返回错误，可重试或另选匿名分享；资料查询不可用时隐藏署名展示，不改变原署名绑定，不复用错误身份。
+
+Share Server 在创建时保存已验签的分享者 `membershipId` 与身份权威。Auth 只读现有账号资料，不增加分享字段、记录、索引或 migration；公开资料接口使用 shareId，在固定 Share Server 回查有效分享与身份绑定后读取当前资料。分享服务端已独立提供该能力，客户端沿用现有认证与固定分享入口，不引入额外 Auth 写入或凭证存储。公开资料新增可选的内嵌栅格 `icon` 字段，两仓协议同步；缺失或无效时使用默认图标，旧服务与旧客户端均兼容。
+
+方形 SVG 为 1080×1080，Desktop PNG 为 2160×2160，接收界限 1 MiB。素材用于人工复制/保存；网页只展示与承接，不提供发送面板工具。`cindy://plugin/:pluginId` 仍只导航，拒绝 query/fragment/安装参数，沿冷启动、登录恢复、兼容包选择和原安装批准。通用市场详情入口接受服务端解析后的当前区域 ID，再与当前可见目录核对身份及发布；新旧 ID 映射仍归 Plugin Server，分享层不新增转换。已有目录 ID 的请求仍严格绑定原条目，不能借规范化跳到其他插件。不扩 device-link 或 Mobile 能力，没有“我的分享”、移除已发署名、分享统计、转发链、平台 SDK 或资料快照。
+
+
+本版分享接收限于插件页选择本机且目录正常的情况；不承接远程电脑的分享导航或断线恢复，不自动切换所选电脑。组织目录不可用时继续遵守未下发条目不读取详情的既有限制；历史或跨区域公开编号的解析也可能被该限制拒绝，本版不新增解析入口或放宽访问边界。
 
 ## 伙伴关联项目
 

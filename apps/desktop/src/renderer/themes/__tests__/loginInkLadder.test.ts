@@ -163,3 +163,24 @@ describe('浏览器登录回调页 = 主界面墨水口径', () => {
     });
   }
 });
+
+/** 回调页 CTA 的悬停 / 按下叠层是登录主按钮叠层(`login-overlay-button-*`)的内联副本。 */
+const CALLBACK_OVERLAYS: ReadonlyArray<readonly [cssVar: string, loginId: string]> = [
+  ['--cta-hover', 'login-overlay-button-hover'],
+  ['--cta-active', 'login-overlay-button-pressed'],
+];
+
+describe('浏览器登录回调页 CTA 叠层 = 登录主按钮叠层', () => {
+  const vars = callbackPageVars(undefined);
+  for (const [rule, mode] of [
+    ['light', 'light'],
+    ['dark', 'dark'],
+    ['systemDark', 'dark'],
+  ] as const) {
+    it.each(CALLBACK_OVERLAYS)(`${rule}: %s 与 %s 同值`, (cssVar, loginId) => {
+      const actual = vars[rule][cssVar];
+      if (actual === undefined) throw new Error(`${rule} 规则缺少 ${cssVar}`);
+      expect(normalizeColor(actual)).toBe(normalizeColor(colorRegistry.resolveDefault(loginId, mode)));
+    });
+  }
+});

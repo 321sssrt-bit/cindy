@@ -132,3 +132,22 @@ export async function materializeLocalMarkdownImages(
   const notice = failedUrls.size > 0 ? `有 ${failedUrls.size} 张图片未能作为附件发送。` : '';
   return { absPaths, text: notice ? `${body.trimEnd()}\n\n${notice}` : body };
 }
+
+/**
+ * Card channels (Feishu, Telegram, Discord) upload managed image references in
+ * place. Rewrite local image paths to managed references through the same Host
+ * importer; an unavailable image keeps only its caption plus a delivery notice.
+ */
+export async function materializeLocalMarkdownImageRefs(
+  params: { text: string; sessionId: string },
+  deps: Pick<LocalMarkdownImageDeps, 'materialize'> = defaultDeps,
+): Promise<string> {
+  const sourceText = await deps.materialize(params.sessionId, params.text);
+  const failed = new Map<string, string>();
+  for (const ref of taskImageReferences(sourceText)) {
+    if (localTaskImagePath(ref.url)) failed.set(ref.url, ref.url);
+  }
+  if (failed.size === 0) return sourceText;
+  const body = rewriteTaskImageReferences(sourceText, failed, 'alt');
+  return `${body.trimEnd()}\n\n有 ${failed.size} 张图片未能作为附件发送。`;
+}

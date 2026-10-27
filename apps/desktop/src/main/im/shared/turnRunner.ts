@@ -161,7 +161,7 @@ import {
   generateImSessionTitleText,
   persistGeneratedSessionTitle,
 } from './fbotTitle';
-import { materializeLocalMarkdownImages } from './localMarkdownImages';
+import { materializeLocalMarkdownImageRefs, materializeLocalMarkdownImages } from './localMarkdownImages';
 import {
   applyStatusTokenRate,
   clearRunningIndicators,
@@ -3215,6 +3215,9 @@ export function createTurnRunner(
         for (const absPath of materialized.absPaths) {
           if (!t.mediaAbsPaths.includes(absPath)) t.mediaAbsPaths.push(absPath);
         }
+      } else if (output.kind === 'rich-card' && !state.makerSession.remoteHostId && projectedBody.includes('![')) {
+        t.buffer = await materializeLocalMarkdownImageRefs({ text: projectedBody, sessionId: state.makerSession.id })
+          .catch(() => projectedBody);
       }
       if (sessionStates.get(state.makerSession.id) !== state) return;
       const base = composeTranspondView(state, t, true);
@@ -3913,15 +3916,17 @@ export function createTurnRunner(
   }
 
   async function materializeTurnLocalImages(state: SessionState, turn: TurnState): Promise<void> {
-    if (
-      output.kind !== 'chunked-text' ||
-      turn.allowedFileRoots.length === 0
-    ) {
-      return;
-    }
+    if (turn.allowedFileRoots.length === 0) return;
     const projectedBody = composeOutboundBody(turn.presenter.wholeText(), true);
     if (!projectedBody.includes('![')) return;
     try {
+      if (output.kind === 'rich-card') {
+        // Card channels upload managed references in place, keeping images beside their text.
+        turn.presenter.replaceBody(
+          await materializeLocalMarkdownImageRefs({ text: projectedBody, sessionId: state.makerSession.id }),
+        );
+        return;
+      }
       const materialized = await materializeLocalMarkdownImages({
         text: projectedBody,
         workingDir: state.workingDir,

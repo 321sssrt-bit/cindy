@@ -161,6 +161,7 @@ import {
   generateImSessionTitleText,
   persistGeneratedSessionTitle,
 } from './fbotTitle';
+import { localTaskImagePath, rewriteTaskImageReferences, taskImageReferences } from '../../cindy-media/taskImageMarkdown';
 import { materializeLocalMarkdownImageRefs, materializeLocalMarkdownImages } from './localMarkdownImages';
 import {
   applyStatusTokenRate,
@@ -2943,7 +2944,16 @@ export function createTurnRunner(
 
   /** Project only the outbound copy; persistence keeps the original component events. */
   function composeOutboundBody(source: string, final: boolean): string {
-    const body = stripInternalWebCitations(richAnswerText(source));
+    let body = stripInternalWebCitations(richAnswerText(source));
+    // Card channels patch the live body; a machine-local image path must not show before finalize imports it.
+    if (!final && output.kind === 'rich-card' && body.includes('![')) {
+      const local = new Map(
+        taskImageReferences(body)
+          .filter((ref) => localTaskImagePath(ref.url))
+          .map((ref) => [ref.url, ref.url] as const),
+      );
+      if (local.size > 0) body = rewriteTaskImageReferences(body, local, 'alt');
+    }
     // A partial component can legitimately project to nothing. Never fall back
     // to its protocol source; wait while streaming and explain an unreadable final.
     return final && !body.trim() && hasRichAnswer(source) ? t('richAnswer.incomplete') : body;

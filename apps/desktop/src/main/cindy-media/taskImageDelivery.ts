@@ -267,7 +267,7 @@ async function materializeTaskImageTextUnlocked(
       return unchanged;
     }
     const result = await scope.materialize(unchanged.text, (source, error) => {
-      log?.warn(`task image import failed (${path.basename(source)}): ${errorMessage(error)}`);
+      log?.warn(`task image import failed (${path.win32.basename(source)}): ${errorMessage(error)}`);
     });
     scope.assertStillValid();
     const [current] = await scope.db

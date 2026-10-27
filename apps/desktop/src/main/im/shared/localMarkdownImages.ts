@@ -16,6 +16,8 @@ import {
   rewriteTaskImageReferences,
 } from '../../cindy-media/taskImageMarkdown';
 
+type TaskImageReferenceLike = ReturnType<typeof taskImageReferences>[number];
+
 const DEFAULT_MAX_IMAGES = 4;
 const DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -144,10 +146,17 @@ export async function materializeLocalMarkdownImageRefs(
 ): Promise<string> {
   const sourceText = await deps.materialize(params.sessionId, params.text);
   const failed = new Map<string, string>();
+  const titled: TaskImageReferenceLike[] = [];
   for (const ref of taskImageReferences(sourceText)) {
     if (localTaskImagePath(ref.url)) failed.set(ref.url, ref.url);
+    // Card uploaders take the whole destination, so a quoted title would be read as part of the URL.
+    else if (ref.title && !ref.identifier && isManagedImageTarget(ref.url)) titled.push(ref);
   }
-  if (failed.size === 0) return sourceText;
-  const body = rewriteTaskImageReferences(sourceText, failed, 'alt');
+  let source = sourceText;
+  for (const ref of titled.reverse()) {
+    source = `${source.slice(0, ref.start)}![${ref.alt.replace(/[\\\[\]]/g, '\\$&')}](${ref.url})${source.slice(ref.end)}`;
+  }
+  if (failed.size === 0) return source;
+  const body = rewriteTaskImageReferences(source, failed, 'alt');
   return `${body.trimEnd()}\n\n有 ${failed.size} 张图片未能作为附件发送。`;
 }

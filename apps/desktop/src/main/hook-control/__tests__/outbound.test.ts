@@ -243,6 +243,17 @@ describe('collectOutboundAttachments', () => {
     expect(r.text).toContain('🖼️ _首页纪念行_');
     expect(r.text).not.toContain('/tmp/preview');
     expect(r.text).toContain('未发送：首页纪念行、stars-dark.png');
+
+    // Windows-style remote paths must not leak their directories on a POSIX host.
+    const win = await collectOutboundAttachments('![](C:\\Users\\alice\\private.png)', [], {
+      resolveImageUrl: () => {
+        throw new Error('unused');
+      },
+      formatIncompleteNotice: (names) => names.join('|'),
+      log,
+    });
+    expect(win.text).toContain('private.png');
+    expect(win.text).not.toContain('alice');
   });
 
   it('refScanText: 引用范围可宽于正文, 正文变换仍只作用于正文', async () => {

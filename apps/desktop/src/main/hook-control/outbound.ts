@@ -192,7 +192,7 @@ export interface OutboundResult {
 
 /** 提示里附件名的展示形态: 单行、限长; 说明为空时退回文件名。 */
 function attachmentDisplayName(label: string, fallbackPath?: string): string {
-  const name = label.replace(/\s+/g, ' ').trim() || (fallbackPath ? path.basename(fallbackPath) : '');
+  const name = label.replace(/\s+/g, ' ').trim() || (fallbackPath ? path.win32.basename(fallbackPath) : '');
   return name.length > 40 ? `${name.slice(0, 39)}…` : name;
 }
 

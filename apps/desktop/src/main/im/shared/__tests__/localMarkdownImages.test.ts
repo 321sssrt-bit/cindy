@@ -145,4 +145,14 @@ describe('materializeLocalMarkdownImageRefs', () => {
     ).toBe('前文\n![预览](cindy-media://blobs/a.png)\n失败\n后文\n\n有 1 张图片未能作为附件发送。');
     expect(materialize).toHaveBeenCalledWith('s', '前文\n![预览](/tmp/a.png)\n![失败](/tmp/gone.png)\n后文');
   });
+
+  it('drops image titles so card uploaders receive a bare managed URL', async () => {
+    const materialize = vi.fn(async () => '![预览](cindy-media://blobs/a.png "预览图")');
+    expect(
+      await materializeLocalMarkdownImageRefs(
+        { text: '![预览](/tmp/a.png "预览图")', sessionId: 's' },
+        { materialize },
+      ),
+    ).toBe('![预览](cindy-media://blobs/a.png)');
+  });
 });

@@ -16371,6 +16371,7 @@
     "timezone": "Time Zone",
     "delete": "Delete Routine",
     "save": "Save Routine",
+    "saved": "Routine saved",
     "deleteConfirm": "Delete this routine and cancel its pending runs?",
     "keep": "Keep Routine",
     "openTask": "Open Session",

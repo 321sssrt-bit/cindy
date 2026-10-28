@@ -96,6 +96,27 @@ describe('Agent Island activity text stream', () => {
     expect(normalizeActivityText('`foo_bar **literal**`')).toBe('foo_bar **literal**');
   });
 
+  // #7566: source-only limits froze a link destination before its closing
+  // delimiter and discarded the visible result. Unit, including tiny deltas.
+  it.each(['[文档](', '![图示](', '[文档](<'])('budgets visible text after a long streamed destination (%s)', opening => {
+    const parse = vi.spyOn(previewText, 'streamingMarkdownPreviewText');
+    const stream = createActivityTextStreamState();
+    const label = opening.startsWith('!') ? '图示' : '文档';
+    try {
+      expect(appendActivityTextStream(stream, opening)).toBe(label);
+      const calls = parse.mock.calls.length;
+      for (const delta of ['https://example.com/', ...'x'.repeat(1_000)]) {
+        expect(appendActivityTextStream(stream, delta)).toBe(label);
+      }
+      expect(parse.mock.calls.length).toBe(calls);
+      expect(appendActivityTextStream(stream, '(nested)')).toBe(label);
+      expect(appendActivityTextStream(stream, (opening.endsWith('<') ? '>)' : ')') + ' 测试已通过'))
+        .toBe(label + ' 测试已通过');
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
   it('hides irrecoverable rich protocol from old remote summaries', () => {
     const collapsed = richAnswer.replace(/\s+/g, ' ');
     expect(normalizeRemoteActivityText(collapsed)).toBe('');
@@ -117,6 +138,11 @@ describe('Agent Island activity text stream', () => {
     expect(normalizeActivityText(example)).toBe(richAnswer.replace(/\s+/g, ' '));
     const code = '```json\n{"status":"ok"}\n```';
     expect(normalizeActivityText(code)).toBe('{"status":"ok"}');
+    // A destination-shaped string inside code is literal, even when it has no `)`.
+    for (const quoted of ['`[文档](https://example.com/unfinished`', '```text\n[文档](https://example.com/unfinished\n```']) {
+      const stream = createActivityTextStreamState();
+      expect(appendActivityTextStream(stream, quoted)).toBe('[文档](https://example.com/unfinished');
+    }
   });
 
   // #7566 review: transport recovery must not strip a valid local code example.
@@ -130,7 +156,7 @@ describe('Agent Island activity text stream', () => {
 
   // Deterministic work assertion plus visible result; no wall-clock timing.
   it.each(['', '{"content":"'])('does not parse an unchanged formatted streaming prefix again (%s)', prefix => {
-    const parse = vi.spyOn(previewText, 'markdownPreviewText');
+    const parse = vi.spyOn(previewText, 'streamingMarkdownPreviewText');
     try {
       const stream = createActivityTextStreamState();
       const visible = appendActivityTextStream(stream, prefix + '**完成** ' + 'x'.repeat(280));
@@ -169,13 +195,15 @@ describe('Agent Island activity text stream', () => {
     expect(appendActivityTextStream(stream, inline)).toBe(normalizeActivityText(inline));
   });
 
-  it('hides a truncated rich operation until the full final text is available', () => {
+  it('hides an incomplete rich operation and projects it once the rest arrives', () => {
     const source = '```cindy-ui\n'
       + JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'answer', kind: 'text',
         props: { style: { padding: 12 }, text: '检查完成。'.repeat(100) } }) + '\n```';
     const stream = createActivityTextStreamState();
-    expect(appendActivityTextStream(stream, source)).toBe('');
-    expect(normalizeActivityText(source)).toBe('检查完成。'.repeat(100).slice(0, AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH));
+    expect(appendActivityTextStream(stream, source.slice(0, 400))).toBe('');
+    const expected = '检查完成。'.repeat(100).slice(0, AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH);
+    expect(appendActivityTextStream(stream, source.slice(400))).toBe(expected);
+    expect(normalizeActivityText(source)).toBe(expected);
   });
 
   it('preserves plain text across whitespace, emoji, and the 280-code-unit boundary', () => {

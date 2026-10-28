@@ -1034,6 +1034,23 @@ describe('Agent Island display state', () => {
     expect(user?.compactDetail).toBe('foo_bar **literal**');
   });
 
+  // #7566 review, unit: a long destination must not consume the visible budget;
+  // cover both terminal entrances without relying on an independent final text.
+  it.each(['done', 'status'] as const)('completes a delta-only long-link reply through %s', terminal => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'delta-link' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    for (const delta of ['[文档](', 'https://example.com/' + 'x'.repeat(500), ') 测试已通过']) {
+      applyAgentIslandEvent(state, meta, textDeltaEvent(delta), 1_100);
+    }
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.messagePreview?.text)
+      .toBe('文档 测试已通过');
+    applyAgentIslandEvent(state, meta, terminal === 'done' ? doneEvent() : statusEvent(false, 'Done'), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 1_400).sessions[0];
+    expect(completed).toMatchObject({ phase: 'completed', compactDetail: '文档 测试已通过' });
+    expect(completed?.activityLines.at(-1)?.text).toBe('文档 测试已通过');
+  });
+
   // Review regression: a removed/emptied rich node must retract this message's
   // streamed line from both the activity log and active/queued preview (unit tier).
   it.each([

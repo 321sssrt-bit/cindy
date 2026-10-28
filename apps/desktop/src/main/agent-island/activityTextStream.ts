@@ -1,7 +1,9 @@
 import { richAnswerText, splitRichAnswer } from '@cindy/maker-shared/rich-answer';
-import { markdownPreviewText } from '../../shared/markdownPreviewText.js';
+import { markdownPreviewText, streamingMarkdownPreviewText } from '../../shared/markdownPreviewText.js';
 
 export const AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH = 280;
+// Match the rich-answer parser's source ceiling, separately from visible text.
+const ACTIVITY_SOURCE_MAX_LENGTH = 2_000_000;
 
 type ActivityTextStreamMode = 'pending' | 'plain' | 'structured' | 'structured-extracted';
 
@@ -11,6 +13,8 @@ export interface ActivityTextStreamState {
   rawPreview: string;
   rawPreviewHasPendingWhitespace: boolean;
   rawPreviewHasPendingNewline: boolean;
+  rawPreviewPendingLink: boolean;
+  rawPreviewPendingRich: boolean;
   jsonClosingStack: Array<'}' | ']'>;
   jsonInString: boolean;
   jsonEscapePending: boolean;
@@ -32,6 +36,8 @@ export function createActivityTextStreamState(): ActivityTextStreamState {
     rawPreview: '',
     rawPreviewHasPendingWhitespace: false,
     rawPreviewHasPendingNewline: false,
+    rawPreviewPendingLink: false,
+    rawPreviewPendingRich: false,
     jsonClosingStack: [],
     jsonInString: false,
     jsonEscapePending: false,
@@ -56,7 +62,9 @@ export function appendActivityTextStream(
 ): string {
   const previousPreview = state.rawPreview;
   appendRawPreview(state, chunk, metrics);
-  const previewChanged = state.rawPreview !== previousPreview;
+  const destinationOnly = state.rawPreviewPendingLink && !/[\s\\()[\]<>`"']/.test(chunk);
+  const uncommittedRich = state.rawPreviewPendingRich && !/[\r\n]/.test(chunk);
+  const previewChanged = state.rawPreview !== previousPreview && !destinationOnly && !uncommittedRich;
 
   if (state.mode === 'plain') {
     return rawPreviewText(state, previewChanged);
@@ -161,7 +169,8 @@ function appendRawPreview(
   chunk: string,
   metrics?: ActivityTextStreamMetrics,
 ): void {
-  if (state.rawPreview.length >= AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH) return;
+  if (state.displayText.length >= AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH && !state.rawPreviewPendingLink) return;
+  if (state.rawPreview.length >= ACTIVITY_SOURCE_MAX_LENGTH) return;
 
   for (let index = 0; index < chunk.length; index += 1) {
     if (metrics) metrics.normalizationCodeUnits += 1;
@@ -176,15 +185,15 @@ function appendRawPreview(
 
     if (state.rawPreviewHasPendingWhitespace) {
       // Keep fence/operation boundaries until rich content has been projected to text.
-      // The retained prefix remains bounded; final events normalize the full answer.
+      // Visible text and protocol source have separate budgets.
       state.rawPreview += state.rawPreviewHasPendingNewline ? '\n' : ' ';
       state.rawPreviewHasPendingWhitespace = false;
       state.rawPreviewHasPendingNewline = false;
-      if (state.rawPreview.length >= AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH) return;
+      if (state.rawPreview.length >= ACTIVITY_SOURCE_MAX_LENGTH) return;
     }
 
     state.rawPreview += codeUnit;
-    if (state.rawPreview.length >= AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH) return;
+    if (state.rawPreview.length >= ACTIVITY_SOURCE_MAX_LENGTH) return;
   }
 }
 
@@ -279,7 +288,14 @@ function rawPreviewText(state: ActivityTextStreamState, changed = true): string 
       source = source.slice(0, start);
     }
   }
-  state.displayText = normalizePlainActivityText(richAnswerText(source));
+  const lastPart = splitRichAnswer(source).at(-1);
+  state.rawPreviewPendingRich = lastPart?.kind === 'rich' && !lastPart.complete;
+  const readable = richAnswerText(source);
+  const projection = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(readable)
+    ? streamingMarkdownPreviewText(readable)
+    : { text: readable, pendingLink: false };
+  state.rawPreviewPendingLink = projection.pendingLink;
+  state.displayText = boundActivityText(projection.text);
   return state.displayText;
 }
 

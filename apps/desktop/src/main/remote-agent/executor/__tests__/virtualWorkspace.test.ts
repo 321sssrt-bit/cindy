@@ -934,20 +934,36 @@ describe('path projection cost with many aliases', () => {
   const VIRTUAL = '/Users/agent/Library/Application Support/Cindy/remote-agent/workspaces/0123456789abcdef/run/fs';
 
   let workspaces = 0;
+  /**
+   * 每条别名各自独立，但只指向几个真实目录；建立时同一路径只 realpath 一次。逐个创建、解析几百个
+   * 目录在 Windows CI 上要几十秒，会让 vitest worker 通信超时，而这部分不是被测的投影。
+   */
   function manyAliasWorkspace(count = 338) {
     const base = path.join(root, 'many-' + (workspaces += 1));
     const project = path.join(base, 'work');
-    fs.mkdirSync(project, { recursive: true });
-    const dirs = Array.from({ length: count }, (_, index) => {
-      const dir = path.join(base, 'dirs', 'd' + index);
-      fs.mkdirSync(dir, { recursive: true });
-      return dir;
-    });
+    const targets = Array.from({ length: 4 }, (_, index) => path.join(base, 'dirs', 'd' + index));
+    for (const dir of [project, ...targets]) fs.mkdirSync(dir, { recursive: true });
     const aliases = [{ from: VIRTUAL + '/workspace', to: project },
-      ...dirs.map((to, index) => ({ from: VIRTUAL + '/additional/runtime-' + index, to }))];
-    const workspace = new ExecutorWorkspace({ workingDir: project, aliases });
-    workspace.setVirtualRoot(VIRTUAL);
-    return { project, dirs, workspace };
+      ...Array.from({ length: count }, (_, index) => ({ from: VIRTUAL + '/additional/runtime-' + index, to: targets[index % targets.length] }))];
+    const realpath = fs.realpathSync;
+    const memoize = <F extends (target: fs.PathLike) => string>(resolve: F) => {
+      const resolved = new Map<string, string>();
+      return ((target: fs.PathLike) => {
+        const key = String(target);
+        if (!resolved.has(key)) resolved.set(key, resolve(target));
+        return resolved.get(key)!;
+      }) as unknown as F;
+    };
+    fs.realpathSync = Object.assign(memoize(realpath as (target: fs.PathLike) => string), {
+      native: memoize(realpath.native as (target: fs.PathLike) => string),
+    }) as unknown as typeof realpath;
+    try {
+      const workspace = new ExecutorWorkspace({ workingDir: project, aliases });
+      workspace.setVirtualRoot(VIRTUAL);
+      return { project, workspace };
+    } finally {
+      fs.realpathSync = realpath;
+    }
   }
 
   /** 统计 run 期间的别名排序次数、RegExp 构造次数与同步 realpath 次数(含 native)。 */

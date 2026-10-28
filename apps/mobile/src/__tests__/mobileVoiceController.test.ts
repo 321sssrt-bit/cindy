@@ -165,6 +165,30 @@ function credential(): StoredMobileVoiceCredential {
 }
 
 describe('mobileVoiceController', () => {
+  // PR #7126 / discussion_r4396776891: a rejected native drain used to skip
+  // controller cancellation. Existing cancel cases only resolved native stop.
+  // Unit: real session.cancel() must abort the gate and close ASR even on error.
+  it('cleans the speaker filter and ASR when cancelling after native drain fails', async () => {
+    const asr = new FinalOnlyAsrProvider();
+    const abort = vi.fn();
+    const gate: AudioGate = {
+      begin: vi.fn(), push: vi.fn(), finish: async () => undefined, abort,
+    };
+    const session = createMobileVoiceControllerSession({
+      credential: credential(), asr, refiner: null, initialDraft: '',
+      audioGate: gate, onDraftChanged: vi.fn(),
+      startAudio: async () => async () => { throw new Error('native drain overflow'); },
+    });
+    await session.start();
+    abort.mockClear();
+    const stopsBeforeCancel = asr.stopCalls;
+
+    await expect(session.cancel()).rejects.toThrow('native drain overflow');
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(asr.stopCalls).toBeGreaterThan(stopsBeforeCancel);
+  });
+
   it('fails capture if pending speaker settings reject instead of uploading unfiltered audio', async () => {
     let reject!: (error: Error) => void;
     const asr = new FinalOnlyAsrProvider();

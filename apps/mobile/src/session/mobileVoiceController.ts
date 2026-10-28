@@ -686,12 +686,17 @@ export function createMobileVoiceControllerSession(
       // opening later) is handled by BufferedAsrProvider when controller.cancel()
       // reaches its stop().
       runPhase = 'cancelled';
-      if (stopAudio) {
-        const stop = stopAudio;
-        stopAudio = null;
-        await stop();
+      try {
+        if (stopAudio) {
+          const stop = stopAudio;
+          stopAudio = null;
+          await stop();
+        }
+      } finally {
+        // Native drain can reject (overflow / missing history). Cancellation
+        // still owns filter disposal and closing the ASR connection.
+        await controller.cancel();
       }
-      await controller.cancel();
     },
     currentDraft() {
       return readCurrentDraft();

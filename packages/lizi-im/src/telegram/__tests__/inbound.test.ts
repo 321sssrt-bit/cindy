@@ -257,7 +257,7 @@ describe('replyContextOf', () => {
   // Media-only blocks used to disappear even though their type/name is visible.
   // Exercise the same unit entry points as text, including nested containers;
   // these markers describe references and do not assert attachment delivery.
-  it('keeps rich media labels and filenames in references and nested history', () => {
+  it('keeps non-text block labels and safe filenames in references and nested history', () => {
     const rich = msg({
       text: undefined,
       rich_message: {
@@ -272,6 +272,18 @@ describe('replyContextOf', () => {
     const reply = msg({ reply_to_message: rich });
     expect(replyContextOf(reply)).toMatchObject({ messageId: '1', text: '[文件: report.pdf]' });
     expect(groupWindowEntryOf(rich).text).toBe('[文件: report.pdf]');
+
+    const map = {
+      type: 'map',
+      location: { latitude: 12.5, longitude: 45.25 },
+      zoom: 8,
+      width: 640,
+      height: 360,
+      map: { file_name: 'hidden-map-name' },
+    };
+    rich.rich_message = { blocks: [map] };
+    expect(replyContextOf(reply)).toMatchObject({ messageId: '1', text: '[地图]' });
+    expect(groupWindowEntryOf(rich).text).toBe('[地图]');
 
     rich.rich_message = {
       blocks: [
@@ -302,13 +314,15 @@ describe('replyContextOf', () => {
             },
             { type: 'voice_note', voice_note: { file_id: 'hidden-id' } },
             { type: 'document', document: { file_id: 'hidden-id' } },
+            map,
+            { type: 'divider' },
             { type: 'unknown', document: { file_name: 'hidden-name' } },
           ],
         },
       ],
     };
     const expected =
-      '附件\n[图片]\n[音频: song.mp3]\n[视频: clip.mp4]\n[动画: loop.gif]\n[语音消息]\n[文件]';
+      '附件\n[图片]\n[音频: song.mp3]\n[视频: clip.mp4]\n[动画: loop.gif]\n[语音消息]\n[文件]\n[地图]\n[分隔线]';
     expect(replyContextOf(reply)?.text).toBe(expected);
     expect(groupWindowEntryOf(rich).text).toBe(expected);
     rich.has_protected_content = true;

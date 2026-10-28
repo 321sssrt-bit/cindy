@@ -1,6 +1,6 @@
 /** Bot API incoming RichMessage uses blocks, unlike outgoing markdown/html.
  * Keep visible text aligned with telegram-hook-server/telegram/messageText.ts;
- * media-only labels are a personal-bot extension, not attachment delivery.
+ * non-text labels are a personal-bot extension, not attachment delivery.
  * Only visible content is read; media IDs, callback data and metadata stay out.
  */
 export interface TelegramTextContent {
@@ -16,13 +16,17 @@ const MAX_COLUMNS = 20;
 // of their own; budget work independently of the visible output length.
 const MAX_DEPTH = 64;
 const MAX_NODES = 32_768 * MAX_DEPTH;
-const RICH_MEDIA_LABELS = new Map([
-  ['document', '文件'],
-  ['photo', '图片'],
-  ['audio', '音频'],
-  ['video', '视频'],
-  ['animation', '动画'],
-  ['voice_note', '语音消息'],
+// Visible non-text blocks have one fallback policy. Only file-bearing types
+// may contribute file_name; maps never expose location/zoom or other metadata.
+const NON_TEXT_BLOCKS = new Map<string, { label: string; filename?: boolean }>([
+  ['document', { label: '文件', filename: true }],
+  ['photo', { label: '图片' }],
+  ['audio', { label: '音频', filename: true }],
+  ['video', { label: '视频', filename: true }],
+  ['animation', { label: '动画', filename: true }],
+  ['voice_note', { label: '语音消息' }],
+  ['map', { label: '地图' }],
+  ['divider', { label: '分隔线' }],
 ]);
 
 export function telegramMessageText(message: TelegramTextContent): string {
@@ -111,15 +115,15 @@ export function telegramMessageText(message: TelegramTextContent): string {
     }
     const text = parts.join('\n');
     if (text.trim()) return text;
-    const label = typeof item.type === 'string' ? RICH_MEDIA_LABELS.get(item.type) : undefined;
-    if (label) {
+    const fallback = typeof item.type === 'string' ? NON_TEXT_BLOCKS.get(item.type) : undefined;
+    if (fallback) {
       // Only the visible filename is allowed out of the media object. Never
       // recurse into it: file IDs, thumbnails, MIME and other metadata stay out.
-      const media = item[item.type as string];
+      const media = fallback.filename ? item[item.type as string] : undefined;
       const name =
         media && typeof media === 'object' && 'file_name' in media ? media.file_name : undefined;
       return visit(
-        `[${label}${typeof name === 'string' && name.trim() ? `: ${name}` : ''}]`,
+        `[${fallback.label}${typeof name === 'string' && name.trim() ? `: ${name}` : ''}]`,
         depth + 1,
       );
     }

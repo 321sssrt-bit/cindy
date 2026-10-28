@@ -6910,18 +6910,6 @@
         "codeDetail": "在獨立沙箱中執行，無法訪問你的檔案與網路。",
         "resident": "常駐執行(生效後即啟動，不呼叫也保持後臺處理程序)",
         "residentDetail": "空閒時也佔用少量記憶體；停用或解除安裝後進程立即關閉。",
-        "harnessRead": "讀取 AI 執行資訊：{{name}}",
-        "harnessReadDetail": "依宣告範圍讀取能力目錄、用量或上下文統計。不包含訊息、工具參數、結果或固定指令正文。",
-        "harnessMessages": "讀取已關聯任務的訊息",
-        "harnessMessagesDetail": "可讀取已獲准任務的使用者訊息、AI 回覆及已儲存歷史，其中可能包含敏感內容。不包含固定指令或隱藏思考。",
-        "harnessToolContent": "讀取工具參數和結果",
-        "harnessToolContentDetail": "可讀取已獲准任務的工具參數和結果，其中可能包含檔案內容、命令或敏感資訊。",
-        "harnessEvents": "旁聽 AI 執行動態：{{name}}",
-        "harnessEventsDetail": "依宣告範圍接收執行事件。訊息及工具正文須另行批准；事件可能有缺漏，不能作為完整歷史。",
-        "harnessHooks": "可阻止 AI 操作：{{name}}",
-        "harnessHooksDetail": "可在支援的執行前或審批邊界阻止操作，不能代你批准或改寫參數。最多等待 1.5 秒；逾時後繼續原有審批。",
-        "harnessActions": "控制 AI 執行：{{name}}",
-        "harnessActionsDetail": "只能呼叫已接通並個別批准的執行操作。",
         "subscribeTopics": "旁聽你的任務動態(每輪往來與任務事件，不含訊息內容)",
         "subscribeActivity": "旁聽 AI 何時在思考、何時在等你",
         "subscribeActivityDetail": "只知道時機：思考何時開始與結束，以及 AI 何時在等你批准或等你回答。看不到思考內容、待批准的操作、涉及的命令與檔案、計劃正文、問題與你的答案，也無法代你批准。",
@@ -9403,6 +9391,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "所屬夥伴：{{names}}",
+      "createdMark": "由 {{names}} 建立",
       "followingMark": "{{names}}在跟進這個任務"
     },
     "glance": {
@@ -13219,7 +13209,7 @@
       "selectFolderFailed": "選擇目錄失敗，請重試",
       "projectsToggleExpand": "展開所有專案任務",
       "projectsToggleCollapse": "收起所有專案任務",
-      "filterAria": "側邊欄顯示設定（狀態：{{status}}，Harness：{{vendor}}，最近活躍：{{lastActivity}}，分組：{{groupBy}}，排序：{{sortBy}}，專案：{{projects}}）",
+      "filterAria": "側邊欄顯示設定（狀態：{{status}}，Harness：{{vendor}}，最近活躍：{{lastActivity}}，分組：{{groupBy}}，排序：{{sortBy}}，專案：{{projects}}，夥伴：{{creators}}）",
       "organizeSidebar": "側邊欄顯示設定",
       "filterAllText": "全部",
       "filterSelectedProjects": "已選 {{count}} 個",
@@ -13284,6 +13274,9 @@
       "filterProjectOrderTip": {
         "custom": "用滑鼠拖動專案列調整順序，組內任務仍按上面的排序"
       },
+      "filterCreatorsHeading": "夥伴",
+      "filterCreatorsAny": "不限來源",
+      "filterSelectedCreators": "已選 {{count}} 位",
       "filterProjectsHeading": "專案",
       "filterAllProjects": "所有專案",
       "filterHeading": "篩選",
@@ -13398,6 +13391,14 @@
         "description": "將恢復此對話群組內 {{count}} 個已歸檔任務。恢復後將從「已歸檔」列表移除，並回到「活躍」列表。",
         "empty": "此對話群組內沒有可恢復的任務"
       },
+      "automationArchiveAll": {
+        "description": "將歸檔此自動化產生的 {{count}} 個任務。自動化仍會按排程執行。",
+        "descriptionWithSkip": "將歸檔此自動化產生的 {{count}} 個任務，略過{{skip}}的任務。自動化仍會按排程執行。",
+        "allPinnedOrRunning": "此自動化的任務全部已置頂或正在執行，無可歸檔項目",
+        "allPinned": "此自動化的任務全部已置頂，不會歸檔",
+        "allRunning": "此自動化的任務全部正在執行，暫無可歸檔項目",
+        "empty": "此自動化沒有可歸檔的任務"
+      },
       "archiveAll": {
         "title": "歸檔全部任務",
         "confirm": "歸檔全部",
@@ -13407,6 +13408,7 @@
         "skipRunning": "{{count}} 個執行中",
         "skipPinned": "{{count}} 個已置頂",
         "skipSeparator": "、",
+        "skipped": "已略過{{skip}}的任務",
         "archived_one": "已歸檔 {{count}} 個任務",
         "archived_other": "已歸檔 {{count}} 個任務",
         "partialFailure": "已歸檔 {{ok}} 個，{{fail}} 個失敗，請重試",

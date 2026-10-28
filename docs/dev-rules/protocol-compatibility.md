@@ -3670,3 +3670,84 @@ worker 的任务，按最近更新取前 200 条；伙伴行 `revision` 追加�
 旧控制端按未知 rel 忽略，`conversation` 仍是第一条链接，打开聊天不变；新控制端连接旧 Host
 时没有该链接，任务行不显示标记。Mobile 读取的链接上限由 64 放宽到 256 以容纳这组链接。
 不增加 IPC channel、请求参数、数据库字段、push 类型或 Mobile 原生配置。
+
+## 桌面伙伴来源筛选
+
+桌面在读取 `teammates` 名册后，用每个伙伴的 `conversation` 任务 ID 调用既有的
+`maker:bot-delegations:list`。只将 `requestingBotId` 匹配、`childSessionId` 非空的记录
+作为创建来源；不把接手关系当创建，也不要求远端支持新增的 `created` link。
+包含活跃和归档任务，实际展示仍由任务列表状态筛选决定；旧版远端也能直接使用。
+已有 `following` 链接继续提供跟进标记，任务创建关系同时用于远程创建者头像。
+
+按电脑 ID + 伙伴 ID 区分筛选，按电脑 ID + 任务 ID 匹配任务；远程头像使用原电脑媒体地址。
+同一 Host 串行读取伙伴任务记录，关系缓存保留 ID、不保存任务卡正文。委派变更推送与
+名册变更沿原刷新合并窗口更新；读取失败保留已有归属，成功空结果清空。
+切账号、撤权、断线后的旧响应仍受原请求代次隔离。只读关系请求失败不重启 relay、
+不影响其它设备、不重放任何任务操作。不增加 IPC、权限、服务端字段或数据库迁移。
+
+Task creator filtering resolves built-in Cindy identity through the existing local `listCindyCopies` read,
+which now returns even a single remaining cloud Cindy. The merge settings entry still requires two copies.
+This allows old remote hosts without template metadata to participate in the unified filter without
+changing their wire protocol or triggering any companion merge. Identity is cached with the owner-scoped roster.
+
+### 伙伴独立任务的列表归属（2026-10-27）
+
+`sessions:list/get/get-many` 可选投影 `companion: { id, role, channel? }`，从现有
+`bot_session_links` 读取，不新增数据库列或改运行身份。普通列表仅纳入 `routine/channel`，
+仍过滤隐藏任务与删除中的伙伴；`canonical/thread/group` 保留伙伴入口。
+旧远端的普通列表未包含这些任务时，桌面经原有同账号 `history:query/list_sessions`
+分页读取 `source=bot` 的归属，再用原有批量／单条读取补齐 Session。无权限或接口失败不能
+清空普通任务；撤权沿原处理路径上报。设备／状态代次失效时丢弃迟到回复，保留其它设备的
+镜像，不重启链路或重新授权。离线镜像仅保存归属的 id/role/channel，恢复时仍可筛选和显示头像。
+
+
+Mobile follows the same read-only compatibility path for teammate task attribution and independent
+routine/channel Sessions. `taskTeammate` is a client-local display projection (ID/name/avatar), not a
+new wire field or permission. Its slim home cache keeps it with `companion`; optional read failure
+retains that host's previous attribution and successful absence clears it. Account/query invalidation
+and list mutation epochs fence all late results. Home and device list refreshes share this reader.
+Cloud Cindy identities come from the existing owner-scoped `/preferences` profile snapshots, using
+the same exact preset identity helper as Desktop. Only their IDs enter the cloud-home display cache;
+profile bodies are not persisted. This adds no endpoint, database migration or native configuration.
+
+## macOS 原生触控板输入
+
+本机聚焦的浏览器／插件页可在顶层 HTML 声明
+`<meta name="cindy-native-trackpad" content="touch">`，并用 `data-cindy-trackpad`
+标记接收触摸的平面元素。宿主将 AppKit 的两指位置映射为该元素的浏览器触摸事件；
+鼠标位置是落指中心，两轴按触控板物理比例等比映射，按原始抬指／取消结束。
+映射使用画面长边作为统一距离基准，避免竖屏窄边压缩平移；落指间距与后续位移
+使用同一比例，未裁切时保持缩放比例、旋转角度和静止手指的位置，不单独加速双指中心。
+触点在元素边缘停止，越界位移不累计；反向移动立即响应，不要求先退回越界距离。
+不新增 preload、renderer IPC 或远程请求；插件沙箱仍为零桥，归属与聚焦检查沿用宿主。
+后台窗口、第三指、页面导航、失焦会取消触摸；原生模块不可用或已有调试会话时保留原输入。
+旧宿主忽略 meta／属性，继续 wheel 兼容路径；手机、Windows、Linux 不接收本机 AppKit 数据。
+AppKit 鼠标位置固定使用窗口内容坐标；嵌入侧栏须先扣除宿主内对应 webview 的位置，
+并分别处理宿主与 guest 缩放，再在 guest 内命中检测。独立窗口没有这个偏移，
+不能单独替代开发版实际侧栏的输入验收。
+
+`data-cindy-trackpad="contacts"` 可选整帧输入：元素收到 `cindy-trackpad` DOM
+事件，`detail={phase,touches:[{id,x,y}]}`；坐标相对该元素所属 frame 的 viewport，
+phase 为 begin/change/end/cancel，touches 是仍按下的全部触点。整帧原子投递，避免
+Chromium 把双指拆成单指前奏及等待触摸 ACK。空属性仍投递标准 Touch/Pointer 事件；
+旧宿主按旧路径工作，插件仍保留标准触摸处理。只有宿主向页面投递数据，没有反向特权桥。
+
+contacts 在每次 begin 投递前核对原元素仍连接、仍声明 contacts，且仍是落指锚点
+命中的元素（在元素所属 Document／ShadowRoot 内检测）。目标被替换、移除或遮挡时，
+向旧元素发送 cancel（断开的旧元素也可接收清理），停止旧采集并重新命中；下一原生采样
+可在新目标开始，不依赖再次移动鼠标。旧目标迟到的失败回复不能撤销后来的目标。
+取消、释放 CDP object 完成后才 detach，沿用现有采集代次，无新队列或持久状态。
+
+标准 Touch 路径完整结束与取消使用空 `touchPoints`。当前打包 Chromium 默认 WebTouch
+路径的部分抬指使用 released IDs；仅发送剩余触点的 touchMove 不会释放缺失手指。
+这与 contacts DOM 事件始终表示「全部仍按下触点」的约定不同；以真实 Electron 的
+部分抬指、完整结束和取消回归核对，不能只靠 CDP mock 推断浏览器行为。
+
+## 主人请求跨任务连续性（2026-10-28）
+
+沿用可选 `requestSource.ownerVerified` 和持久 `autoReviewUserText` 回执，不新增字段或 migration。
+伙伴私信开始携带当前已接受的主人请求；原话与正文包装仍按旧接收端的逐字验证。无原话时不传空回执。
+当前接受的核实回执可继续转交，`agent-request` 与 `delegated-continuation` 的审核投影保持同一原话。
+旧接收端仍可能丢弃核实状态或把接收回复标成私密；完整修复需要执行交接的宿主升级。
+账号、群与 IM 发言人校验、权限档、Plan、输入代次和撤销校验保持不变。
+不改变连接恢复或重放策略；单次派发失败只影响该请求，不重启连接或扩大设备访问。

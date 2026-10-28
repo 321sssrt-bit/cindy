@@ -719,6 +719,36 @@ Decision: [#6796, maintainer confirmation](https://github.com/makecindy/cindy/is
 
 The expanded teammate section previews five chats (local teammates, remote teammates, groups and the merged Cindy device row share this limit). Keep the current chat visible within those five rows. Use the task list’s “Show all N” footer style, with “Show less” after expansion. Collapsing the section to its existing avatar strip resets the preview; the strip’s +N button opens the full list. This limit applies to the Desktop sidebar; the Mobile task home section below previews three.
 
+### Desktop and Mobile task creator filters (2026-10-27)
+
+The sidebar's existing Filter submenu adds Teammates. Any source (不限来源) is the default and includes personal tasks and all teammates' tasks;
+choosing one teammate selects only its created tasks, then further choices add or remove teammates.
+Removing the last choice restores Any source. Reset Filters also clears this dimension, preserving task status,
+grouping and sorting. Pinned entries retain their existing exemption from content filters.
+Use the existing menu rows, avatar component and check marks; keep the menu open for multiple choices.
+Show a remote computer name only for device-scoped identities, to distinguish same-name teammates.
+Cindy and cloud companions use a single name row without a computer subtitle: their filters span computers. Persist selections
+per viewer account. Built-in Cindy is one choice across computers; choosing it includes every copy’s
+created tasks, including archived history. Identify it from preset/cloud identity, never its name; custom
+namesakes remain separate. Existing per-computer Cindy selections migrate to the unified choice.
+Cloud companions use their account identity across old and current computers; retired copies stay out
+of the choices, as in the teammate roster. Unlinked teammates remain keyed by computer and teammate ID.
+Creation attribution is distinct from following. Existing teammate routine and IM channel tasks also
+appear in the desktop task list and share this filter. Their exact linked owner supplies the avatar;
+the tooltip says “Belongs to” to distinguish ownership from delegation or following. Active/archived
+filters still apply; main chats, private threads and internal group lanes retain their dedicated entries.
+Task rows retain their creator avatar after archiving, on both local and remote computers. Prefer the
+creator's avatar when others follow the same task; the tooltip distinguishes creation from following.
+Two-line teammate rows grow with their content; align the avatar and check mark with the name line,
+keeping the computer name in the same text column and preserving vertical padding.
+Verify the menu in all five UI locales and both themes; long names retain the existing menu width.
+Mobile uses the same multi-selection semantics in the existing iOS native / Android display menus.
+The home (including the task drawer) and device task lists retain creation/ownership avatars after
+archiving and cold start. Read the existing teammate delegation and history APIs on older hosts;
+keep main chats and internal lanes out of these lists. Cache only portable ownership/avatar metadata
+in the account-scoped home snapshot. Late cloud/preset discovery canonicalizes existing selections
+without clearing the list or splitting Cindy by computer.
+
 ### Mobile task home teammate section (owner-approved “A+B”, 2026-10-24)
 
 The task home opens with a “Teammates” section above shared tasks, Pinned and projects. Its header uses the project/Pinned header geometry (56pt, 22 chevron + 20 icon + 16/28 title + 13 count) and a trailing 20pt “+” whose 44pt target ends on the 16pt right edge. Expanded, it shows 78pt teammate rows (teammates and groups mixed by activity), previewing three; the “Show all N” / “Show less” row is 48pt, 15/20 secondary text aligned to the rows’ text column (72pt). Collapsed, it becomes a horizontally scrolling strip: 56pt avatars in 64pt cells, 8pt gap, 16pt side insets, 12/18 names (primary + medium when unread), the row’s 10pt unread dot in a 2pt surface ring, the presence ring while replying, and a dashed 56pt create cell last. Phones scroll instead of the Desktop +N. Both states swap with the list’s 225ms disclosure; reduced motion switches instantly. Every language must fit the header and names without widening; long names truncate to one line within the cell.

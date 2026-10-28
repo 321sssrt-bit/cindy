@@ -6910,18 +6910,6 @@
         "codeDetail": "在独立沙箱中运行，无法访问你的文件与网络。",
         "resident": "常驻运行(生效后即启动，不调用也保持后台进程)",
         "residentDetail": "空闲时也占用少量内存；停用或卸载后进程立即关闭。",
-        "harnessRead": "读取 AI 运行信息：{{name}}",
-        "harnessReadDetail": "可读取能力目录、用量或上下文占用（按声明范围）。不包含消息、工具参数、结果或固定指令正文。",
-        "harnessMessages": "读取已关联任务的消息",
-        "harnessMessagesDetail": "可读取已获准任务的用户消息、AI 回复及已保存历史，其中可能包含敏感内容。不包含固定指令或隐藏思考。",
-        "harnessToolContent": "读取工具参数和结果",
-        "harnessToolContentDetail": "可读取已获准任务的工具参数和结果，其中可能包含文件内容、命令或敏感信息。",
-        "harnessEvents": "旁听 AI 运行动态：{{name}}",
-        "harnessEventsDetail": "按声明范围接收运行事件。消息及工具正文需另行批准；事件可能有缺口，不能作为完整历史。",
-        "harnessHooks": "可阻止 AI 操作：{{name}}",
-        "harnessHooksDetail": "可在支持的执行前或审批边界阻止操作，不能代你批准或改写参数。最多等待 1.5 秒；超时后继续原有审批。",
-        "harnessActions": "控制 AI 运行：{{name}}",
-        "harnessActionsDetail": "只能调用已接通并单独批准的运行操作。",
         "subscribeTopics": "旁听你的任务动态(每轮往来与任务事件，不含消息内容)",
         "subscribeActivity": "旁听 AI 何时在思考、何时在等你",
         "subscribeActivityDetail": "只知道时机：思考何时开始与结束，以及 AI 何时在等你批准或等你回答。看不到思考内容、待批准的操作、涉及的命令与文件、计划正文、问题与你的答案，也无法代你批准。",
@@ -9403,6 +9391,8 @@
   },
   "bots": {
     "workbench": {
+      "ownedMark": "归属 {{names}}",
+      "createdMark": "由 {{names}} 创建",
       "followingMark": "{{names}}在跟进这个任务"
     },
     "glance": {
@@ -13219,7 +13209,7 @@
       "selectFolderFailed": "选择目录失败，请重试",
       "projectsToggleExpand": "展开所有项目任务",
       "projectsToggleCollapse": "收起所有项目任务",
-      "filterAria": "侧边栏显示设置（状态：{{status}}，Harness：{{vendor}}，最近活跃：{{lastActivity}}，分组：{{groupBy}}，排序：{{sortBy}}，项目：{{projects}}）",
+      "filterAria": "侧边栏显示设置（状态：{{status}}，Harness：{{vendor}}，最近活跃：{{lastActivity}}，分组：{{groupBy}}，排序：{{sortBy}}，项目：{{projects}}，伙伴：{{creators}}）",
       "organizeSidebar": "侧边栏显示设置",
       "filterAllText": "全部",
       "filterSelectedProjects": "已选 {{count}} 个",
@@ -13284,6 +13274,9 @@
       "filterProjectOrderTip": {
         "custom": "用鼠标拖动项目行调整顺序，组内任务仍按上面的排序"
       },
+      "filterCreatorsHeading": "伙伴",
+      "filterCreatorsAny": "不限来源",
+      "filterSelectedCreators": "已选 {{count}} 位",
       "filterProjectsHeading": "项目",
       "filterAllProjects": "所有项目",
       "filterHeading": "筛选",
@@ -13398,6 +13391,14 @@
         "description": "将恢复此对话组内 {{count}} 个已归档任务。恢复后将从“已归档”列表移除，并回到“活跃”列表。",
         "empty": "此对话组内没有可恢复的任务"
       },
+      "automationArchiveAll": {
+        "description": "将归档此自动化生成的 {{count}} 个任务。自动化仍会按计划运行。",
+        "descriptionWithSkip": "将归档此自动化生成的 {{count}} 个任务，跳过{{skip}}的任务。自动化仍会按计划运行。",
+        "allPinnedOrRunning": "此自动化的任务全部已置顶或在运行中，无可归档项",
+        "allPinned": "此自动化的任务全部已置顶，不会归档",
+        "allRunning": "此自动化的任务全部在运行中，暂无可归档项",
+        "empty": "此自动化没有可归档的任务"
+      },
       "archiveAll": {
         "title": "归档全部任务",
         "confirm": "归档全部",
@@ -13407,6 +13408,7 @@
         "skipRunning": "{{count}} 个运行中",
         "skipPinned": "{{count}} 个已置顶",
         "skipSeparator": "、",
+        "skipped": "已跳过{{skip}}的任务",
         "archived_one": "已归档 {{count}} 个任务",
         "archived_other": "已归档 {{count}} 个任务",
         "partialFailure": "已归档 {{ok}} 个，{{fail}} 个失败，请重试",

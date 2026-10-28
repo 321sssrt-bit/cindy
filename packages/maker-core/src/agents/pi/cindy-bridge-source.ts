@@ -2648,6 +2648,7 @@ class McpHttpClient {
   private nextId = 1;
   private sessionId: string | null = null;
   private readonly requestUrl: string;
+  private readonly directLoopback: boolean;
   private readonly requestTimeoutMs: number;
   private startupDeadlineAt: number | null;
 
@@ -2668,6 +2669,7 @@ class McpHttpClient {
       throw new McpBridgeError('URL outside security boundary');
     }
     this.requestUrl = parsed.href;
+    this.directLoopback = isLoopbackMcpHostname(parsed.hostname);
     const configuredTimeout = server.remote?.requestTimeoutMs;
     this.requestTimeoutMs = Number.isInteger(configuredTimeout)
       && configuredTimeout! > 0
@@ -2736,6 +2738,9 @@ class McpHttpClient {
         body: JSON.stringify(body),
         redirect: 'error',
         signal: controller.signal,
+        // Bun can proxy IPv6 loopback despite bare ::1 in NO_PROXY. Never send
+        // local MCP authentication headers to that proxy; remote HTTPS keeps it.
+        proxy: this.directLoopback ? false : undefined,
         // Bun's idle timer must not preempt the explicit request deadline while
         // a local MCP tool is waiting for a user's card interaction.
         timeout: false,

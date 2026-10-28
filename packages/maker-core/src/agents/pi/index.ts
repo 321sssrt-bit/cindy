@@ -543,7 +543,8 @@ function mergeLoopbackNoProxy(env: NodeJS.ProcessEnv): void {
     .flatMap((s) => s.split(','))
     .map((s) => s.trim())
     .filter(Boolean);
-  // NO_PROXY 使用裸 IPv6 地址；URL 形式的 [::1] 会使 Python httpx 初始化失败（#7632）。
+  // NO_PROXY 使用裸 IPv6 地址，避免 [::1] 使 Python httpx 初始化失败（#7632）。
+  // Bun 对裸 ::1 的匹配不一致；MCP bridge 对已校验的回环 URL 另外显式禁用代理。
   env.NO_PROXY = Array.from(new Set([...existing, '127.0.0.1', 'localhost', '::1'])).join(',');
   delete env.no_proxy;
 }

@@ -55,6 +55,16 @@ const ID = /^[a-zA-Z0-9_-]{1,80}$/;
 const MAX_SOURCE = 2_000_000;
 const MAX_NODES = 2048;
 const MAX_DEPTH = 32;
+/** Kinds whose children are separate `create` operations. */
+const CONTAINER_KINDS = [
+  "stack",
+  "row",
+  "grid",
+  "group",
+  "form",
+  "details",
+  "tabs",
+];
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const value = (v: unknown): v is RichValue =>
@@ -205,18 +215,7 @@ export class RichAnswerStream {
             ? null
             : this.nodes.get(String(op.parent));
         if (op.parent && op.parent !== "root" && !parent) throw Error("parent");
-        if (
-          parent &&
-          ![
-            "stack",
-            "row",
-            "grid",
-            "group",
-            "form",
-            "details",
-            "tabs",
-          ].includes(parent.kind)
-        )
+        if (parent && !CONTAINER_KINDS.includes(parent.kind))
           throw Error("leaf");
         const node: RichNode = {
           id: op.id,
@@ -237,6 +236,11 @@ export class RichAnswerStream {
         } else {
           this.roots = [...this.roots];
           this.roots.splice(index, 0, node.id);
+        }
+        const inline = node.props.children;
+        if (Array.isArray(inline) && CONTAINER_KINDS.includes(node.kind)) {
+          delete node.props.children;
+          this.attachInlineChildren(node.id, inline, this.depth(node.id) + 1);
         }
       } else if (op.op === "append") {
         if (
@@ -325,8 +329,77 @@ export class RichAnswerStream {
       this.issues++;
     }
   }
+  /** #7627: children written inline in `props` become the child nodes they were meant to be. */
+  private attachInlineChildren(
+    parentId: string,
+    drafts: unknown[],
+    childDepth: number,
+  ) {
+    const parent = this.nodes.get(parentId);
+    if (!parent) return;
+    const children = [...parent.children];
+    drafts.forEach((draft, offset) => {
+      // Inline children are already part of the document the reader sees, so a
+      // drop here is missing content: report it like a rejected operation.
+      const dropped = () => {
+        this.issues++;
+      };
+      if (
+        !record(draft) ||
+        !RICH_ANSWER_KINDS.includes(draft.kind as RichAnswerKind) ||
+        childDepth > MAX_DEPTH ||
+        this.nodes.size >= MAX_NODES
+      ) {
+        dropped();
+        return;
+      }
+      // One unreadable draft must not take its siblings down with it.
+      let props: Record<string, unknown>;
+      try {
+        props = this.props(
+          draft.props ?? (typeof draft.text === "string" ? { text: draft.text } : {}),
+        );
+      } catch {
+        dropped();
+        return;
+      }
+      const id = this.inlineChildId(parentId, offset + 1);
+      this.nodes.set(id, {
+        id,
+        kind: draft.kind as RichAnswerKind,
+        props,
+        children: [],
+      });
+      children.push(id);
+      // `children` may sit on the draft itself (`{kind:"stack",children:[...]}`) or
+      // inside its props; both mean the same thing and both keep nesting bounded.
+      const nested = Array.isArray(draft.children) ? draft.children : props.children;
+      if (Array.isArray(nested) && CONTAINER_KINDS.includes(draft.kind as RichAnswerKind)) {
+        delete props.children;
+        this.attachInlineChildren(id, nested, childDepth + 1);
+      }
+    });
+    this.nodes.set(parentId, { ...parent, children });
+  }
+  private inlineChildId(parentId: string, ordinal: number) {
+    // The id grammar caps ids at 80 characters, so the suffix gets the room first.
+    for (let attempt = 1; ; attempt++) {
+      const suffix = attempt === 1 ? `-${ordinal}` : `-${ordinal}-${attempt}`;
+      const id = `${parentId.slice(0, 80 - suffix.length)}${suffix}`;
+      if (!this.nodes.has(id)) return id;
+    }
+  }
   private props(v: unknown): Record<string, unknown> {
     if (v === undefined) return {};
+    // Models write the text straight into props (`"props": "hello"`); the protocol
+    // default keeps that block readable instead of dropping the whole node (#7627).
+    if (typeof v === "string") {
+      // The limit is on the node that gets stored and replayed, which is the
+      // object below: escaping can make it longer than the incoming string.
+      const text = { text: v };
+      if (JSON.stringify(text).length > 65_536) throw Error("props");
+      return text;
+    }
     if (!record(v) || JSON.stringify(v).length > 65_536) throw Error("props");
     return Object.fromEntries(
       Object.entries(v).filter(
@@ -966,3 +1039,4 @@ export function richMediaSource(node: RichNode): string | null {
     ? allowed[1].toLowerCase() + src.slice(allowed[1].length)
     : src;
 }
+

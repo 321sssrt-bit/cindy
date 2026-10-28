@@ -15891,7 +15891,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot create Workers');
     }
     const config = getPluginTaskDefaults(pluginId);
-    if (!isPluginTaskAuthorized(pluginId) || task.planModeEnabled || task.permissionMode !== 'auto' || (config && config.permissionMode !== 'auto')) {
+    if (!isPluginTaskAuthorized(pluginId) || task.planModeEnabled || task.permissionMode !== 'auto' || (config && !isPluginTaskPermissionAllowed('auto', config.permissionMode))) {
       throw new PluginTaskError('PERMISSION_DENIED', 'Authorize Auto for the plugin coordinator before creating Workers');
     }
   };
@@ -18068,7 +18068,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const approvalRevision = pluginTaskAuthorizationRevision(receipt.pluginId);
     return {
       pluginId: receipt.pluginId,
-      authorized: !!unchanged && approvalRevision !== null && isPluginTaskAuthorized(receipt.pluginId) && (!config || config.permissionMode === 'auto'),
+      authorized: !!unchanged && approvalRevision !== null && isPluginTaskAuthorized(receipt.pluginId) && (!config || isPluginTaskPermissionAllowed('auto', config.permissionMode)),
       revision: [epoch.userId, epoch.clientEpoch, approvalRevision, config?.permissionMode, link],
       plan: data.teamPlan, settledLabels: data.settledLabels,
       registeredRoute: data.route,

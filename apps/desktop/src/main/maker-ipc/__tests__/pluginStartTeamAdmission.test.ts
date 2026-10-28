@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import ts from 'typescript';
-import { assertPluginTaskResult, PluginTaskError } from '../pluginTaskService.js';
+import { assertPluginTaskResult, isPluginTaskPermissionAllowed, PluginTaskError } from '../pluginTaskService.js';
 import { createOrcaLifecycleService, type OrcaLifecycleDeps } from '../orcaLifecycleService.js';
 import { startOrcaTeamWithPermissionGate } from '../orcaStartTeamPermissionGate.js';
 import { hasAcceptedUserTaskInput } from '../pluginTaskInput.js';
@@ -14,7 +14,7 @@ const branch = source.slice(source.indexOf("      case 'startTeam': {"), source.
 const authorization = source.slice(source.indexOf('  const assertPluginWorkerAutoAuthorized ='), source.indexOf('  // Uninstall keeps the historical receipt'));
 const js = ts.transpileModule(`${authorization}\nreturn async function(pluginId, request) { switch(request.kind) { ${branch} } }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
-function fixture(initial = 'active', afterConfirmation = initial, useDefaults = true) {
+function fixture(initial = 'active', afterConfirmation = initial, useDefaults = true, configuredPermission = 'auto') {
   const epoch = {};
   const task = { taskId: 'task', status: initial, revision: 1, permissionMode: 'auto' };
   const service = { get: vi.fn(async () => ({ ...task })) };
@@ -25,7 +25,8 @@ function fixture(initial = 'active', afterConfirmation = initial, useDefaults = 
     return create();
   });
   const deps = { service, getCurrentDbClientSnapshot: () => epoch, PluginTaskError, assertPluginTaskResult, startOrcaTeamForCaller: start,
-    isPluginTaskAuthorized: () => true, getPluginTaskDefaults: () => useDefaults ? ({ permissionMode: 'auto' }) : undefined };
+    isPluginTaskAuthorized: () => true, isPluginTaskPermissionAllowed,
+    getPluginTaskDefaults: () => useDefaults ? ({ permissionMode: configuredPermission }) : undefined };
   const run = new Function(...Object.keys(deps), js)(...Object.values(deps));
   return { run: () => run('plugin', { kind: 'startTeam', taskId: 'task' }), start, create };
 }
@@ -46,8 +47,10 @@ describe('plugin team active-task admission', () => {
     await expect(f.run()).resolves.toEqual({ ok: true, teamId: 'team' });
     expect(f.create).toHaveBeenCalledOnce();
   });
-  it('starts a still-active task', async () => {
-    const f = fixture();
+  // Guard regression #7615: the real startTeam handler must admit an Auto task
+  // under either equal Auto or higher Full access defaults; hidden/equal coverage missed this input.
+  it.each(['auto', 'bypassPermissions'])('starts an Auto task within %s defaults', async permissionMode => {
+    const f = fixture('active', 'active', true, permissionMode);
     await expect(f.run()).resolves.toEqual({ ok: true, teamId: 'team' });
     expect(f.create).toHaveBeenCalledOnce();
   });
@@ -85,7 +88,7 @@ describe('public start_team Full access admission', () => {
       } as unknown as OrcaLifecycleDeps);
       const bindings = {
         captureTaskActionGuard,
-        PluginTaskError, hasAcceptedUserTaskInput, startOrcaTeamWithPermissionGate,
+        PluginTaskError, isPluginTaskPermissionAllowed, hasAcceptedUserTaskInput, startOrcaTeamWithPermissionGate,
         getCurrentDbClientSnapshot: () => epoch,
         maker: { getSession: () => null }, inputCoordinator: { getAcceptedInputProvenance: () => input },
         createPluginTaskStore: () => ({ get: async () => state === 'ordinary' ? null
@@ -169,7 +172,7 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
       clearLeadVendorOptions: vi.fn(async () => { vendorActive = false; }),
       sendWorkerReadyPlaceholder: vi.fn(), rollbackCreatedWorker: vi.fn(), broadcastSessionCreated: vi.fn(), broadcastOrcaWorkerChanged: vi.fn(),
     };
-    const callbacks = { service, getCurrentDbClientSnapshot: () => epoch, PluginTaskError, assertPluginTaskResult,
+    const callbacks = { service, getCurrentDbClientSnapshot: () => epoch, PluginTaskError, assertPluginTaskResult, isPluginTaskPermissionAllowed,
       isPluginTaskAuthorized: () => authorized, getPluginTaskDefaults: () => ({ ...cfg }),
       assertLeadCollabProjectEnabled: async () => {}, getWorkerPermissionModeFromCreationPrefs: () => 'auto',
       startOrcaTeamWithPermissionGate, orcaWorkerPermissionConfirmBridge: { request: vi.fn() }, t: (key: string) => key,

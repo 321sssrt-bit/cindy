@@ -11,7 +11,7 @@ import type { AutoReviewRequest, AutoReviewDecision } from '@cindy/maker-core';
 import { fastModeToStorage } from '@cindy/maker-shared';
 import { withAutoReviewContext } from '../../../../../../packages/maker-core/src/agents/shared/auto-review-decision.js';
 import { createPluginTaskReviewResolver, type PluginReviewSnapshot } from '../pluginTaskReviewContext.js';
-import { readPluginTaskPlanReceipt } from '../pluginTaskService.js';
+import { isPluginTaskPermissionAllowed, readPluginTaskPlanReceipt } from '../pluginTaskService.js';
 import { PLUGIN_TASK_RECEIPT_MAX_JSON_CHARS, PLUGIN_TEAM_PLAN_MAX_JSON_CHARS } from '../../../shared/pluginTasks.js';
 
 const resolvePath = vi.hoisted(() => vi.fn());
@@ -80,7 +80,7 @@ function fixture() {
     getCurrentDbClientSnapshot:()=>control.accountChanged ? null : epoch,sessions,orcaWorkers,orcaTeams,eq,fastModeToStorage,
     createPluginTaskStore:()=>({get:async()=>db.prepare('SELECT id,target_id AS targetId,plugin_id AS pluginId,operation,payload,revision FROM plugin_task_requests').get()}),
     drainPersistQueue:async()=>mutate('drain'),pluginTaskServiceForCurrentOwner:()=>({get:async()=>{mutate('ownership');if(!control.ownershipValid)throw Error('ownership revoked');}}),
-    getPluginTaskDefaults:()=>control.usesDefaults ? ({permissionMode:control.permissionMode}) : undefined,readPluginTaskPlanReceipt,
+    getPluginTaskDefaults:()=>control.usesDefaults ? ({permissionMode:control.permissionMode}) : undefined,readPluginTaskPlanReceipt,isPluginTaskPermissionAllowed,
     pluginTaskAuthorizationRevision:()=>control.approvalRevision,isPluginTaskAuthorized:()=>control.authorized,
   };
   new Function(...Object.keys(deps),js)(...Object.values(deps));
@@ -207,8 +207,11 @@ it('ignores only a hidden card in Auto authorization and its cache identity', as
     expect(after.delegatedTask).toBeDefined();
   } finally { f.db.close(); }
 });
-it('allows a healthy alias through both preparations without changing its authorization revision', async()=>{
+// Guard regression #7615: the production Auto resolver must reach evaluation for
+// an Auto task below Full access defaults; existing alias cases used only equal Auto.
+it.each(['auto', 'bypassPermissions'])('allows a healthy alias within %s defaults through both preparations', async permissionMode=>{
   const f=fixture();
+  f.control.permissionMode=permissionMode;
   try {
     setPlan(f.db);
     const evaluated=vi.fn(async(prepared:AutoReviewRequest):Promise<AutoReviewDecision>=>{

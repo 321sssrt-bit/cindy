@@ -3,7 +3,7 @@ import { hasAcceptedUserTaskInput } from '../pluginTaskInput.js';
 import { describe, expect, it, vi } from 'vitest';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
-import {PluginTaskError} from '../pluginTaskService.js';
+import {isPluginTaskPermissionAllowed, PluginTaskError} from '../pluginTaskService.js';
 import { AcceptedCallbackDispatchCancelled, runAcceptedCallback } from '../acceptedCallbackRunner';
 
 import type { AgentInputQueuedMessage } from '../../../shared/agentInputQueue';
@@ -605,7 +605,7 @@ describe('OrcaTeamService', () => {
       const source = readFileSync(new URL('../register.ts',import.meta.url),'utf8');
       const helper = source.slice(source.indexOf('  const assertPluginWorkerAutoAuthorized ='),source.indexOf('  const orcaWorkerCreationService ='));
       const epoch = {client:{}};
-      const bindings = {PluginTaskError,getCurrentDbClientSnapshot:()=>epoch,
+      const bindings = {PluginTaskError,isPluginTaskPermissionAllowed,getCurrentDbClientSnapshot:()=>epoch,
         maker:{getSession:()=>null},inputCoordinator:{getAcceptedInputProvenance:()=>authoritySource==='plugin'?{clientId:'plugin-task:run'}:null},
         createPluginTaskStore:()=>({get:async (id:string)=>authoritySource==='action'?undefined:id==='run'
           ? {operation:'send',targetId:'lead-1',pluginId:'plugin',payload:'{"inputMessageId":"plugin-task:run"}'}

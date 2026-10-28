@@ -5,7 +5,7 @@ import { runAcceptedCallback } from '../acceptedCallbackRunner.js';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
-import { PluginTaskError } from '../pluginTaskService.js';
+import { isPluginTaskPermissionAllowed, PluginTaskError } from '../pluginTaskService.js';
 import { resolveAgentCredentialMode, type AgentKind } from '@cindy/maker-core';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -75,7 +75,7 @@ describe('Host provenance across Orca creation waits', () => {
     };
     const bindings = {
       maker: {getSession:()=>null}, inputCoordinator: { getAcceptedInputProvenance: () => null },
-      PluginTaskError, readPluginTaskPlanReceipt: JSON.parse, getCurrentDbClientSnapshot: () => epoch,
+      PluginTaskError, isPluginTaskPermissionAllowed, readPluginTaskPlanReceipt: JSON.parse, getCurrentDbClientSnapshot: () => epoch,
       createPluginTaskStore: () => ({ get: async () => receipt && { ...receipt } }),
       pluginTaskServiceForCurrentOwner: () => ({ get: async (pluginId: string) => {
         if (directoryResolved) {
@@ -3578,7 +3578,7 @@ describe('production plugin Auto admission after reservation', () => {
       getPluginTaskDefaults: () => ({ permissionMode: 'auto', workingDir: task.workingDir }),
       isPluginTaskAuthorized: () => enabled,
       resolvePluginWorkerDirectory: async () => task.workingDir,
-      isGhostPickedDir: () => false, PluginTaskError,
+      isGhostPickedDir: () => false, PluginTaskError, isPluginTaskPermissionAllowed,
     };
     const validateCreationPlan = new Function(...Object.keys(callbackDeps), js)(...Object.values(callbackDeps));
     const { deps, service } = createDeps({ validateCreationPlan });
@@ -3699,7 +3699,7 @@ describe('production plugin Auto admission after reservation', () => {
       resolvePluginWorkerDirectory: async ({requested}: {requested: string}) => { if (reserved && point === 'directory') revoke(); return requested === path.resolve('other') ? requested : path.resolve('repo'); },
       realpathWorkingDirectory: async (dir: string) => dir === path.resolve('other') ? dir : path.resolve('repo'),
       isGhostPickedDir: () => false,
-      PluginTaskError,
+      PluginTaskError, isPluginTaskPermissionAllowed,
     };
     const validateCreationPlan = new Function(...Object.keys(depsForCallback), js)(...Object.values(depsForCallback));
     const { deps, service } = createDeps({ validateCreationPlan, withLeadSendLock: async (_id, operation) => {

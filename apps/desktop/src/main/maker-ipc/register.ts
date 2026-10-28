@@ -755,6 +755,8 @@ import {
 import { createOrcaWorkerResumeScheduler } from './orcaWorkerResumeScheduler.js';
 import {
   createPiIdleReleaseWatcher,
+  piIdleReleaseCandidateWhere,
+  piIdleReleaseIdleSince,
   DEFAULT_PI_IDLE_RELEASE_MINUTES,
   type PiIdleReleaseWatcher,
 } from './piIdleReleaseWatcher.js';
@@ -16397,23 +16399,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
   idleReleaseWatcher.start();
 
-  // ─── pi 普通会话 idle watcher ────────────────────────────────────────────
-  // 只回收本机桌面来源的普通 pi 会话：Orca 角色/远程/插件隐藏任务/bot 与 IM
-  // 来源都有各自的生命周期。归档会话也纳入(归档不关运行时)，其余安全闸门见
+  // ─── pi 普通与插件会话 idle watcher ──────────────────────────────────────
+  // 插件隐藏任务也由宿主回收；Orca 角色/远程/bot 与 IM 沿用各自生命周期。
+  // 归档会话也纳入(归档不关运行时)，其余安全闸门见
   // piIdleReleaseWatcher；释放后下一次发送走 lazy create-session 透明重建。
-  const PI_IDLE_RELEASE_SESSION_STATUSES = ['active', 'archived'] as const;
-  const piIdleReleaseIdleSince = () =>
-    sql<number>`max(${sessions.updatedAt}, coalesce(${sessions.lastTurnEndedAt}, 0), coalesce(${sessions.userSendAt}, 0))`;
-  const piIdleReleaseCandidateWhere = () =>
-    and(
-      eq(sessions.agentKind, 'pi'),
-      inArray(sessions.status, PI_IDLE_RELEASE_SESSION_STATUSES),
-      eq(sessions.source, 'desktop'),
-      isNull(sessions.orcaRole),
-      isNull(sessions.hiddenAt),
-      isNull(sessions.remoteHostId),
-      isNull(sessions.agentDeviceId),
-    );
   piIdleReleaseWatcher?.stop();
   piIdleReleaseWatcher = createPiIdleReleaseWatcher({
     readIdleReleaseMinutes: () => DEFAULT_PI_IDLE_RELEASE_MINUTES,

@@ -17,7 +17,7 @@ export function useAutomationSettingsRead<T>(name: string, load: () => Promise<T
     status: ReadStatus;
   }>({ owner: load, value: null, status: 'loading' });
   const [revision, setRevision] = useState(0);
-  const cancelRef = useRef(() => {});
+  const cancelRef = useRef<{ owner: typeof load; cancel: () => void } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,7 +27,7 @@ export function useAutomationSettingsRead<T>(name: string, load: () => Promise<T
       cancelled = true;
       clearTimeout(timer);
     };
-    cancelRef.current = cancel;
+    cancelRef.current = { owner: load, cancel };
     setState({ owner: load, value: null, status: 'loading' });
 
     const run = (isRetry: boolean) => {
@@ -52,11 +52,15 @@ export function useAutomationSettingsRead<T>(name: string, load: () => Promise<T
         }, fail);
     };
     run(false);
-    return cancel;
+    return () => {
+      cancel();
+      if (cancelRef.current?.cancel === cancel) cancelRef.current = null;
+    };
   }, [load, name, revision]);
 
   const retry = useCallback(() => {
-    cancelRef.current();
+    if (cancelRef.current?.owner !== load) return;
+    cancelRef.current.cancel();
     setState({ owner: load, value: null, status: 'loading' });
     setRevision((current) => current + 1);
   }, [load]);
@@ -65,17 +69,22 @@ export function useAutomationSettingsRead<T>(name: string, load: () => Promise<T
   // or scheduled retry must not revert it.
   const setValue = useCallback(
     (next: SetStateAction<T | null>) => {
-      cancelRef.current();
-      setState((current) => ({
-        owner: load,
-        value:
-          typeof next === 'function'
-            ? (next as (previous: T | null) => T | null)(
-                current.owner === load ? current.value : null,
-              )
-            : next,
-        status: 'ready',
-      }));
+      // A previous project's save can settle after this hook has a new loader.
+      // It must neither cancel the current read nor publish the old ownership.
+      if (cancelRef.current?.owner !== load) return;
+      cancelRef.current.cancel();
+      setState((current) =>
+        current.owner !== load
+          ? current
+          : {
+              owner: load,
+              value:
+                typeof next === 'function'
+                  ? (next as (previous: T | null) => T | null)(current.value)
+                  : next,
+              status: 'ready',
+            },
+      );
     },
     [load],
   );

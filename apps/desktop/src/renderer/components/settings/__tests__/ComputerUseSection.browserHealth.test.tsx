@@ -268,6 +268,35 @@ describe('ComputerUseSection browser backend health loading', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('false');
   });
 
+  it('keeps the current project read alive when a previous project save completes', async () => {
+    const save = deferred<void>();
+    const current = deferred<{ effectiveEnabled: boolean }>();
+    vi.mocked(window.electronAPI.maker.plugins.setProjectEnabled).mockReturnValue(save.promise);
+    api.getPluginState.mockImplementation(async (id: string, directory?: string) =>
+      id === 'browser' && directory === '/tmp/current'
+        ? current.promise
+        : { effectiveEnabled: id === 'browser' },
+    );
+    const { rerender } = render(<ComputerUseSection workingDir="/tmp/previous" />);
+    const toggle = (await screen.findByRole('switch', {
+      name: 'settings.computerUse.browser.toggleAria',
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(toggle.disabled).toBe(false));
+    fireEvent.click(toggle);
+    await act(async () => {
+      rerender(<ComputerUseSection workingDir="/tmp/current" />);
+    });
+    await act(async () => {
+      save.resolve();
+    });
+    expect(toggle.disabled).toBe(true);
+    await act(async () => {
+      current.resolve({ effectiveEnabled: true });
+    });
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+  });
+
   it('cancels pending recovery when the panel is closed', async () => {
     vi.useFakeTimers();
     api.getBackendState.mockRejectedValue(new Error('unavailable'));

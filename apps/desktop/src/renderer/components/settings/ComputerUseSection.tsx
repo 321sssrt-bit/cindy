@@ -780,13 +780,13 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
         setComputerStatus(nextStatus);
         if (!isComputerPermissionReady(nextStatus)) {
           setComputerPermissionPending(false);
-          setComputerEnabled(false);
-          if (computerEnabled) {
-            await window.electronAPI.maker.plugins
-              .setEnabled(COMPUTER_PLUGIN_ID, false)
-              .catch((error) =>
-                log.warn('disabling computer after permission reset failed', error),
-              );
+          try {
+            // Unknown opt-in may still be enabled in main. Only publish off
+            // after persisting it, keeping the initial read alive on failure.
+            await window.electronAPI.maker.plugins.setEnabled(COMPUTER_PLUGIN_ID, false);
+            if (computerUseSectionMountedRef.current) setComputerEnabled(false);
+          } catch (error) {
+            log.warn('disabling computer after permission reset failed', error);
           }
           toast.warning(t('settings.computerUse.directControl.toast.permissionPending'));
         }
@@ -801,7 +801,7 @@ export function ComputerUseSection({ workingDir }: ComputerUseSectionProps) {
         }
       }
     },
-    [computerEnabled, refreshDriverUpdateCheck, setComputerEnabled, t],
+    [refreshDriverUpdateCheck, setComputerEnabled, t],
   );
 
   useEffect(() => {

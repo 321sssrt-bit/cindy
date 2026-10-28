@@ -1113,6 +1113,7 @@ import {
 import { pendingHarnessRuntimeMutation, setSessionRuntimeHarness } from './sessionRuntimeHarnessSelection.js';
 import {
   COMPANION_SESSION_IDS_LIMIT,
+  buildHandoffText,
   extractAgentIslandPromptText,
   extractPlainText,
   prependNoteToWireUserMessage,
@@ -1121,6 +1122,12 @@ import {
 } from './agentHandoff.js';
 import { sanitizeSourceName } from '@cindy/maker-shared/message-source';
 import { registerSessionHandoffIpc } from './sessionHandoffIpc.js';
+import {
+  installLocalAgentVisibleSessionHost,
+  hasLocalAgentVisibleRuntime,
+  takeOverLocalAgentVisibleSession,
+} from '../local-agent/visibleSessions.js';
+import { ingestChatImageFromPath } from '../cindy-media/chatAttachments.js';
 import { UI_ACTION_TRIGGER_PREFIX } from '@cindy/maker-shared/synthetic-trigger';
 import {
   createContextOverflowRollover,
@@ -8516,12 +8523,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const source = await readSessionSource(sessionId);
     assertCindyMakeSessionAvailable(source);
     await assertReviewSessionExternalInputAllowed(sessionId, async () => source);
+    // This shared admission boundary precedes both direct and queued/steered
+    // Cindy input. Merely opening/viewing the task does not transfer ownership.
+    await takeOverLocalAgentVisibleSession(sessionId);
   }
 
-  async function assertReviewSettingsUnlocked(sessionId: string): Promise<void> {
+  async function assertReviewSettingsUnlocked(sessionId: string, sendLockHeld = false): Promise<void> {
     if ((await readSessionSource(sessionId)) === 'review') {
       throwIpcError('UNSUPPORTED_CAPABILITY', 'Review task settings are fixed to the source task');
     }
+    await takeOverLocalAgentVisibleSession(sessionId, sendLockHeld);
   }
 
   function orcaSessionStatus(sessionId: string): string {
@@ -9253,6 +9264,128 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
     return { session, didInjectOrcaInstructions, didInjectProjectContext };
   }
+
+  installLocalAgentVisibleSessionHost((localMaker) => {
+    const localAppOwner = activeOwnerScopeKey();
+    const assertLocalAppOwner = () => {
+      if (localAppOwner !== activeOwnerScopeKey())
+        throwIpcError('PRECONDITION_FAILED', t('localAgent.authorizationRequired'));
+    };
+    return {
+      open: (opts) =>
+        withSendToSessionLock(opts.id!, async () => {
+          assertLocalAppOwner();
+          if (opts.id) {
+            if (localMaker.getSession(opts.id))
+              throwIpcError('PRECONDITION_FAILED', t('localAgent.busy'));
+            const [row] = await getDbClient()
+              .drizzle.select({ status: sessions.status, sdkSessionId: sessions.sdkSessionId })
+              .from(sessions)
+              .where(eq(sessions.id, opts.id))
+              .limit(1);
+            assertLocalAppOwner();
+            if (
+              row?.status === 'deleted' ||
+              (opts.resumeSessionId &&
+                row?.sdkSessionId &&
+                row.sdkSessionId !== opts.resumeSessionId)
+            )
+              throwIpcError('PRECONDITION_FAILED', t('localAgent.executionUnavailable'));
+          }
+          // Keep the local application's existing tool capability and native storage.
+          // The regular task pipeline supplies persistence and the desktop's live view.
+          const session = await localMaker.createSession(opts);
+          try {
+            assertLocalAppOwner();
+            if (opts.resumeSessionId && session.sdkSessionId !== opts.resumeSessionId)
+              throwIpcError('PRECONDITION_FAILED', t('localAgent.executionUnavailable'));
+            await persistSessionFields(session.id, {
+              providerId: opts.providerId ?? null,
+              permissionMode: 'ask',
+            });
+            assertLocalAppOwner();
+            wireSessionToIpc(session);
+            if (opts.resumeSessionId) agentHandoffPending.consume(session.id);
+            broadcastSessionCreated(session.id);
+            return session;
+          } catch (error) {
+            await session.close({ reason: 'account-boundary' });
+            throw error;
+          }
+        }),
+      persistInput: async (sessionId, message, clientId, assertCurrent, source) => {
+        const assertValid = () => {
+          assertLocalAppOwner();
+          assertCurrent();
+        };
+        assertValid();
+        const db = getDbClient().drizzle;
+        const content =
+          typeof message.content === 'string'
+            ? message.content
+            : await Promise.all(
+                message.content.map(async (block) => {
+                  if (block.type !== 'image') return block;
+                  const image = await ingestChatImageFromPath({ sourcePath: block.path }, db);
+                  assertValid();
+                  return { ...block, path: image.url };
+                }),
+              );
+        assertValid();
+        await createDbMessage(
+          sessionId,
+          { clientId, role: 'user', content, agentMeta: { sourcePlugin: source } },
+          {
+            beforePublish: async () => assertValid(),
+          },
+        );
+      },
+      // The runtime owns the send lock for both API close and Cindy takeover.
+      // Do not acquire it again: direct send callers may hold an explicit lease.
+      close: async (sessionId, session) => {
+        await session.close({ reason: 'account-boundary' });
+        // Keep the external app's native history isolated. Subsequent Cindy input
+        // starts a regular task with the existing durable transcript as context.
+        if (localAppOwner !== activeOwnerScopeKey()) return;
+        await drainPersistQueue();
+        assertLocalAppOwner();
+        const [row] = await getDbClient()
+          .drizzle.select()
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        assertLocalAppOwner();
+        if (
+          !row ||
+          row.status === 'deleted' ||
+          localMaker.getSession(sessionId) ||
+          (row.sdkSessionId !== null && row.sdkSessionId !== session.sdkSessionId)
+        )
+          return;
+        const history = await listMessagesForAgentHandoff(sessionId, 400);
+        assertLocalAppOwner();
+        const generation = agentHandoffPending.readGeneration(sessionId);
+        const label = session.agentKind;
+        const handoff = buildHandoffText(history, {
+          fromLabel: label,
+          toLabel: label,
+          sessionId,
+          reason: 'native-session-recovery',
+        });
+        await commitContextRebuild(sessionId, handoff, {
+          reason: 'native-session-recovery',
+          sourceUserClientId: null,
+          sourceAgentKind: makerToDbAgentKind(session.agentKind),
+          sourceModel: row.model ?? null,
+          sourceProviderId: row.providerId ?? null,
+          expectedClearedAt: row.clearedAt,
+        });
+        assertLocalAppOwner();
+        agentHandoffPending.set(sessionId, handoff, generation);
+        broadcastSessionPatched(sessionId, { sdkSessionId: null, contextTokens: 0 });
+      },
+    };
+  });
 
   async function recordBotCompactRuntimeLifecycle(input: {
     botId: string;
@@ -11645,6 +11778,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     else await scheduledModelScope.restore(sessionId);
   };
   pendingAgentSwitchApplyHolder = async (sessionId, signal, selection, beforeApply, scheduledModelOverride) => {
+    await takeOverLocalAgentVisibleSession(sessionId);
     let stage = 'direct-send:acquire';
     let deferPendingApply = false;
     const release = await acquireSendToSessionLock(sessionId, undefined, () => stage);
@@ -18125,6 +18259,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     sendToAgentAccepted: sendToAgentAcceptedUnlocked,
     prewarmSession: prewarmSessionRuntime,
   } = createMakerSendTransaction({
+    prepareExternalInput: (sessionId) => takeOverLocalAgentVisibleSession(sessionId, true),
     restoreArchivedSessionForSend,
     prepareProductTurn: (sessionId) => {
       const dispatch = prepareUpstreamMergeTurn(sessionId);
@@ -18454,6 +18589,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // 并在同一把会话发送锁里执行，真实发送不会与预热并发重复启动。
   const agentPrewarmer = createAgentPrewarmer({
     start: (sessionId, createOpts) => withSendToSessionLock(sessionId, async () => {
+      if (hasLocalAgentVisibleRuntime(sessionId)) return false;
       if (maker.getSession(sessionId)) return false;
       if (agentSwitchPending.get(sessionId) || cindyMakeManager.isTaskPreparing(sessionId)) return false;
       // Queued work starts the runtime itself through the normal drain.
@@ -22787,7 +22923,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 后到的 SET_MODEL 才能写 route。否则切换 DB await 恢复后会用旧 provider
     // 覆盖用户刚选的新 route，形成 DB 与进程内路由分叉。
     const applyLocked = async () => {
-      await assertReviewSettingsUnlocked(sessionId);
+      await assertReviewSettingsUnlocked(sessionId, true);
       if (supersededByOwnerBoundary()) {
         return { deferred: false, superseded: true };
       }

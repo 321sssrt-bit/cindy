@@ -7341,6 +7341,7 @@
         "dialogTitle": "插件「{{name}}」请你确认"
       },
       "modelPicker": {
+        "useConfiguration": "使用此配置",
         "title": "为插件「{{name}}」选择模型",
         "unavailable": "这个模型配置暂时不可用，请重新选择后确认。"
       },

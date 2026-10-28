@@ -12,6 +12,16 @@ import {
 } from '../../shared/pluginModelPicker.js';
 import type { PluginTaskRoute } from '../../shared/pluginTasks.js';
 
+// The host supplies a live reader without making the plugin module load Maker.
+// Read on confirmation, so an account reset or disabled engine is reflected.
+let agentProvider: () => readonly string[] = () => [];
+export function setPluginModelPickerAgentProvider(provider: () => readonly string[]): void {
+  agentProvider = provider;
+}
+export function getPluginModelPickerAgents(): readonly string[] {
+  return agentProvider();
+}
+
 export interface PluginModelPickerTarget {
   id: string | number;
   isCurrent?(): boolean;

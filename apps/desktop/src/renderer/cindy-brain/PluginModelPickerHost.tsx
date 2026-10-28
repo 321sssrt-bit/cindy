@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ErrorNotice } from '@/components/ui/error-notice';
 import { ModelSelectorContent } from '@/components/new-chat/ModelSelector';
+import { useTransientModelPickerPreferences } from '@/components/new-chat/modelPickerPreferences';
 import { useModelPickerAgents } from '@/hooks/useAvailableAgents';
 import type { Effort } from '@/lib/userPreferences.types';
 import type {
@@ -23,6 +24,7 @@ export function PluginModelPickerDialog({
 }) {
   const { t } = useTranslation();
   const [route, setRoute] = useState(request.initial);
+  const preferenceStore = useTransientModelPickerPreferences(deviceId);
   const agents = useModelPickerAgents(
     route?.agentKind === 'cc' ? 'claude-code' : (route?.agentKind ?? 'codex'),
     deviceId,
@@ -49,6 +51,7 @@ export function PluginModelPickerDialog({
     <ConfirmDialog
       open
       title={t('settings.ghosts.modelPicker.title', { name: request.ghostName })}
+      confirmText={t('settings.ghosts.modelPicker.useConfiguration')}
       maxWidth={460}
       confirmDisabled={!route}
       loading={busy}
@@ -64,6 +67,7 @@ export function PluginModelPickerDialog({
       content={
         <>
           <ModelSelectorContent
+            preferenceStore={preferenceStore}
             deviceId={deviceId}
             modelId={route?.model ?? ''}
             currentProviderId={route?.providerId ?? null}

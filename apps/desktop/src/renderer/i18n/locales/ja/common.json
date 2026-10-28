@@ -7341,6 +7341,7 @@
         "dialogTitle": "プラグイン「{{name}}」が確認を求めています"
       },
       "modelPicker": {
+        "useConfiguration": "この設定を使用",
         "title": "プラグイン「{{name}}」のモデルを選択",
         "unavailable": "このモデル設定は現在利用できません。選択し直して確定してください。"
       },

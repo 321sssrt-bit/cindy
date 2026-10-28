@@ -82,7 +82,7 @@ it('keeps the full configuration as a draft until the user confirms, then return
   expect(screen.getByText('为插件「示例插件」选择模型')).toBeTruthy();
   fireEvent.click(screen.getByText('Choose model'));
   expect(resolve).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: zh.commonUi.confirmDialog.confirm }));
+  fireEvent.click(screen.getByRole('button', { name: zh.settings.ghosts.modelPicker.useConfiguration }));
   await waitFor(() =>
     expect(resolve).toHaveBeenCalledExactlyOnceWith('request', {
       providerId: 'chosen-provider',
@@ -111,7 +111,7 @@ it('keeps the choice editable and reports an unavailable source after Host rejec
   render(<PluginModelPickerHost />);
   act(() => push(request));
   fireEvent.click(screen.getByText('Choose model'));
-  fireEvent.click(screen.getByRole('button', { name: zh.commonUi.confirmDialog.confirm }));
+  fireEvent.click(screen.getByRole('button', { name: zh.settings.ghosts.modelPicker.useConfiguration }));
   await screen.findByText(zh.settings.ghosts.modelPicker.unavailable);
   expect(screen.getByText('Choose model')).toBeTruthy();
 });
@@ -120,7 +120,7 @@ it('returns remote selections through the original view without calling local pl
   render(<PluginModelPickerHost />);
   act(() => push({ ...request, deviceId: 'other-computer', remoteViewId: 'remote-view' }));
   fireEvent.click(screen.getByText('Choose model'));
-  fireEvent.click(screen.getByRole('button', { name: zh.commonUi.confirmDialog.confirm }));
+  fireEvent.click(screen.getByRole('button', { name: zh.settings.ghosts.modelPicker.useConfiguration }));
   await waitFor(() =>
     expect(remote).toHaveBeenCalledWith(
       'remote-view',

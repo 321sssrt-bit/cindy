@@ -12,6 +12,8 @@ import {
   isMobileAuthOwnerCurrent,
 } from "@/auth/authOwnerGeneration";
 import { ModelPickerSheet } from "@/session/ModelPickerSheet";
+import type { MobileModelMemoryAccessors } from "@/session/draftModelMemory";
+import type { MobileModelConfiguration } from "@/session/unifiedMobileModels";
 import {
   normalizeMobileAgentCapabilities,
   type MobileAgentCapabilities,
@@ -35,15 +37,23 @@ export function PluginModelPicker({
   const [capabilities, setCapabilities] =
     useState<MobileAgentCapabilities | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selection, setSelection] = useState<MobileModelConfiguration | null>(() =>
+    request.initial ? {
+      agent: request.initial.agentKind === "cc" ? "claude-code" : request.initial.agentKind,
+      providerId: request.initial.providerId,
+      modelId: request.initial.model,
+      effort: request.initial.effort,
+      fast: request.initial.fastMode,
+    } : null,
+  );
+  const modelMemory = useRequestModelMemory();
   const owner = useRef(getMobileAuthOwner()).current,
     alive = useRef(true),
     lock = useRef(false),
     finished = useRef(false);
   const current = () => alive.current && isMobileAuthOwnerCurrent(owner);
   const agent =
-    request.initial?.agentKind === "cc"
-      ? "claude-code"
-      : (request.initial?.agentKind ?? "codex");
+    selection?.agent ?? "codex";
   useEffect(() => {
     alive.current = true;
     void maker
@@ -89,10 +99,11 @@ export function PluginModelPicker({
       modelVisibilityOverrides={providers.modelVisibilityOverrides}
       flatOptions={[]}
       capabilities={capabilities}
-      activeModelId={request.initial?.model ?? ""}
-      selectedProviderId={request.initial?.providerId ?? null}
-      selectedEffort={request.initial?.effort ?? ""}
-      selectedFastMode={request.initial?.fastMode ?? false}
+      activeModelId={selection?.modelId ?? ""}
+      selectedProviderId={selection?.providerId ?? null}
+      selectedEffort={selection?.effort ?? ""}
+      selectedFastMode={selection?.fast ?? false}
+      modelMemory={modelMemory}
       loading={providers.loading}
       disabled={busy}
       hidePermissionTrigger
@@ -104,6 +115,7 @@ export function PluginModelPicker({
       keyboardAvoidingBehavior={Platform.OS === "ios" ? "padding" : "height"}
       emptyHint={t("plugins.modelsUnavailable")}
       unified={{
+        preferenceScope: "request",
         scope: JSON.stringify([owner.accountKey, deviceId]),
         agents: ["claude-code", "codex", "pi"],
         loadCapabilities: async (kind) => {
@@ -113,6 +125,10 @@ export function PluginModelPicker({
           if (!result || !current())
             throw new Error("CAPABILITIES_UNAVAILABLE");
           return result;
+        },
+        onConfigure: async (value) => {
+          setSelection(value);
+          return true;
         },
         onSelect: (value) =>
           answer({
@@ -125,4 +141,19 @@ export function PluginModelPicker({
       }}
     />
   );
+}
+
+function useRequestModelMemory(): MobileModelMemoryAccessors {
+  const [memory, setMemory] = useState<Record<string, { effort?: string; fast?: boolean | "ultrafast" }>>({});
+  const key = (...parts: string[]) => JSON.stringify(parts);
+  const edit = (id: string, patch: { effort?: string; fast?: boolean | "ultrafast" }) =>
+    setMemory((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+  return {
+    getEffort: (agent, provider, model) => memory[key(agent, provider, model)]?.effort,
+    setEffort: (agent, provider, model, effort) => edit(key(agent, provider, model), { effort }),
+    clearEffort: (agent, provider, model) => edit(key(agent, provider, model), { effort: undefined }),
+    getFast: (agent, provider, model) => memory[key(agent, provider, model)]?.fast,
+    setFast: (agent, provider, model, fast) => edit(key(agent, provider, model), { fast }),
+    clearFast: (agent, provider, model) => edit(key(agent, provider, model), { fast: undefined }),
+  };
 }

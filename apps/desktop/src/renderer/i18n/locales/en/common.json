@@ -7372,6 +7372,7 @@
         "dialogTitle": "Plugin “{{name}}” needs your confirmation"
       },
       "modelPicker": {
+        "useConfiguration": "Use this configuration",
         "title": "Choose a model for plugin “{{name}}”",
         "unavailable": "This model configuration is unavailable. Choose again and confirm."
       },

@@ -76,8 +76,7 @@ async function resolveMobilePluginMedia(instanceId: string, url: string, current
 }
 import { getModelVisibilityOverride, waitForModelVisibilityMirror } from '../maker-host/model-visibility-mirror.js';
 import { projectGhostAgentModels } from './ghostAgentModels.js';
-import { GhostModelPicker, isPluginModelPickerRouteAvailable } from './ghostModelPicker.js';
-import { getMakerIfReady } from '../maker-host/index.js';
+import { GhostModelPicker, getPluginModelPickerAgents, isPluginModelPickerRouteAvailable } from './ghostModelPicker.js';
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
 import { PluginDownloadSlot } from './downloadSlot.js';
 import { createDownloader } from '../downloader/index.js';
@@ -3793,7 +3792,7 @@ export function getGhostModelPicker(): GhostModelPicker {
     },
     available: async route => {
       const views = await getDesktopProviderService({ allowSideEffects: false }).listProviders({ allowSideEffects: false, snapshotOnly: true });
-      return isPluginModelPickerRouteAvailable(route, views, getMakerIfReady()?.listAvailableAgents() ?? []);
+      return isPluginModelPickerRouteAvailable(route, views, getPluginModelPickerAgents());
     },
   });
 }

@@ -10355,7 +10355,7 @@
           "removeAdmin": "Remove admin role",
           "transfer": "Transfer ownership",
           "transferTitle": "Transfer ownership to {{name}}?",
-          "transferHint": "They will become the owner and you will become an admin. Companions can also own groups.",
+          "transferHint": "They will become the owner and you will become an admin.",
           "removeTitle": "Remove {{name}} from this group?",
           "removeHint": "They will lose access to messages. Their companions will also leave.",
           "addCompanion": "Invite my companion",

@@ -10321,7 +10321,7 @@
           "removeAdmin": "관리자 해제",
           "transfer": "소유권 이전",
           "transferTitle": "{{name}}에게 소유권을 이전할까요?",
-          "transferHint": "상대가 소유자가 되고 본인은 관리자가 됩니다. 파트너도 소유자가 될 수 있습니다.",
+          "transferHint": "상대가 소유자가 되고 본인은 관리자가 됩니다.",
           "removeTitle": "{{name}}을 그룹에서 내보낼까요?",
           "removeHint": "메시지를 읽거나 보낼 수 없게 됩니다. 해당 멤버의 파트너도 나갑니다.",
           "addCompanion": "내 파트너 초대",

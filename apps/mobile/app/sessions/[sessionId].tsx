@@ -10469,6 +10469,7 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
                     onCopyMessageLink={copyMessageLink}
                     onAddMessageToComposer={canUseComposer ? addMessageToComposer : undefined}
                     onSideChatMessage={canUseSideChats && currentSession?.source !== 'side-chat' ? askInSideChat : undefined}
+                    onDiagnoseError={canDiagnoseError ? handleDiagnoseError : undefined}
                     onDeleteMessage={isSharedTaskPeer(deviceId) ? undefined : deleteMessage}
                     onForkMessage={isSharedTaskPeer(deviceId) ? undefined : forkAtMessage}
                     onLoadEarlier={loadEarlierMessages}
@@ -10529,7 +10530,8 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
                           streaming: isSessionStreaming, running: remoteSessionRunning,
                         }) && scheduleFailure?.run ? (
                           <FailedScheduleNotice key={scheduleNoticeSource}
-                            source={scheduleNoticeSource} run={scheduleFailure.run} />
+                            source={scheduleNoticeSource} run={scheduleFailure.run}
+                            onDiagnose={canDiagnoseError ? handleDiagnoseError : undefined} />
                         ) : null}
                         {/* 队列状态横幅(错误 / 凭证等待 / 停止确认 / 暂停)。待发送气泡
                             不在这里,它们是消息流里的 pending_send 项。 */}

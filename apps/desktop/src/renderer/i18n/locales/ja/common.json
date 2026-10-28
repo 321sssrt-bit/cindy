@@ -12215,6 +12215,7 @@
       "diagnose": "診断",
       "diagnoseTitle": "新しいセッションでこのエラーを診断",
       "diagnosePrompt": "このエラーを診断して、原因と解決方法を教えてください。\n\nエラーが起きたセッション：{{sessionUrl}}\nエラー表示：{{message}}\nエラー詳細：\n{{details}}\n\nCindy 自体の問題だと分かった場合は教えてください。Cindy チームに issue を提出するかどうかは私が選びます。",
+      "diagnosePromptWithoutSession": "このエラーを診断して、原因と解決方法を教えてください。\n\nエラー表示：{{message}}\nエラー詳細：\n{{details}}\n\nCindy 自体の問題だと分かった場合は教えてください。Cindy チームに issue を提出するかどうかは私が選びます。",
       "gatewayProxyTokenInvalid": "Cindy AI の認証情報が無効になりました。「再試行」をクリックしてください。繰り返す場合はサインアウトしてから再ログインしてください",
       "gatewayProxyTokenInvalidNoRetry": "Cindy AI の認証情報が無効になりました。繰り返す場合はサインアウトしてから再ログインしてください",
       "modelAccessDenied": "接続先のアカウントにはこのモデルへのアクセス権限がありません。別のモデルに切り替えるか、プロバイダーにアクセス権限を確認してください",

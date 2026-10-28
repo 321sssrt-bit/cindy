@@ -8,7 +8,7 @@ vi.mock('../../device-link/settings-store.js', () => ({ readDeviceLinkSettings: 
 vi.mock('../../serverApiClient.js', () => ({ serverApiFetch: mock.api }));
 vi.mock('../../i18n.js', () => ({ t: () => '来自 {{name}} 的分享' }));
 import { remoteLocalAgentModels } from '../remoteCatalog.js';
-import { LOCAL_AGENT_ROUTE } from '../catalog.js';
+import { LOCAL_AGENT_ROUTE, type LocalAgentModel } from '../catalog.js';
 import { normalizeProviderGroupConfig } from '../../../shared/providerGroup.js';
 
 const provider = { id: 'openai', name: 'OpenAI', source: 'user', connected: true, agents: ['pi', 'codex'],
@@ -37,8 +37,27 @@ describe('application remote catalog', () => {
     mock.devices = mock.devices.filter(device => (device as { deviceId: string }).deviceId !== 'device');
     expect((await remoteLocalAgentModels(() => true)).map(m => m[LOCAL_AGENT_ROUTE]?.deviceId)).toEqual(['member', 'share:active']);
     const local = normalizeProviderGroupConfig(group, 'openai')!;
-    expect(await remoteLocalAgentModels(() => true, { openai: local })).toEqual([]);
+    const localModels: LocalAgentModel[] = [{ id: 'local', label: 'Local', provider: 'openai',
+      engine: 'pi', model: 'm', efforts: [], images: false, isDefault: true }];
+    expect(await remoteLocalAgentModels(() => true, { openai: local }, localModels)).toEqual([]);
   });
+  // PR #7697 / 4401270755: a configured group is not necessarily a usable
+  // /models entry. Existing tests only covered a reachable local group.
+  // Unit: missing local connection, runtime, or model must retain remote choices.
+  it.each(['disconnected', 'engine-missing', 'model-missing', 'available'] as const)(
+    'only hides members represented by an available local choice (%s)', async state => {
+      setup();
+      const group = normalizeProviderGroupConfig({ strategy: 'least', autoSwitch: true,
+        members: [{ kind: 'local' }, { kind: 'device', agentDeviceId: 'device', providerId: 'openai' },
+          { kind: 'share', agentDeviceId: 'share:active', providerId: 'openai' }] }, 'openai')!;
+      const localModels: LocalAgentModel[] = state === 'disconnected' ? [] : [{
+        id: 'local', label: 'Local', provider: 'openai', engine: state === 'engine-missing' ? 'codex' : 'pi',
+        model: state === 'model-missing' ? 'other' : 'm', efforts: [], images: false, isDefault: true,
+      }];
+      const models = await remoteLocalAgentModels(() => true, { openai: group }, localModels);
+      expect(models.map(model => model[LOCAL_AGENT_ROUTE]?.deviceId)).toEqual(
+        state === 'available' ? [] : ['device', 'share:active']);
+    });
   it('uses remote runtime availability and keeps device/share identities and source names', async () => {
     setup();
     const models = await remoteLocalAgentModels(() => true);

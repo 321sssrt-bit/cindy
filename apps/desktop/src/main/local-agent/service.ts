@@ -132,13 +132,16 @@ export function installLocalAgentHost(maker: Maker): void {
       async models() {
         if (scopeNow() !== scope)
           throw new LocalAgentError('UNAUTHORIZED', 'Cindy 当前账号已更改，请重新连接。');
-        const [providers, remoteModels] = await Promise.all([getDesktopProviderService({
+        const providers = await getDesktopProviderService({
           allowSideEffects: false,
         }).listProviders({
           allowSideEffects: false,
-        }), remoteLocalAgentModels(() => scopeNow() === scope, listProviderGroups())]);
+        });
         if (scopeNow() !== scope) throw new LocalAgentError('UNAUTHORIZED', 'Cindy 当前账号已更改，请重新连接。');
-        return [...localAgentModels(providers, maker.listAvailableAgents()), ...remoteModels]
+        const localModels = localAgentModels(providers, maker.listAvailableAgents());
+        const remoteModels = await remoteLocalAgentModels(() => scopeNow() === scope, listProviderGroups(), localModels);
+        if (scopeNow() !== scope) throw new LocalAgentError('UNAUTHORIZED', 'Cindy 当前账号已更改，请重新连接。');
+        return [...localModels, ...remoteModels]
           .map((model, index) => ({ ...model, isDefault: index === 0 }));
       },
       async approve(signal, client) {

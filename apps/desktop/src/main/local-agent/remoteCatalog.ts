@@ -27,6 +27,7 @@ export async function readRemoteCatalog(
   sources: readonly RemoteCatalogSource[],
   invoke: typeof remoteBackgroundInvoke = remoteBackgroundInvoke,
   localGroups: Readonly<Record<string, ProviderGroupConfig>> = {},
+  localModels: readonly LocalAgentModel[] = [],
 ): Promise<LocalAgentModel[]> {
   const lists = await Promise.all(sources.map(async source => {
     try {
@@ -44,13 +45,29 @@ export async function readRemoteCatalog(
     } catch { return null; }
   }));
   const catalogs = lists.filter(entry => entry !== null);
-  const { hidden } = collectRemoteProviderGroups(catalogs.map(({ source, providers }) =>
-    ({ deviceId: source.deviceId, providers })), localGroups);
+  const groupCatalogs = catalogs.map(({ source, providers }) => ({ deviceId: source.deviceId, providers }));
+  const { hidden } = collectRemoteProviderGroups(groupCatalogs);
+  // A configured local group can only replace choices actually advertised by
+  // /models. A disconnected provider or missing engine/model must not erase
+  // otherwise usable device/share choices.
+  const choiceKey = (model: LocalAgentModel) => JSON.stringify([model.engine, model.model]);
+  const represented = new Map<string, Record<string, ProviderGroupConfig>>();
+  for (const model of localModels) {
+    const group = localGroups[model.provider];
+    if (!group) continue;
+    const key = choiceKey(model);
+    const groups = represented.get(key) ?? {};
+    groups[model.provider] = group;
+    represented.set(key, groups);
+  }
+  const hiddenByChoice = new Map([...represented].map(([key, groups]) =>
+    [key, collectRemoteProviderGroups(groupCatalogs, groups).hidden]));
   return catalogs.flatMap(({ source, models }) => models.filter(model =>
-    !hidden.has(remoteProviderEntryKey(source.deviceId, model[LOCAL_AGENT_ROUTE]!.providerId))));
+    !(hiddenByChoice.get(choiceKey(model)) ?? hidden).has(
+      remoteProviderEntryKey(source.deviceId, model[LOCAL_AGENT_ROUTE]!.providerId))));
 }
 
-export async function remoteLocalAgentModels(isCurrent: () => boolean, localGroups: Readonly<Record<string, ProviderGroupConfig>> = {}): Promise<LocalAgentModel[]> {
+export async function remoteLocalAgentModels(isCurrent: () => boolean, localGroups: Readonly<Record<string, ProviderGroupConfig>> = {}, localModels: readonly LocalAgentModel[] = []): Promise<LocalAgentModel[]> {
   const settings = readDeviceLinkSettings();
   const shares = getReceivedShares().filter(share => share.status === 'active');
   const directory = await bounded(serverApiFetch<{ devices: DeviceLinkDeviceView[] }>('/api/device-link/devices', { baseUrl: deviceLinkApiBase }), { devices: [] });
@@ -66,6 +83,6 @@ export async function remoteLocalAgentModels(isCurrent: () => boolean, localGrou
     sources.push({ deviceId: `share:${share.shareId}`, providerId: share.providerId,
       label: t('providerShare.received.fromOwner').replaceAll('{{name}}', () => share.owner.displayName) + (count > 1 ? ` (${count})` : '') });
   }
-  const models = await readRemoteCatalog(sources, remoteBackgroundInvoke, localGroups);
+  const models = await readRemoteCatalog(sources, remoteBackgroundInvoke, localGroups, localModels);
   return isCurrent() ? models : [];
 }

@@ -695,10 +695,13 @@ export class Maker {
 
   /** 执行一次真实 session startup；带 id 的并发去重由 createSession 统一负责。 */
   private async createSessionOnce(opts: CreateSessionOptions): Promise<Session> {
-    const agent = this.requireAgent(opts.agentKind);
+    // Visible application tasks use the ordinary persistence path, but their
+    // remote engine need not be installed on this controller either.
+    const agent = opts[LOCAL_AGENT_CLIENT] && opts.agentDeviceId
+      ? this.agents[opts.agentKind] : this.requireAgent(opts.agentKind);
     const id = opts.id ?? generateSessionId();
     const localPiPackageGeneration = (
-      opts.agentKind === 'pi' && !opts.remoteHostId && !opts.reviewMode
+      opts.agentKind === 'pi' && !opts.remoteHostId && !opts.agentDeviceId && !opts.reviewMode
     ) ? this.localPiPackageRuntimeGeneration : null;
 
     this.logger.debug('createSession ↓', {
@@ -842,7 +845,7 @@ export class Maker {
             onInvalidResumeSession,
           },
         });
-      } else handle = await agent.startSession({
+      } else handle = await (agent ?? this.requireAgent(opts.agentKind)).startSession({
         ...startOpts,
         sessionId: id,
         sessionInstanceId,
@@ -1112,7 +1115,7 @@ export class Maker {
       hostStartupPreferences: opts.hostStartupPreferences,
       capabilities: capabilitiesForSession(
         meta.agentKind,
-        agent.capabilities,
+        agent?.capabilities ?? applicationHandleCapabilities(handle),
         meta.remoteHostId,
         meta.agentDeviceId ?? startOpts.agentDeviceId,
         handle,

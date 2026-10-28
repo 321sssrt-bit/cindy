@@ -119,6 +119,8 @@ node scripts/examples/local-agent-client.mjs --connection-code "cindy-local:v1:<
 
 `parts` 是 1–64 个 `{type:"text",text}` 或 `{type:"image",mimeType,data}`；图片 data 是 base64，只接受模型声明支持的 PNG/JPEG/WebP/GIF，单张解码最多 10 MiB。`client-only` 将以 `/` 开头的文本转义为字面消息，路径等普通内容仍可发送，不执行原生命令；`native` 保留既有引擎命令行为。模型、来源或引擎切换必须重新 open；相同模型可用原句柄恢复，不同模型返回新句柄和 `resumed:false`，客户端自行提供上下文交接，不重放旧工具或付费消息。
 
+本机组只收起已由本机目录实际提供的同引擎、同模型成员选项。本机连接不可用、引擎未安装或模型不可选时，对应远程／分享成员仍单独显示，避免仅有组配置却没有可选组入口时把可用来源全部隐藏。
+
 ## 事件和工具往返
 
 每个会话只安排一个有序事件消费者，初始 cursor 为 0，下一次请求使用已完整处理批次的返回 cursor。发送该 cursor 同时确认其之前事件可回收。事件有严格递增 seq；失去响应时可用**最后已处理**的 cursor 重新读取，不随意推进。不要并行提交相互矛盾的确认游标。
@@ -137,6 +139,8 @@ node scripts/examples/local-agent-client.mjs --connection-code "cindy-local:v1:<
 当前协议不转发原生人机确认：原生提问/计划批准会产生明确失败，不能替用户答应；需要交互的客户端应提供自己的交互工具。
 
 ## 执行、存储与兼容
+
+远程执行不要求本机安装引擎的规则也适用于应用的可见任务：`Maker.createSession` 保留持久化、发送和关闭生命周期，缺少本机引擎时从远程句柄提供应用所需能力；本机执行仍须有本机引擎。回归见 `packages/maker-core/src/maker.test.ts`。
 
 默认使用 `Maker.startLocalAgentSession` 复用三种引擎及既有内存 `Session`，由同一套发送、原生续段、终态归属、工具循环与关闭生命周期管理执行；不建立第二个 Agent 循环，也不写入 Cindy 的私人任务数据库或装载私人记忆。用户为应用开启可见任务后，改走既有 `Maker.createSession` 和 Desktop 消息记录管线，工具策略仍由原本机能力约束。原生带 continuation claim 的 done 只是 SDK 段落边界，不能提前宣布客户端执行完成或接受下一轮发送。原生 cancelled 投影为 interrupted。
 

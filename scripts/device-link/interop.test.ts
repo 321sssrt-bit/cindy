@@ -16,8 +16,8 @@ interface FrameAuthSpec {
 }
 
 /**
- * 自建中转的设备签名(可选,由 run-interop 提供测试密钥):主机像电脑一样核对全部对端帧,
- * 控制端像手机一样只签名。任何绕过签名的发送路径都会让主机丢帧、恢复流程超时。
+ * 自建中转的设备签名(可选,由 run-interop 提供测试密钥):主机与控制端都核对全部对端帧,
+ * 与 Desktop / Mobile 一致。任何绕过签名的发送路径都会让接收端丢帧、恢复流程超时。
  */
 function frameAuthFor(spec: FrameAuthSpec, role: "host" | "controller", rejected: string[]) {
   const auth = new RelayFrameAuthenticator({
@@ -31,7 +31,6 @@ function frameAuthFor(spec: FrameAuthSpec, role: "host" | "controller", rejected
   return () => ({
     sign: (frame: Parameters<RelayFrameAuthenticator["sign"]>[0]) => auth.sign(frame),
     verify: (frame: Readonly<Record<string, unknown>>) => {
-      if (role === "controller") return true;
       const verdict = auth.verify(frame);
       if (verdict !== "ok") rejected.push(`${String(frame.kind)}:${verdict}`);
       return verdict === "ok";

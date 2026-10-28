@@ -282,7 +282,7 @@ stream 匹配后才处理；信令不进入业务可靠 FIFO，也不走直连�
 兼容：未选择自建中转时，客户端与官方 relay 的行为不变（没有登记中转来源或使用官方中转时一律回到原路径）。
 旧客户端没有入口；旧版手机无法加入自建中转。互通验证：`pnpm --filter @cindy/device-link-relay run interop`
 （本机起中转、走加入流程，再跑 `scripts/device-link/interop.test.ts`，认证方案由 `CINDY_TEST_AUTH_SCHEME` 指定；
-`CINDY_TEST_FRAME_AUTH` 提供测试签名密钥时全程开启设备签名，主机核对每一条对端消息）。
+`CINDY_TEST_FRAME_AUTH` 提供测试签名密钥时全程开启设备签名，两端核对每一条对端消息）。
 
 ### 自建中转同步维护
 

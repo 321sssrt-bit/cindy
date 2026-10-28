@@ -718,9 +718,14 @@ Host receipt 的 `simulatorPreviousRelId` 只允许这对 ID 和 root 路径，�
 
 ## 6. 作者契约与编写手册同步
 
-内置 `cindy-plugin-creator` Skill 是 Agent 替用户编写插件的**唯一教材**，正本位于
+内置 `cindy-plugin-creator` Skill 是 Agent 替用户编写插件的**统一手册与流程入口**，正本位于
 `apps/desktop/resources/system-skills/cindy-plugin-creator/`。`SKILL.md` 负责流程与按需阅读索引，
-`references/` 负责各章作者契约。插件页「让 Cindy 创建」从当前引擎的本机命令清单中选择
+`references/` 负责各章作者契约。创作流程以 §0a 的宿主版本与源码核验开头：先确认插件
+执行电脑，通过实际版本对应的已验证 tag 或构建 commit 定位官方仓库，再按需核对公开
+接口、宿主处理与测试。不能用 main 或未经核实的本地 HEAD 代替运行宿主；版本或源码
+不可核实时说明限制，继续完成随包手册和运行时结果可以支持的部分。源码核验的详细流程
+只维护在 `references/plugin-source-verification.md`，并由兼容手册入口读取同一份资料。
+插件页「让 Cindy 创建」从当前引擎的本机命令清单中选择
 已验证的内置 Skill，预填其实际命令名（Claude 同名冲突时带 `cindy:`）；始终优先内置版本，
 不可用时提示并保留原草稿，不回退到同名用户 Skill。使用普通新任务的技能调用链路；
 草稿保留内置身份，编辑正文、语音转写回填与切换 Agent 时不丢失；发送前按最终引擎和任务所在电脑的
@@ -933,6 +938,23 @@ IPC 时追加对应专项规则要求的验证。
 旧 Host 带任何参数都返回 400。检查插件在装启用与 owner 归属，异步返回前复核。
 旧 Host 404 时插件应明确提示升级。此端点不覆盖远程 SSH 模型，执行前仍需核验真实路由。
 
+### 宿主统一模型选择器（新增接口，尚未发布）
+
+电子脑 `cindy.pickModel({initial?,mobilePageId?})` 与桌面页面同源 `POST /model-picker`
+复用 Cindy 的统一模型选择器，返回完整 `PluginTaskRoute`（来源、模型、引擎、思考档位、Fast）。
+选模不需要新的 manifest 权限、不改变存量批准，不修改默认或现有任务、不执行模型调用。
+任务创建仍走原任务能力批准。仅返回显式配置字段，不返回凭证、endpoint 或 ProviderView。
+
+Main 按真实逻辑页或专属协议分区定位物理实例，绑定当前 owner 与安装批准版本；
+只接受目标宿主窗口或目标页面的回答，验证输入形状与实际可用路由，异步校验后再次复核绑定。
+同一 Host 仅一单，重复打开沿用目录选择的限速。取消、90 秒超时、窗口/页面关闭、账号边界、
+插件停止均撤销等待并收起界面；不可用的来源保持选择器可编辑，不能静默换模型。
+手机与远程桌面设置页保留显式 mobilePageId，展示端读取执行电脑目录，缺失/失效来源不回退另一设备。
+旧 Host 通过函数检查/404 明确升级；旧控制端忽略新增可选 modelPickers，超时取消，不产生执行。
+
+实现见 `ghostModelPicker.ts`、`PluginModelPickerHost.tsx`、`mobilePageService.ts`；
+作者契约见 `cindy-plugin-creator/references/plugin-agent-models.md`，回归见 `ghostModelPicker.test.ts`。
+
 
 ### 同账号插件资料同步
 
@@ -942,3 +964,18 @@ IPC 时追加对应专项规则要求的验证。
 不向插件提供设备私钥、账号 token 或其他插件数据，不为通道增加远程 Renderer IPC。
 接口和失败语义见 `FORGE_GUIDE` §4.10.2，协议与兼容边界见
 [协议兼容](protocol-compatibility.md#插件资料设备同步)。
+
+## 社区插件贡献入口
+
+个人作者可从来源可核实且已批准的本地 root 插件详情提交审核；已有公开插件的后续版本通过“发布插件”管理页提交，并核对当前提交授权。安装或运行批准本身不授予发布权。Host 复用导出快照原语和现有包自检，
+不弹保存/选文件框，不接受任意路径或独立资料。准备绑定原物理实例、安装目录、批准版本与账号；
+登录意图也须核对这些证据，不按同 ID 替换为另一个账号安装。私域 ledger 关联不可转 public；
+合法 public Broker 声明仍由服务端既有 public 规则与精确 ACL 判断，不靠声明直接拒绝。
+
+个人工具与旧企业 Forge 发布是独立能力入口。任务权限只决定是否可以执行公开写入，不决定
+public 身份归属；共享访客及插件托管/errand 任务与其 Worker 沿既有 restricted helper surface，
+不能借用 Host 个人发布能力。普通个人用户任务和正常 Worker 不因此被封禁。
+
+详见 [客户端实现与验证边界](../plugin-community-contribution.md) 和
+[HTTP 契约](../plugin-community-contribution-contract.md)。此改动涉及打包原语和授权边界，仍须人工 review
+及本规则第 5 节的插件基座白名单确认后方可合并；本地代码检查不替代该门禁。

@@ -17809,10 +17809,12 @@
   "pluginTaskWriteAccess": {
     "autoTitle": "Enable Auto approval",
     "autoMessage": "Allow “{{name}}” to use Auto approval?",
-    "autoDetail": "Cindy will review coordinator and Worker actions automatically. Actions requiring confirmation or denied actions still pause. This is not Full access. Only this session’s permission changes; plugin defaults stay unchanged.",
+    "autoDetail": "Cindy will review coordinator and Worker actions automatically. Actions requiring confirmation or denied actions still pause. This is not Full access. The choice is saved in plugin AI settings without changing global permissions for other tasks.",
+    "autoTaskDetail": "Cindy will review coordinator and Worker actions automatically. Actions requiring confirmation or denied actions still pause. This is not Full access. Only this session’s permission changes; plugin defaults stay unchanged.",
     "title": "Allow this plugin’s AI to edit files?",
     "message": "Allow the AI in “{{name}}” to edit files and continue?",
-    "detail": "This allows edits only for the current session. A separate working directory is not a system sandbox; commands still follow Cindy permission checks. You can change this in the session’s permission menu.",
+    "detail": "This sets the plugin’s AI permission to Allow edits for future tasks too. A separate working directory is not a system sandbox; commands still follow Cindy permission checks. You can switch back to read-only in the plugin’s AI settings.",
+    "taskDetail": "This allows edits only for the current session. A separate working directory is not a system sandbox; commands still follow Cindy permission checks. You can change this in the session’s permission menu.",
     "allow": "Allow and continue",
     "cancel": "Not now"
   },

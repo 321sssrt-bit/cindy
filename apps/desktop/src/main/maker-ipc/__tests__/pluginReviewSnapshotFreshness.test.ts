@@ -66,7 +66,7 @@ function fixture() {
   module.exports.run(db);
   resolvePath.mockReset().mockResolvedValue('/answer');
   const control = { phase: '', mutate: () => {}, storageUnavailable: false,
-    accountChanged: false, ownershipValid: true, authorized: true, approvalRevision: 'install' as string | null, permissionMode: 'auto' };
+    accountChanged: false, ownershipValid: true, authorized: true, approvalRevision: 'install' as string | null, usesDefaults: true, permissionMode: 'auto' };
   const mutate=(at:string)=>{if(control.phase===at)control.mutate();};
   const epoch={userId:'owner',clientEpoch:1,client:{drizzle:drizzle(db),
     tx:async(_name:string,args:unknown)=>{const projection=readAutoReviewProjectionTransaction(db,args);mutate('projection');return projection;},
@@ -80,7 +80,7 @@ function fixture() {
     getCurrentDbClientSnapshot:()=>control.accountChanged ? null : epoch,sessions,orcaWorkers,orcaTeams,eq,fastModeToStorage,
     createPluginTaskStore:()=>({get:async()=>db.prepare('SELECT id,target_id AS targetId,plugin_id AS pluginId,operation,payload,revision FROM plugin_task_requests').get()}),
     drainPersistQueue:async()=>mutate('drain'),pluginTaskServiceForCurrentOwner:()=>({get:async()=>{mutate('ownership');if(!control.ownershipValid)throw Error('ownership revoked');}}),
-    getPluginTaskDefaults:()=>({permissionMode:control.permissionMode}),readPluginTaskPlanReceipt,
+    getPluginTaskDefaults:()=>control.usesDefaults ? ({permissionMode:control.permissionMode}) : undefined,readPluginTaskPlanReceipt,
     pluginTaskAuthorizationRevision:()=>control.approvalRevision,isPluginTaskAuthorized:()=>control.authorized,
   };
   new Function(...Object.keys(deps),js)(...Object.values(deps));
@@ -158,6 +158,7 @@ const duringPathChanges = {
   ownership: ({control}: ReturnType<typeof fixture>) => {control.ownershipValid=false;},
   approval: ({control}: ReturnType<typeof fixture>) => {control.authorized=false;},
   approvalRemoved: ({control}: ReturnType<typeof fixture>) => {control.approvalRevision=null;},
+  configAsk: ({control}: ReturnType<typeof fixture>) => {control.permissionMode='default';},
   account: ({control}: ReturnType<typeof fixture>) => {control.accountChanged=true;},
   userInstruction: ({db}: ReturnType<typeof fixture>) => db.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?,?,NULL)').run(
     'revoke','worker','revoke','user',JSON.stringify({text:'Do not run'}),1,JSON.stringify({delivery:'turn',autoReviewUserText:'Do not run'})),
@@ -193,10 +194,9 @@ it.each(['initial', 'after cached allow'].flatMap(phase => Object.keys(duringPat
     } finally {f.db.close();}
   },
 );
-// unit: preferences are not authorization; changing them must not invalidate a
-// still-approved task's review. Actual permission/approval revocation stays above.
-it('ignores card defaults in Auto authorization and its cache identity', async () => {
-  const f = fixture();
+// unit: hidden defaults must not enter the Auto review authority or cache key.
+it('ignores only a hidden card in Auto authorization and its cache identity', async () => {
+  const f = fixture(); f.control.usesDefaults = false;
   try {
     setPlan(f.db);
     const before = await f.resolve(request);

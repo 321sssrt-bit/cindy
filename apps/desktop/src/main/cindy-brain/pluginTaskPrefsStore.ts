@@ -1,12 +1,12 @@
 /**
  * User preferences for plugin-created ordinary tasks. The legacy errand adapter
- * consumes the effective defaults; this store does not grant task authority.
+ * consumes these same preferences; it does not own the model/permission policy.
  * Keep ghost-errand-prefs.json and its `errand`/`sessions` keys for installed-plugin
  * compatibility. `sessions` belongs only to the old errand sessionKey adapter.
  * Empty model preferences use the originating task or the current new-task route.
  * New ordinary tasks use ask; the legacy adapter retains its historical default.
- * Hidden cards retain their saved values but provide no runtime defaults.
- * Host capability approval and Session permissions are independent of this store.
+ * Permissions stay independently user-owned, never caller-inherited.
+ * A plugin that hides its Host task card does not read or use this store at runtime.
  * Model admission belongs to the shared ordinary-session resolver, never this store.
  * The same model fields are the plugin's single "model" preference: Cindy quick
  * answers (cindy.text.oneshot) use them too; empty = the system auxiliary model.
@@ -29,7 +29,7 @@ import {
   readLegacyOneshotPins,
 } from './cindyPrefsStore.js';
 
-/** Normalize a creation default, not an authorization ceiling. */
+/** User-owned plugin task permission policy. A model source never grants authority. */
 export function clampPluginTaskPermissionMode(value: unknown, fallback: GhostErrandPermissionMode = 'ask'): GhostErrandPermissionMode {
   return typeof value === 'string' && (GHOST_ERRAND_PERMISSION_MODES as readonly string[]).includes(value)
     ? value as GhostErrandPermissionMode : fallback;

@@ -158,6 +158,7 @@ function fixture() {
   const live = { instanceId: execution.instanceId, stablePlanModeState: { enabled: false, generation: 0 } };
   const deps: PluginTaskServiceDeps = {
     store,
+    readPermissionMode: () => 'auto',
     readModelPreference: () => route,
     assertAuthorized: () => {
       if (!current) throw new Error('Owner changed');
@@ -212,7 +213,7 @@ const permissionCreatorCode = ts.transpileModule('return (' + permissionCreatorS
   permissionCreatorStart + '      createSession: '.length,
   permissionCreatorSource.indexOf('\n      },', permissionCreatorStart) + 8,
 ) + ');', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-function useProductionPermissionCreator(f: ReturnType<typeof fixture>, configured: { permissionMode: string }) {
+function useProductionPermissionCreator(f: ReturnType<typeof fixture>, configured: { permissionMode: string }, useDefaults = true) {
   const snapshot = {};
   const persist = vi.fn(async (options: { sessionId: string; title: string; permissionMode: string;
     onPersistenceStarted(): void; shouldContinue(): boolean }) => {
@@ -221,18 +222,19 @@ function useProductionPermissionCreator(f: ReturnType<typeof fixture>, configure
     f.tasks.set(options.sessionId, { taskId: options.sessionId, title: options.title, status: 'active',
       resolvedConfig: f.route, revision: 1, permissionMode: options.permissionMode });
   });
-  const deps = { assertPlugin: () => f.deps.assertAuthorized('p'), getPluginTaskDefaults: () => ({ ...configured }),
+  const deps = { assertPlugin: () => {}, getPluginTaskDefaults: () => useDefaults ? ({ ...configured }) : undefined,
     resolveRoute: (...args: Parameters<typeof f.deps.resolveRoute>) => f.deps.resolveRoute(...args),
     PluginTaskError, isPluginTaskPermissionAllowed, createPluginTaskSession: persist,
     clampPluginTaskPermissionMode: (mode: unknown) => mode ?? 'ask', snapshot,
     getCurrentDbClientSnapshot: () => snapshot, isPluginTaskAuthorized: () => true,
   };
+  f.deps.readPermissionMode = () => useDefaults ? configured.permissionMode : undefined;
   f.deps.createSession = new Function(...Object.keys(deps), permissionCreatorCode)(...Object.values(deps));
   return persist;
 }
 
 // unit: new per-create permissions must reach ordinary Session persistence while
-// keeping Host approval separate. Previous cases only exercised the default.
+// remaining within the user policy. Previous cases only exercised the default.
 it('persists the chosen creation permission without changing defaults or duplicate requests', async () => {
   const f = fixture(), configured = { permissionMode: 'bypassPermissions' };
   const persist = useProductionPermissionCreator(f, configured);
@@ -250,31 +252,31 @@ it('persists the chosen creation permission without changing defaults or duplica
   expect(configured).toEqual({ permissionMode: 'bypassPermissions' });
 });
 
-// unit: task parameters are independent of host defaults; installing/enabling
-// tasks is still required. Previously an empty/hidden card capped creation at ask.
-it('creates and sends with explicit permission independently of card defaults', async () => {
+// unit: a hidden card cannot cap explicit creation, sending or queued acceptance.
+// Enabled-card cases below retain their original ceiling and revocation behavior.
+it.each(['auto', 'bypassPermissions'] as const)('uses the hidden plugin configuration through %s creation and queued acceptance', async permissionMode => {
   const f = fixture(), configured = { permissionMode: 'ask' };
-  useProductionPermissionCreator(f, configured);
-  const task = await f.service.create('p', { requestKey: 'independent', title: 'Work', permissionMode: 'auto' });
+  useProductionPermissionCreator(f, configured, false);
+  const task = await f.service.create('p', { requestKey: 'independent', title: 'Work', permissionMode });
   configured.permissionMode = 'plan';
   const run = await f.service.send('p', { taskId: task.taskId, expectedRevision: task.revision, requestKey: 'input', text: 'Continue' });
   await f.service.accept(task.taskId, { clientId: run.inputMessageId }, f.execution);
   f.deps.inspect = async () => ({ execution: f.execution, pending: [] });
   expect((await f.service.getRun('p', run.runId)).status).toBe('running');
-  expect((await f.service.get('p', task.taskId)).permissionMode).toBe('auto');
+  expect((await f.service.get('p', task.taskId)).permissionMode).toBe(permissionMode);
   expect(configured.permissionMode).toBe('plan');
 });
 
 // unit: full access must work through ordinary send/accept, but a revoked user
-// capability approval must block the queued input before execution. No full-access path existed before.
-it('delivers an authorized full-access task and rechecks capability approval before acceptance', async () => {
+// ceiling must block the queued input before execution. No full-access path existed before.
+it('delivers an authorized full-access task and rechecks the ceiling before acceptance', async () => {
   const f = fixture(), configured = { permissionMode: 'bypassPermissions' };
   useProductionPermissionCreator(f, configured);
   const task = await f.service.create('p', { requestKey: 'full', title: 'Work', permissionMode: 'bypassPermissions' });
   const run = await f.service.send('p', { taskId: task.taskId, expectedRevision: task.revision,
     requestKey: 'send', text: 'Continue' });
   expect(f.deps.dispatch).toHaveBeenCalledOnce();
-  f.deps.assertAuthorized = () => { throw new PluginTaskError('PERMISSION_DENIED', 'Plugin approval revoked'); };
+  configured.permissionMode = 'auto';
   await expect(f.service.accept(task.taskId, { clientId: run.inputMessageId }, f.execution))
     .rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   await expect(f.service.create('p', { requestKey: 'denied', title: 'Work', permissionMode: 'bypassPermissions' }))
@@ -285,22 +287,19 @@ it('rejects an unauthorized creation permission before reserving a task', async 
   const f = fixture(), configured = { permissionMode: 'ask' };
   const persist = useProductionPermissionCreator(f, configured);
   const request = { requestKey: 'new', title: 'Work', permissionMode: 'auto' as const };
-  const allowed = f.deps.assertAuthorized;
-  f.deps.assertAuthorized = () => { throw new PluginTaskError('PERMISSION_DENIED', 'Plugin approval revoked'); };
   await expect(f.service.create('p', request)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   expect(persist).not.toHaveBeenCalled();
   expect(f.rows.size).toBe(0);
-  f.deps.assertAuthorized = allowed;
+  configured.permissionMode = 'auto';
   expect((await f.service.create('p', request)).permissionMode).toBe('auto');
 });
 
 it.each(['route', 'persistence'] as const)('rechecks creation permission after %s preparation', async phase => {
   const f = fixture(), configured = { permissionMode: 'auto' };
   const persist = useProductionPermissionCreator(f, configured);
-  const revoke = () => { f.deps.assertAuthorized = () => { throw new PluginTaskError('PERMISSION_DENIED', 'Plugin approval revoked'); }; };
-  if (phase === 'route') f.deps.resolveRoute = async () => { revoke(); return f.route; };
+  if (phase === 'route') f.deps.resolveRoute = async () => { configured.permissionMode = 'ask'; return f.route; };
   else persist.mockImplementationOnce(async options => {
-    revoke();
+    configured.permissionMode = 'ask';
     options.onPersistenceStarted();
   });
   await expect(f.service.create('p', { requestKey: 'new', title: 'Work', permissionMode: 'auto' }))
@@ -965,9 +964,9 @@ describe('plugin ordinary task receipts', () => {
   });
 });
 
-it('unknown task permission blocks new sends but preserves inspection of existing work',async()=>{
+it('permission elevation blocks new sends but preserves inspection of existing work',async()=>{
  const f=fixture();const task=await f.create();const run=await f.send();
- f.tasks.set(task.taskId,{...f.tasks.get(task.taskId)!,permissionMode:'unknown'});
+ f.tasks.set(task.taskId,{...f.tasks.get(task.taskId)!,permissionMode:'bypassPermissions'});
  expect((await f.service.get('p',task.taskId)).taskId).toBe(task.taskId);
  expect((await f.service.getRun('p',run.runId)).runId).toBe(run.runId);
  await expect(f.service.send('p',{taskId:task.taskId,expectedRevision:task.revision,requestKey:'new-send',text:'new'})).rejects.toMatchObject({code:'PERMISSION_DENIED'});
@@ -1002,7 +1001,7 @@ it('freezes owned plan and retains settled labels',async()=>{const f=fixture(),t
 
 it('rechecks permissions when queued input reaches native dispatch', async () => {
  const f=fixture(), run=await f.send();
- f.tasks.get(run.taskId)!.permissionMode='unknown';
+ f.tasks.get(run.taskId)!.permissionMode='bypassPermissions';
  await expect(f.service.accept(run.taskId,{clientId:run.inputMessageId},f.execution)).rejects.toMatchObject({code:'PERMISSION_DENIED'});
  expect(JSON.parse(f.rows.get(run.runId)!.payload).status).toBe('queued');
 });
@@ -1173,12 +1172,12 @@ describe('current plugin dispatch authority', () => {
   it.each(['before', 'route', 'insert'])('blocks a new dispatch after revocation at %s', async point => {
     const f = fixture(), task = await f.create();
     f.tasks.get(task.taskId)!.permissionMode = 'auto';
-    const revoke = () => { f.tasks.get(task.taskId)!.planModeEnabled = true; };
-    if (point === 'before') revoke();
-    if (point === 'route') f.deps.resolveRoute = async () => { revoke(); return f.route; };
+    let mode = 'auto'; f.deps.readPermissionMode = () => mode;
+    if (point === 'before') mode = 'plan';
+    if (point === 'route') f.deps.resolveRoute = async () => { mode = 'plan'; return f.route; };
     if (point === 'insert') {
       const insert = f.deps.store.insert;
-      f.deps.store.insert = async row => { await insert(row); revoke(); };
+      f.deps.store.insert = async row => { await insert(row); mode = 'plan'; };
     }
     const attempt = f.service.send('p', {taskId:task.taskId,expectedRevision:task.revision,requestKey:'new',text:'input'});
     if (point === 'insert') await expect(attempt).resolves.toMatchObject({status:'failed'});
@@ -1188,12 +1187,12 @@ describe('current plugin dispatch authority', () => {
   it.each(['before', 'route', 'save'])('blocks queued acceptance after revocation at %s and keeps cancel available', async point => {
     const f = fixture(), run = await f.send();
     f.tasks.get(run.taskId)!.permissionMode = 'auto';
-    const revoke = () => { f.tasks.get(run.taskId)!.planModeEnabled = true; };
-    if (point === 'before') revoke();
-    if (point === 'route') f.deps.resolveRoute = async () => { revoke(); return f.route; };
+    let mode = 'auto'; f.deps.readPermissionMode = () => mode;
+    if (point === 'before') mode = 'plan';
+    if (point === 'route') f.deps.resolveRoute = async () => { mode = 'plan'; return f.route; };
     if (point === 'save') {
       const save = f.deps.store.save;
-      f.deps.store.save = async row => { await save(row); revoke(); };
+      f.deps.store.save = async row => { await save(row); mode = 'plan'; };
     }
     await expect(f.service.accept(run.taskId,{clientId:run.inputMessageId},f.execution)).rejects.toMatchObject({code:'PERMISSION_DENIED'});
     // Same-key retries observe the existing receipt; they never reopen dispatch.
@@ -1211,7 +1210,7 @@ describe('current plugin dispatch authority', () => {
       f.deps.store.insert = async row => {
         await insert(row);
         if (change === 'plan') f.tasks.get(task.taskId)!.planModeEnabled = true;
-        if (change === 'permission') f.tasks.get(task.taskId)!.permissionMode = 'unknown';
+        if (change === 'permission') f.deps.readPermissionMode = () => 'plan';
         if (change === 'archive') f.tasks.get(task.taskId)!.status = 'archived';
         if (change === 'read failure') f.deps.readSession = vi.fn()
           .mockRejectedValueOnce(new Error('Read unavailable')).mockImplementation(readSession);
@@ -1228,7 +1227,7 @@ describe('current plugin dispatch authority', () => {
       // Restored authority permits an explicit new request, never replay of the old input.
       f.deps.store.insert = insert;
       Object.assign(f.tasks.get(task.taskId)!, { planModeEnabled: false, status: 'active' });
-      f.tasks.get(task.taskId)!.permissionMode = 'auto';
+      f.deps.readPermissionMode = () => 'auto';
       expect(await restarted.send('p', request)).toEqual(run);
       expect(await restarted.send('p', { ...request, requestKey: 'new' })).toMatchObject({ status: 'queued' });
       expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
@@ -1433,7 +1432,7 @@ it.each([
   });
   const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
   const preferenceStart = source.indexOf('      readModelPreference:');
-  const preference = source.slice(preferenceStart, source.indexOf('      readLiveSession:', preferenceStart));
+  const preference = source.slice(preferenceStart, source.indexOf('      readPermissionMode:', preferenceStart));
   const resolveStart = source.indexOf('    const resolveRoute = async');
   const resolve = source.slice(resolveStart, source.indexOf('    const readExecution', resolveStart));
   const deps = { getPluginTaskDefaults: () => config, getSelectedNewMakerRoute: () => selected,

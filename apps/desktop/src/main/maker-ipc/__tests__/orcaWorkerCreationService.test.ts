@@ -50,15 +50,15 @@ describe('Host provenance across Orca creation waits', () => {
   };
   function setup(action: Action, phase: string, change: string, entry = 'task') {
     let epoch = { client: {} }, enabled = true;
-    const directoryCase = ['lead-directory', 'pick'].includes(change);
+    const directoryCase = ['config', 'pick'].includes(change);
     const candidate = path.resolve('synthetic-worker');
-    let picked = change === 'pick';
+    let configured = change === 'config' ? candidate : undefined, picked = change === 'pick';
     let directoryResolved = false, directoryReads = 0;
     let queuedAcceptance: (() => void | Promise<void>) | undefined;
     let receipt: { operation: string; pluginId: string; payload: string } | null = change === 'ordinary' ? null : {
       operation: 'create', pluginId: 'plugin', payload: JSON.stringify({ ownershipRevoked: change === 'already-revoked' }),
     };
-    const task = { revision: 1, status: 'active', permissionMode: 'auto', planModeEnabled: false, workingDir: change === 'lead-directory' ? candidate : path.resolve('synthetic-project') };
+    const task = { revision: 1, status: 'active', permissionMode: 'auto', planModeEnabled: false, workingDir: path.resolve('synthetic-project') };
     const mutate = (point: string) => {
       if (point !== phase) return;
       if (change === 'uninstalled' || change === 'reinstalled') {
@@ -70,7 +70,7 @@ describe('Host provenance across Orca creation waits', () => {
       else if (change === 'plan') task.planModeEnabled = true;
       else if (change === 'archived') task.status = 'archived';
       else if (change === 'disabled') enabled = false;
-      else if (change === 'lead-directory') task.workingDir = path.resolve('other-project');
+      else if (change === 'config') configured = undefined;
       else if (change === 'pick') picked = false;
     };
     const bindings = {
@@ -86,10 +86,10 @@ describe('Host provenance across Orca creation waits', () => {
         if (!receipt || receipt.pluginId !== pluginId || JSON.parse(receipt.payload).ownershipRevoked) throw new PluginTaskError('TASK_NOT_FOUND', 'Revoked');
         return { ...task };
       } }),
-      isPluginTaskAuthorized: () => enabled, getPluginTaskDefaults: () => ({ permissionMode: 'auto', workingDir: candidate }),
+      isPluginTaskAuthorized: () => enabled, getPluginTaskDefaults: () => change === 'hidden-card' ? undefined : ({ permissionMode: 'auto', workingDir: directoryCase ? configured : task.workingDir }),
       resolvePluginWorkerDirectory: vi.fn(async () => {
         directoryResolved = true; directoryReads = 0;
-        if (directoryCase && task.workingDir !== candidate && !picked) throw new PluginTaskError('PERMISSION_DENIED', 'Directory revoked');
+        if (directoryCase && !configured && !picked) throw new PluginTaskError('PERMISSION_DENIED', 'Directory revoked');
         return directoryCase ? candidate : task.workingDir;
       }), isGhostPickedDir: () => picked,
     };
@@ -153,6 +153,18 @@ describe('Host provenance across Orca creation waits', () => {
       return runAcceptedCallback(queuedAcceptance, WORKER_SESSION_ID, 'queued-1');
     } };
   }
+
+  // unit: opting out removes only this plugin's card from native Worker admission.
+  // Enabled-card config/pick revocation cases keep their original behavior.
+  it.each(['createWorker', 'enableTeam', 'startNew', 'startExisting'] as const)(
+    'runs %s with a hidden plugin card', async action => {
+      const { run, deps, lifecycleDeps } = setup(action, '', 'hidden-card');
+      await expect(run()).resolves.toMatchObject({ ok: true });
+      expect(lifecycleDeps.setWorkerPermissionMode).not.toHaveBeenCalled();
+      if (action === 'createWorker' || action === 'enableTeam')
+        expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'auto' }));
+    },
+  );
 
   function wireRemoteCreation(deps: OrcaWorkerCreationDeps) {
     deps.openRemoteWorker = vi.fn(async (input: Parameters<NonNullable<OrcaWorkerCreationDeps['openRemoteWorker']>>[0]) => ({
@@ -234,8 +246,8 @@ describe('Host provenance across Orca creation waits', () => {
     ['owner', 'missing', 'ask', 'plan', 'archived', 'disabled'].map(change => ({ action, phase: 'bootstrap', change }))));
   cases.push(...(['createWorker', 'enableTeam'] as Action[]).flatMap(action =>
     ['worker-write', 'role-write', 'release', 'final-task', 'final-source', ...(action === 'enableTeam' ? ['lead-activation'] : [])].flatMap(phase =>
-      ['lead-directory', 'pick'].map(change => ({ action, phase, change })))));
-  it.each((['createWorker', 'enableTeam'] as const).flatMap(action => ['lead-directory', 'pick'].flatMap(change => ['', 'accepted'].map(phase => ({ action, change, phase }))))) (
+      ['config', 'pick'].map(change => ({ action, phase, change })))));
+  it.each((['createWorker', 'enableTeam'] as const).flatMap(action => ['config', 'pick'].flatMap(change => ['', 'accepted'].map(phase => ({ action, change, phase }))))) (
     'retains $action $change directory authority after the queued reply: $phase', async ({ action, change, phase }) => {
       const { run, acceptQueued, deps, lifecycleDeps } = setup(action, phase, change, 'queued');
       expect(await run()).toMatchObject({ ok: true, dispatched: false });
@@ -266,7 +278,7 @@ describe('Host provenance across Orca creation waits', () => {
   });
   it.each((['createWorker', 'enableTeam'] as const).flatMap(action =>
     (action === 'createWorker' ? ['task', 'placeholder'] : ['task', 'placeholder', 'deferred']).flatMap(entry =>
-      ['lead-directory', 'pick'].flatMap(change => ['', 'accepted'].map(phase => ({ action, entry, change, phase }))))))(
+      ['config', 'pick'].flatMap(change => ['', 'accepted'].map(phase => ({ action, entry, change, phase }))))))(
     'retains resolved scope until $action $entry acceptance: $change $phase', async ({ action, entry, change, phase }) => {
       const { run, deps, lifecycleDeps } = setup(action, phase, change, entry);
       const result = await run();
@@ -3656,7 +3668,7 @@ describe('production plugin Auto admission after reservation', () => {
     let receiptReads = 0;
     let reservedTaskReads = 0;
     const epoch = { client: {} };
-    const revoke = () => { enabled = false; };
+    const revoke = () => { mode = 'acceptEdits'; };
     const task = () => ({ revision: 1, status: taskStatus, permissionMode: taskMode, planModeEnabled, workingDir: path.resolve('repo') });
     const planItem = { label: 'sample', workingDir: path.resolve(point === 'canonical-directory' ? 'alias' : point === 'different-directory' ? 'other' : 'repo'), route: { agentKind: 'codex', model: 'gpt-5.5', providerId: 'xd', effort: 'medium', fastMode: point === 'normalized-fast' } };
     const payload = () => JSON.stringify(planned ? { teamPlan: { concurrency: 2, items: [planItem] }, settledLabels: point === 'settled-label' ? ['sample'] : [] } : {});

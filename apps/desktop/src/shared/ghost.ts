@@ -6564,7 +6564,7 @@ export const GHOST_ERRAND_MIN_INTERVAL_MS = 10_000;
 export const GHOST_ERRAND_SESSION_KEY_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /**
- * 插件新建任务与普通任务使用同一三档；显式参数优先，其次有效默认配置，缺省 ask。
+ * 插件新建任务与普通任务使用同一三档；启用卡片时受本插件设置上限约束，隐藏时不读取卡片。
  * plan / acceptEdits 仅保留旧配置及旧接口兼容，不自动升权或丢弃历史选择。
  */
 export const GHOST_ERRAND_PERMISSION_MODES = [...PLUGIN_TASK_PERMISSION_MODES, 'plan', 'acceptEdits'] as const;

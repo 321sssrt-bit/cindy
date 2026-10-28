@@ -1513,6 +1513,7 @@ import {
 import {
   clampPluginTaskPermissionMode,
   setPluginTaskConfigValidator,
+  writePluginTaskConfig,
   readGhostErrandSessionId,
   writeGhostErrandSessionId,
 } from '../cindy-brain/pluginTaskPrefsStore.js';
@@ -13967,7 +13968,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const routeUnavailable = (): never => { throw new PluginTaskError('ROUTE_UNAVAILABLE', 'The selected provider, model or effort is unavailable'); };
     const resolveRoute = async (pluginId: string, requested?: PluginTaskRoute, callId?: string): Promise<PluginTaskRoute> => {
       assertPlugin(pluginId);
-      const selection = requested ?? getPluginTaskDefaults(pluginId);
+      const selection = { ...getPluginTaskDefaults(pluginId), ...requested };
       const sourceSessionId = getPluginTaskSourceSessionId(pluginId, callId);
       if (callId && !sourceSessionId && !(selection.agentKind && selection.model && selection.providerId)) throw new PluginTaskError('ROUTE_UNAVAILABLE', '发起任务已不可用，请重新调用，或在面板选择模型后创建任务');
       try {
@@ -13993,7 +13994,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       },
       acceptInvocation: acceptPluginInvocation,
       readModelPreference: pluginId => {
-        const config = getPluginTaskDefaults(pluginId);
+        const config = getPluginTaskDefaults(pluginId) ?? {};
         // Match the shared resolver: a complete explicit identity does not
         // inherit the new-task selection; partial/reset settings can do so.
         const fallback = config.agentKind && config.model && config.providerId
@@ -14001,6 +14002,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         return { ...config, inheritedDefault: fallback ? JSON.stringify([
           fallback.harness, fallback.model, fallback.providerId, fallback.effort, fallback.fastMode,
         ]) : undefined };
+      },
+      readPermissionMode: pluginId => {
+        const config = getPluginTaskDefaults(pluginId);
+        return config ? clampPluginTaskPermissionMode(config.permissionMode) : undefined;
       },
       readLiveSession: taskId => maker.getSession(taskId),
       setModel: async (taskId, route, assertUnchanged) => {
@@ -14036,15 +14041,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       createSession: async (pluginId, taskId, title, route, isolatedWorkspace, requestedRoute, onPersistenceStarted, callId, hidden, targetContext, permissionMode) => {
         assertPlugin(pluginId);
         const cfg = getPluginTaskDefaults(pluginId);
-        const configuredPermission = clampPluginTaskPermissionMode(cfg.permissionMode);
+        const configuredPermission = clampPluginTaskPermissionMode(cfg?.permissionMode);
+        if (cfg && permissionMode !== undefined && !isPluginTaskPermissionAllowed(permissionMode, configuredPermission))
+          throw new PluginTaskError('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
         const configurationIsCurrent = () => {
           targetContext?.assertCurrent();
           const current = getPluginTaskDefaults(pluginId);
-          return (targetContext || isolatedWorkspace || current.workingDir === cfg.workingDir)
-            && (permissionMode !== undefined || current.permissionMode === cfg.permissionMode)
-            && (requestedRoute !== undefined || (current.agentKind === cfg.agentKind && current.model === cfg.model
-              && current.providerId === cfg.providerId && current.effort === cfg.effort
-              && current.fastMode === cfg.fastMode));
+          if (!cfg || !current) return cfg === current;
+          return current.workingDir === cfg.workingDir && current.permissionMode === cfg.permissionMode
+            && current.agentKind === cfg.agentKind && current.model === cfg.model
+            && current.providerId === cfg.providerId && current.effort === cfg.effort
+            && current.fastMode === cfg.fastMode;
         };
         // Receipt persistence/provider lookup can yield after the first resolution.
         // Reuse the resolver with the original request, then guard this configuration
@@ -14052,7 +14059,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const currentRoute = await resolveRoute(pluginId, requestedRoute, callId);
         if ((Object.keys(currentRoute) as Array<keyof PluginTaskRoute>).some(key => currentRoute[key] !== route[key]))
           throw new PluginTaskError('ROUTE_UNAVAILABLE', 'Plugin task route changed');
-        const requestedWorkingDir = targetContext?.workingDir ?? (!isolatedWorkspace ? cfg.workingDir : undefined);
+        const requestedWorkingDir = targetContext?.workingDir ?? (!isolatedWorkspace ? cfg?.workingDir : undefined);
         const workingDir = requestedWorkingDir
           ? await resolvePluginWorkerDirectory({
               requested: requestedWorkingDir, configuredDirectory: requestedWorkingDir,
@@ -14253,14 +14260,16 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         assertPlanInactive();
         if (task.planModeEnabled) throw new PluginTaskError('PERMISSION_DENIED', 'Exit Plan Mode before requesting write access');
         const mode = request.mode ?? 'acceptEdits';
+        const cfg = getPluginTaskDefaults(pluginId);
         assertCallerCurrent();
-        if (isPluginTaskPermissionAllowed(mode, task.permissionMode)) return { granted: true, task };
+        if ((!cfg || isPluginTaskPermissionAllowed(task.permissionMode, cfg.permissionMode)) && isPluginTaskPermissionAllowed(mode, task.permissionMode)) return { granted: true, task };
         if (pluginPermissionRequests.size) throw new PluginTaskError('TASK_BUSY', 'A permission request is already open');
         const identity = pluginWriteAccessIdentity(pluginId);
         const assertRequestCurrent = () => {
           assertCallerCurrent();
           if (snapshot !== getCurrentDbClientSnapshot() || identity !== pluginWriteAccessIdentity(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', 'Permission request identity changed');
         };
+        const before = JSON.stringify(cfg);
         const assertIdle = async () => {
           await inputCoordinator.ensureQueueRestored(task.taskId);
           assertRequestCurrent();
@@ -14290,12 +14299,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const result = request.mobilePageId ? { response: await showMobilePluginTaskPermission(pluginId, request.mobilePageId, {
             title: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoTitle' : 'pluginTaskWriteAccess.title'),
             message: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoMessage' : 'pluginTaskWriteAccess.message').replace('{{name}}', getInstalledGhostName(pluginId) ?? pluginId),
-            detail: `${task.title}\n\n${t(mode === 'auto' ? 'pluginTaskWriteAccess.autoDetail' : 'pluginTaskWriteAccess.detail')}`,
+            detail: `${task.title}\n\n${t(mode === 'auto' ? (cfg ? 'pluginTaskWriteAccess.autoDetail' : 'pluginTaskWriteAccess.autoTaskDetail') : (cfg ? 'pluginTaskWriteAccess.detail' : 'pluginTaskWriteAccess.taskDetail'))}`,
             allow: t('pluginTaskWriteAccess.allow'), cancel: t('pluginTaskWriteAccess.cancel'),
           }) ? 0 : 1 } : await dialog.showMessageBox({
             type: 'question', title: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoTitle' : 'pluginTaskWriteAccess.title'),
             message: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoMessage' : 'pluginTaskWriteAccess.message').replace('{{name}}', getInstalledGhostName(pluginId) ?? pluginId),
-            detail: t(mode === 'auto' ? 'pluginTaskWriteAccess.autoDetail' : 'pluginTaskWriteAccess.detail'),
+            detail: t(mode === 'auto' ? (cfg ? 'pluginTaskWriteAccess.autoDetail' : 'pluginTaskWriteAccess.autoTaskDetail') : (cfg ? 'pluginTaskWriteAccess.detail' : 'pluginTaskWriteAccess.taskDetail')),
             buttons: [t('pluginTaskWriteAccess.allow'), t('pluginTaskWriteAccess.cancel')], defaultId: 1, cancelId: 1,
           });
           if (result.response !== 0) return { granted: false };
@@ -14303,6 +14312,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           // permission writers never hold that fence while awaiting this queue.
           return await withBotPermissionChange(task.taskId, () => withSessionPermissionChange(task.taskId, () => service.completeOperation(() => withSessionRestartLock(task.taskId, async () => {
             assertRequestCurrent();
+            if (snapshot !== getCurrentDbClientSnapshot() || before !== JSON.stringify(getPluginTaskDefaults(pluginId))) throw new PluginTaskError('PERMISSION_DENIED', 'Account or permission settings changed');
             const fresh = await service.get(pluginId, task.taskId);
             if (fresh.status !== 'active') throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot request write access');
             if (fresh.planModeEnabled) throw new PluginTaskError('PERMISSION_DENIED', 'Exit Plan Mode before requesting write access');
@@ -14325,6 +14335,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               assertRequestCurrent();
               if (snapshot !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
               assertPlanInactive();
+              const currentConfig = getPluginTaskDefaults(pluginId);
+              if (currentConfig?.permissionMode !== cfg?.permissionMode) throw new PluginTaskError('PERMISSION_DENIED', 'Permission settings changed');
+              if (currentConfig && !isPluginTaskPermissionAllowed(mode, clampPluginTaskPermissionMode(currentConfig.permissionMode))) writePluginTaskConfig(pluginId, {...currentConfig, permissionMode: mode});
               broadcastSessionPatched(task.taskId, {permissionMode: mode});
               return { granted: true, task: updatedTask };
             } catch (error) {
@@ -14339,6 +14352,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       case 'startTeam': {
         const epoch = getCurrentDbClientSnapshot();
         const task = await service.get(pluginId, request.taskId);
+        const configuredDirectory = getPluginTaskDefaults(pluginId)?.workingDir;
         // Becoming Lead changes revision through orcaRole, but may not change admission facts.
         const admission = (view: typeof task) => JSON.stringify([view.resolvedConfig, view.permissionMode, view.planModeEnabled, view.workingDir]);
         const expectedAdmission = admission(task);
@@ -14348,6 +14362,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           const fresh = await service.get(pluginId, task.taskId);
           if (epoch !== getCurrentDbClientSnapshot()) throw new PluginTaskError('PERMISSION_DENIED', 'Account changed');
           assertPluginWorkerAutoAuthorized(pluginId, fresh);
+          if (configuredDirectory !== getPluginTaskDefaults(pluginId)?.workingDir) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin directory authorization changed');
           if ((!activationStarted && fresh.revision !== task.revision) || admission(fresh) !== expectedAdmission) throw new PluginTaskError('STALE_REVISION', 'Task changed during team activation');
         }, service.completeOperation);
         assertPluginTaskResult(result, 'Collaboration could not be started');
@@ -14356,12 +14371,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       case 'setTeamPlan': return withSendToSessionLock(request.taskId, async () => {
         const epoch = getCurrentDbClientSnapshot();
         const task = await service.get(pluginId, request.taskId);
+        const cfg = getPluginTaskDefaults(pluginId);
         const assertCurrent = () => {
-          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin directory authorization changed');
+          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(pluginId) || cfg?.workingDir !== getPluginTaskDefaults(pluginId)?.workingDir) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin directory authorization changed');
         };
         const items = [];
         for (const item of request.plan.items) {
-          const workingDir = await resolvePluginWorkerDirectory({requested:item.workingDir,leadDirectory:task.workingDir,isPickedDirectory:dir=>isGhostPickedDir(pluginId,dir),assertCurrent});
+          const workingDir = await resolvePluginWorkerDirectory({requested:item.workingDir,leadDirectory:task.workingDir,configuredDirectory:cfg?.workingDir,isPickedDirectory:dir=>isGhostPickedDir(pluginId,dir),assertCurrent});
           items.push({...item, workingDir});
         }
         const current = await service.get(pluginId, request.taskId);
@@ -14492,6 +14508,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     assertCreatePermission: (pluginId, permissionMode) => {
       if (!isPluginTaskAuthorized(pluginId)) throw new PluginTaskError('PERMISSION_DENIED', 'Plugin task capability is unavailable');
       if (!isPluginTaskPermissionMode(permissionMode)) throw new PluginTaskError('INVALID_REQUEST', 'Unsupported task creation permission');
+      const config = getPluginTaskDefaults(pluginId);
+      if (config && !isPluginTaskPermissionAllowed(permissionMode, clampPluginTaskPermissionMode(config.permissionMode)))
+        throw new PluginTaskError('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
     },
     assertProjectDispatch: async (pluginId, taskId) => {
       await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId);
@@ -14632,7 +14651,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // Legacy result-returning adapter; ordinary task configuration lives above.
   setGhostErrandRunner(
     createGhostErrandRunner({
-      readConfig: getPluginTaskDefaults,
+      readConfig: id => getPluginTaskDefaults(id) ?? {},
       readSessionId: readGhostErrandSessionId,
       writeSessionId: writeGhostErrandSessionId,
       getSessionRow: async (sessionId) => {
@@ -14745,13 +14764,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     createDraftSession: async (params) => {
       const assertOwner = captureSessionOwner();
       const config = getPluginTaskDefaults(params.ghostId);
-      const execution = await resolveSessionExecution(config, params.sourceSessionId);
+      const execution = await resolveSessionExecution(config ?? {}, params.sourceSessionId);
       assertOwner();
       const sessionId = await createPluginDraftSession({
         ...params,
         shouldContinue: () => { assertOwner(); return (params.shouldContinue?.() ?? true)
           && JSON.stringify(getPluginTaskDefaults(params.ghostId)) === JSON.stringify(config); },
-        defaults: { ...execution, effort: execution.effort ?? '', permissionMode: clampPluginTaskPermissionMode(config.permissionMode), agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind },
+        defaults: { ...execution, effort: execution.effort ?? '', permissionMode: clampPluginTaskPermissionMode(config?.permissionMode), agentKind: execution.agentKind === 'claude-code' ? 'cc' : execution.agentKind },
         notifySessionCreated: (info) => notifyGhostSessionEvent('created', info),
       });
       if (!sessionId) return null;
@@ -15871,7 +15890,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (task.status !== 'active') {
       throw new PluginTaskError('TASK_BUSY', 'Archived tasks cannot create Workers');
     }
-    if (!isPluginTaskAuthorized(pluginId) || task.planModeEnabled || task.permissionMode !== 'auto') {
+    const config = getPluginTaskDefaults(pluginId);
+    if (!isPluginTaskAuthorized(pluginId) || task.planModeEnabled || task.permissionMode !== 'auto' || (config && config.permissionMode !== 'auto')) {
       throw new PluginTaskError('PERMISSION_DENIED', 'Authorize Auto for the plugin coordinator before creating Workers');
     }
   };
@@ -16036,11 +16056,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       ) {
         throw new PluginTaskError('PERMISSION_DENIED', 'Plugin-owned tasks cannot run a Worker Agent on another computer');
       }
+      const cfg = getPluginTaskDefaults(receipt.pluginId);
       const resolveAuthorizedDirectory = (requested: string) => resolvePluginWorkerDirectory({
         requested, leadDirectory: task.workingDir,
-        isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId,dir),
+        configuredDirectory: cfg?.workingDir, isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId,dir),
         assertCurrent: () => {
-          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(receipt.pluginId)) throw new PluginTaskError('PERMISSION_DENIED','Plugin directory authorization changed');
+          if (epoch !== getCurrentDbClientSnapshot() || !isPluginTaskAuthorized(receipt.pluginId) || cfg?.workingDir !== getPluginTaskDefaults(receipt.pluginId)?.workingDir) throw new PluginTaskError('PERMISSION_DENIED','Plugin directory authorization changed');
         },
       });
       const directory = await resolveAuthorizedDirectory(params.workingDir ?? task.workingDir ?? '');
@@ -16062,8 +16083,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Last admission check also covers no-plan plugin tasks and revocation
       // while directory/receipt reads or the existing reservation were pending.
       assertPluginWorkerAutoAuthorized(receipt.pluginId, currentTask);
+      if (cfg?.workingDir !== getPluginTaskDefaults(receipt.pluginId)?.workingDir) throw new PluginTaskError('PERMISSION_DENIED','Plugin directory authorization changed');
       assertPluginWorkerDirectoryScope({ requested: directory, leadDirectory: currentTask.workingDir,
-        isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId, dir) });
+        configuredDirectory: cfg?.workingDir, isPickedDirectory: dir => isGhostPickedDir(receipt.pluginId, dir) });
       if (!data.teamPlan) return undefined; // Existing plugins retain their original behavior.
       if (!item || data.settledLabels?.includes(params.label)) throw new PluginTaskError('INVALID_REQUEST','Worker is not pending in the registered plan');
       const route = item.route;
@@ -18042,11 +18064,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       projection.revision,
     ]);
     if (epoch !== getCurrentDbClientSnapshot()) throw new Error('Account changed');
+    const config = getPluginTaskDefaults(receipt.pluginId);
     const approvalRevision = pluginTaskAuthorizationRevision(receipt.pluginId);
     return {
       pluginId: receipt.pluginId,
-      authorized: !!unchanged && approvalRevision !== null && isPluginTaskAuthorized(receipt.pluginId),
-      revision: [epoch.userId, epoch.clientEpoch, approvalRevision, link],
+      authorized: !!unchanged && approvalRevision !== null && isPluginTaskAuthorized(receipt.pluginId) && (!config || config.permissionMode === 'auto'),
+      revision: [epoch.userId, epoch.clientEpoch, approvalRevision, config?.permissionMode, link],
       plan: data.teamPlan, settledLabels: data.settledLabels,
       registeredRoute: data.route,
       session: { workingDir: session.workingDir, permissionMode: session.permissionMode, planModeEnabled: !!session.planModeEnabled, status: session.status,

@@ -14,7 +14,7 @@ const branch = source.slice(source.indexOf("      case 'startTeam': {"), source.
 const authorization = source.slice(source.indexOf('  const assertPluginWorkerAutoAuthorized ='), source.indexOf('  // Uninstall keeps the historical receipt'));
 const js = ts.transpileModule(`${authorization}\nreturn async function(pluginId, request) { switch(request.kind) { ${branch} } }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
-function fixture(initial = 'active', afterConfirmation = initial) {
+function fixture(initial = 'active', afterConfirmation = initial, useDefaults = true) {
   const epoch = {};
   const task = { taskId: 'task', status: initial, revision: 1, permissionMode: 'auto' };
   const service = { get: vi.fn(async () => ({ ...task })) };
@@ -25,7 +25,7 @@ function fixture(initial = 'active', afterConfirmation = initial) {
     return create();
   });
   const deps = { service, getCurrentDbClientSnapshot: () => epoch, PluginTaskError, assertPluginTaskResult, startOrcaTeamForCaller: start,
-    isPluginTaskAuthorized: () => true, getPluginTaskDefaults: () => ({ permissionMode: 'auto' }) };
+    isPluginTaskAuthorized: () => true, getPluginTaskDefaults: () => useDefaults ? ({ permissionMode: 'auto' }) : undefined };
   const run = new Function(...Object.keys(deps), js)(...Object.values(deps));
   return { run: () => run('plugin', { kind: 'startTeam', taskId: 'task' }), start, create };
 }
@@ -40,6 +40,11 @@ describe('plugin team active-task admission', () => {
     const f = fixture('active', 'archived');
     await expect(f.run()).rejects.toMatchObject({ code: 'TASK_BUSY' });
     expect(f.create).not.toHaveBeenCalled();
+  });
+  it('starts an approved task when its plugin has hidden the card', async () => {
+    const f = fixture('active', 'active', false);
+    await expect(f.run()).resolves.toEqual({ ok: true, teamId: 'team' });
+    expect(f.create).toHaveBeenCalledOnce();
   });
   it('starts a still-active task', async () => {
     const f = fixture();
@@ -171,7 +176,7 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
       orcaLifecycleService: createOrcaLifecycleService(deps) };
     const run = new Function(...Object.keys(callbacks), wired)(...Object.values(callbacks));
     const operation = run('plugin', { kind: 'startTeam', taskId: 'task' });
-    if (change === 'healthy' || change === 'configuredPermission' || change === 'configuredDirectory') {
+    if (change === 'healthy') {
       await expect(operation).resolves.toMatchObject({ ok: true, teamId: 'team' });
       expect(teamActive).toBe(true); expect(role).toBe('lead'); expect(vendorActive).toBe(true);
       expect(epoch).toBe(originalEpoch);

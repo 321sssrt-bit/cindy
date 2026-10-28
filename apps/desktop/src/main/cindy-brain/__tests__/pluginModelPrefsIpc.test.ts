@@ -59,7 +59,7 @@ describe('ghosts:errand-prefs (plugin model & tasks)', () => {
 
 // unit: invoke the real Host defaults reader; hidden values must never be read,
 // and opting back in must expose the original saved values without migration.
-const createDefaults = createGhostProductionCallbacks<{ getPluginTaskDefaults(id: string): Record<string, unknown> }>({
+const createDefaults = createGhostProductionCallbacks<{ getPluginTaskDefaults(id: string): Record<string, unknown> | undefined }>({
   functions: ['getPluginTaskDefaults'],
 });
 it('opts out of every saved default without modifying storage or affecting another plugin', () => {
@@ -68,11 +68,11 @@ it('opts out of every saved default without modifying storage or affecting anoth
   let hidden = true;
   const api = createDefaults({ readPluginTaskConfig: readConfig, findGhostForInstanceId: (id: string) =>
     id === 'missing' ? null : ({ manifest: { showTaskPreferences: id === 'hidden' ? !hidden : undefined } }) });
-  expect(api.getPluginTaskDefaults('hidden')).toEqual({});
-  expect(api.getPluginTaskDefaults('missing')).toEqual({});
+  expect(api.getPluginTaskDefaults('hidden')).toBeUndefined();
+  expect(api.getPluginTaskDefaults('missing')).toBeUndefined();
   expect(readConfig).not.toHaveBeenCalled();
   configs.hidden.permissionMode = 'ask';
-  expect(api.getPluginTaskDefaults('hidden')).toEqual({});
+  expect(api.getPluginTaskDefaults('hidden')).toBeUndefined();
   expect(api.getPluginTaskDefaults('visible')).toEqual(configs.visible);
   hidden = false;
   expect(api.getPluginTaskDefaults('hidden')).toEqual(configs.hidden);

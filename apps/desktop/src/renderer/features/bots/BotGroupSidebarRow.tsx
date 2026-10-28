@@ -154,20 +154,18 @@ export function BotGroupSidebarRow({
             {planLine}
           </span>
         ) : (
-          <>
-            <span className="shrink-0">{names}</span>
-            <span className="min-w-0 truncate">
-              {waiting ? (
-                t('bots.groupChat.sidebar.waiting')
-              ) : (
-                <BotGenerationLabel
-                  sessionId={activity?.sessionId}
-                  phase={activity?.workingPhase ?? 'thinking'}
-                  startedAt={activity?.startedAtMs ?? null}
-                />
-              )}
-            </span>
-          </>
+          <span className="min-w-0 flex-1 truncate" title={names}>
+            {names}{' '}
+            {waiting ? (
+              t('bots.groupChat.sidebar.waiting')
+            ) : (
+              <BotGenerationLabel
+                sessionId={activity?.sessionId}
+                phase={activity?.workingPhase ?? 'thinking'}
+                startedAt={activity?.startedAtMs ?? null}
+              />
+            )}
+          </span>
         )}
       </span>
     );

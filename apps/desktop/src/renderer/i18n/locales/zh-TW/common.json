@@ -22,6 +22,10 @@
     }
   },
   "localAgent": {
+    "createVisibleSessions": "在 Cindy 中建立可見任務",
+    "createVisibleSessionsHint": "僅影響此應用程式之後開啟的任務。訊息會儲存在 Cindy 中，關閉後已有任務仍保留。",
+    "saveFailed": "儲存設定失敗，請重試。",
+    "messageSource": "由本機應用程式「{{name}}」傳送",
     "title": "本機應用程式連線",
     "empty": "尚未連接應用程式",
     "description": "允許已授權的本機應用程式使用 Cindy 的模型與執行能力。供應商登入仍由 Cindy 管理。",
@@ -9614,6 +9618,10 @@
       "checkFailed": "沒能傳送，請重試",
       "dailyCheck": "每天幫我查一次",
       "dailyCheckMeta": "工作日 9:00，沒有新待辦不打擾",
+      "recentTasks": "近期任務",
+      "unread": "未讀結果",
+      "stopDailyCheck": "停止每天檢查",
+      "loadFailed": "待辦載入失敗，點擊重試",
       "dailyCheckFailed": "沒能儲存，請重試",
       "outputs": "輸出內容",
       "outputMeta": "{{time}} · {{task}}",
@@ -12855,6 +12863,7 @@
       "pluginSent": "由插件傳送",
       "pluginViewDetail": "檢視插件",
       "sourceIds": {
+        "localApp": "應用程式 ID：{{id}}",
         "mcpApp": "$t(mcpApps.serverId)",
         "session": "任務 ID：{{id}}",
         "teammate": "夥伴 ID：{{id}}",

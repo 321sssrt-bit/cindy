@@ -22,6 +22,10 @@
     }
   },
   "localAgent": {
+    "createVisibleSessions": "Create visible sessions in Cindy",
+    "createVisibleSessionsHint": "Applies to sessions this app opens from now on. Messages are saved in Cindy; existing sessions are kept when turned off.",
+    "saveFailed": "Could not save this setting. Try again.",
+    "messageSource": "Sent by local app “{{name}}”",
     "title": "Local App Connections",
     "empty": "No connected apps",
     "description": "Authorized local apps can use Cindy models and agent capabilities. Cindy keeps supplier credentials.",
@@ -9648,6 +9652,10 @@
       "checkFailed": "Couldn't send. Try again.",
       "dailyCheck": "Check every day",
       "dailyCheckMeta": "Weekdays at 9:00, quiet when nothing is new",
+      "recentTasks": "Recent tasks",
+      "unread": "Unread result",
+      "stopDailyCheck": "Stop daily checking",
+      "loadFailed": "Couldn’t load to-dos. Try again.",
       "dailyCheckFailed": "Couldn't save. Try again.",
       "outputs": "Outputs",
       "outputMeta": "{{time}} · {{task}}",
@@ -12901,6 +12909,7 @@
       "pluginSent": "Sent by plugin",
       "pluginViewDetail": "View plugin",
       "sourceIds": {
+        "localApp": "App ID: {{id}}",
         "mcpApp": "$t(mcpApps.serverId)",
         "session": "Session ID: {{id}}",
         "teammate": "Teammate ID: {{id}}",

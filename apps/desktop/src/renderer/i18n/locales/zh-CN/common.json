@@ -22,6 +22,10 @@
     }
   },
   "localAgent": {
+    "createVisibleSessions": "在 Cindy 中创建可见任务",
+    "createVisibleSessionsHint": "仅影响该应用之后打开的任务。消息会保存在 Cindy 中，关闭后已有任务仍保留。",
+    "saveFailed": "保存设置失败，请重试。",
+    "messageSource": "由本机应用「{{name}}」发送",
     "title": "本机应用连接",
     "empty": "尚未连接应用",
     "description": "允许已授权的本机应用使用 Cindy 的模型与执行能力。供应商登录仍由 Cindy 管理。",
@@ -9614,6 +9618,10 @@
       "checkFailed": "没能发送，请重试",
       "dailyCheck": "每天帮我查一次",
       "dailyCheckMeta": "工作日 9:00，没有新待办不打扰",
+      "recentTasks": "近期任务",
+      "unread": "未读结果",
+      "stopDailyCheck": "停止每天检查",
+      "loadFailed": "待办加载失败，点击重试",
       "dailyCheckFailed": "没能保存，请重试",
       "outputs": "输出内容",
       "outputMeta": "{{time}} · {{task}}",
@@ -12856,6 +12864,7 @@
       "pluginSent": "由插件发送",
       "pluginViewDetail": "查看插件",
       "sourceIds": {
+        "localApp": "应用 ID：{{id}}",
         "mcpApp": "$t(mcpApps.serverId)",
         "session": "任务 ID：{{id}}",
         "teammate": "伙伴 ID：{{id}}",

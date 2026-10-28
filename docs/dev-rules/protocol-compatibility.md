@@ -1,5 +1,29 @@
 # 跨端协议兼容
 
+## 本机应用使用远程供应商
+
+`remote-agent` caps 增量增加可选 `localApplication: true`。协商成功后，open 的
+`options.localApplication` 携带 MCP 名、`hostToolsOnly` 和授权存储键的 SHA-256 摘要；
+不携带调用方的 MCP URL、令牌或存储路径。接收方严格验证字段，并从自己的受控存储根
+按控制端／中转身份派生应用目录，再构造到反向隧道的工具入口。
+
+控制端及供应商组中转均要求实际执行端声明该能力；旧端不支持时拒绝启动，不丢弃隔离
+声明继续执行。新端收到无该字段的旧请求保持原行为。应用的客户端工具经既有 MCP 通道
+返回原调用方；`client-only` 禁止原生文件／命令反向请求。无需服务端或 Mobile 变更，
+不扩大 IPC allowlist、设备权限或分享范围，不新增重放策略；一次来源失败不重启其他连接。
+回归见 `local-agent/__tests__/remoteCatalog.test.ts`、`remote-agent/__tests__/roundtrip.test.ts`
+与 `groupRelay.test.ts`，公开应用合同见 [本机 Agent API](../local-agent-api.md)。
+
+## 本机应用的可见任务（2026-10-28）
+
+本机 Agent API v1 的 `session/open` 响应可选追加 `cindySessionId`。应用授权记录可选
+保存 `createVisibleSessions: true`，缺省与旧授权均为关闭；旧客户端忽略新增响应字段，
+不改变既有令牌、恢复句柄与工具策略。每次 open 创建新任务，调用方不能指定已有 Cindy 任务。
+设置操作 `local-agent:set-create-visible-sessions` 只接受本机受信 Renderer，不进入
+device-link 的 invoke 白名单。普通任务及消息沿用现有多端同步路径；本机应用来源使用
+已有 `sourcePlugin` 元数据的 `local-app:` 前缀。旧查看端可能按插件显示来源，
+不影响正文或执行授权；更新后显示本机应用。协议与验证入口见[本机 Agent API](../local-agent-api.md)。
+
 ## 群主与伙伴成员归属（2026-10-28）
 
 Chat Server 的 group 新建者和新任 owner 仅允许 human；非真人目标返回既有错误体中的

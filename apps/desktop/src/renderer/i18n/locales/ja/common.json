@@ -22,6 +22,10 @@
     }
   },
   "localAgent": {
+    "createVisibleSessions": "Cindy に表示するセッションを作成",
+    "createVisibleSessionsHint": "今後このアプリが開くセッションに適用します。メッセージは Cindy に保存され、オフにしても既存のセッションは残ります。",
+    "saveFailed": "設定を保存できませんでした。もう一度お試しください。",
+    "messageSource": "ローカルアプリ「{{name}}」から送信",
     "title": "ローカルアプリの接続",
     "empty": "接続済みのアプリはありません",
     "description": "承認したローカルアプリが Cindy のモデルと実行機能を利用できます。認証情報は Cindy が管理します。",
@@ -9614,6 +9618,10 @@
       "checkFailed": "送信できませんでした。もう一度お試しください",
       "dailyCheck": "毎日確認する",
       "dailyCheckMeta": "平日 9:00、新しい Todo がなければ通知しません",
+      "recentTasks": "最近のセッション",
+      "unread": "未読の結果",
+      "stopDailyCheck": "毎日の確認を停止",
+      "loadFailed": "To-do を読み込めませんでした。再試行してください。",
       "dailyCheckFailed": "保存できませんでした。もう一度お試しください",
       "outputs": "成果物",
       "outputMeta": "{{time}} · {{task}}",
@@ -12856,6 +12864,7 @@
       "pluginSent": "プラグインから送信",
       "pluginViewDetail": "プラグインを表示",
       "sourceIds": {
+        "localApp": "アプリ ID：{{id}}",
         "mcpApp": "$t(mcpApps.serverId)",
         "session": "セッション ID：{{id}}",
         "teammate": "仲間 ID：{{id}}",

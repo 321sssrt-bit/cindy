@@ -34,6 +34,7 @@ import { isSessionNotificationsMutedSync } from './localDb/sessionFlagRegistry';
 import type { ChatMessageNotification } from './maker-ipc/chatMessageNotifications';
 import { readSessionNotificationPreview, type SessionNotificationPreview } from './localDb/sessionNotificationPreview';
 import { drainSessionActiveTurnWrites, getSessionNotificationTurnSignal } from './localDb/sessionActiveTurn';
+import { assertTrustedAppRendererEvent } from './security/trustedAppRenderer';
 import { captureDataOwnerBroadcastScope, isDataOwnerBroadcastScopeCurrent } from './device-link/broadcast-tap';
 import { drainPersistQueue } from './messagePersistBroadcaster';
 import { createLogger } from './logger';
@@ -251,7 +252,10 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
 
   ipcMain.handle(
     'notification:show-session-event',
-    async (_event, payload: ShowSessionEventPayload): Promise<void> => {
+    async (event, payload: ShowSessionEventPayload): Promise<void> => {
+      // 这条 handler 的 channels / markAttention 全由 renderer 自报,先验来源:只认 Cindy
+      // 自有顶层 renderer(插件 webview 等其它 webContents 一律 PERMISSION_DENIED)。
+      assertTrustedAppRendererEvent(event);
       // renderer payload 不可信:mobile 通道会把 title/kind 送出本机(经 relay/APNs),
       // main 必须做运行时形状校验,TS 类型不算(electron-security 规则)。正文摘要
       // 不来自 renderer(main 侧读库),relay 有 per-user 频控、main 侧另有 5s
@@ -274,6 +278,8 @@ export function initNotificationService(deps: NotificationServiceDeps): void {
       // 「消息免打扰」任务不再走任何外向提醒通道（系统 toast / 灵动岛 / 手机 / 飞书）；
       // 未读与角标已在上一行照常记账，任务内的提醒不受影响。静音标记属于本机那行任务，
       // 其它设备的任务（markAttention === false）可能与本机有同 id 的无关任务行，不查。
+      // main 没有远端任务的权威映射（device-link 镜像在 renderer），这一位仍由 renderer 报，
+      // 来源边界靠上面那道 assertTrustedAppRendererEvent。
       if (markAttention && isSessionNotificationsMutedSync(sessionId)) return;
 
       // Content is read from main's transcript. Bound only enrichment, not delivery;

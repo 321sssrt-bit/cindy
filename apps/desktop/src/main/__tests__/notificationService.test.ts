@@ -102,6 +102,13 @@ vi.mock('../appBadgeService', () => ({
   markSessionNeedsAttention,
 }));
 
+// 高权限 IPC 的入站来源断言：真实实现要 BrowserWindow 与 app-content 登记表，
+// 这里只验它在该 handler 上被调到（且在任何副作用之前）。
+const assertTrustedAppRendererEvent = vi.fn((_event: unknown): void => {});
+vi.mock('../security/trustedAppRenderer', () => ({
+  assertTrustedAppRendererEvent: (event: unknown) => assertTrustedAppRendererEvent(event),
+}));
+
 // 「消息免打扰」判定：真实实现读账号库的同步索引，这里只验 handler 在哪个时刻用它。
 const isSessionNotificationsMutedSync = vi.fn((_sessionId: string): boolean => false);
 vi.mock('../localDb/sessionFlagRegistry', () => ({
@@ -171,6 +178,7 @@ async function freshService() {
   ownerScopeCurrent = true;
   ownerScopeKey = 'account-a:1';
   markSessionNeedsAttention.mockClear();
+  assertTrustedAppRendererEvent.mockReset();
   isSessionNotificationsMutedSync.mockReset().mockReturnValue(false);
   sendMobileSessionNotify.mockReset().mockReturnValue(true);
   getMobileNotifyGeneration.mockClear();
@@ -530,6 +538,30 @@ describe('notificationService — channels 分发', () => {
     expect(sendMobileSessionNotify).toHaveBeenCalled();
     await expect(invokeHandler({ sessionId: 'remote-1', title: 'x', kind: 'done', markAttention: 'no' }))
       .rejects.toThrow('invalid session event payload');
+  });
+
+  it('rejects a caller that is not the Cindy renderer before any channel or badge work', async () => {
+    const { initNotificationService } = await freshService();
+    initNotificationService(baseDeps(makeFeishuIm('ou_owner')));
+    // 插件 webview 等其它 webContents 能调到同一个 channel:来源断言失败时
+    // 不得记角标，也不得把 title/kind 经飞书或手机送出去。
+    assertTrustedAppRendererEvent.mockImplementationOnce(() => {
+      throw new Error('PERMISSION_DENIED');
+    });
+
+    await expect(
+      invokeHandler({
+        sessionId: 's1',
+        title: 'Fix login',
+        kind: 'done',
+        channels: { desktop: true, feishu: true, mobile: true },
+      }),
+    ).rejects.toThrow('PERMISSION_DENIED');
+
+    expect(assertTrustedAppRendererEvent).toHaveBeenCalledTimes(1);
+    expect(markSessionNeedsAttention).not.toHaveBeenCalled();
+    expect(notificationCtor).not.toHaveBeenCalled();
+    expect(sendMobileSessionNotify).not.toHaveBeenCalled();
   });
 
   it('does not treat a pre-drain running snapshot as a reason to lose the completion fallback', async () => {

@@ -34,7 +34,7 @@ import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { untrustedJsonBlock } from '../../shared/untrustedPrompt.js';
 import {
   BOT_GROUP_ATTACHMENTS_MAX, BOT_GROUP_CLIENT_ID, isBotGroupNoReplyText,
-  isBotGroupRuntimeFailureCode, type BotGroupRuntimeFailureCode,
+  type BotGroupRuntimeFailureCode,
   readImportedBotGroupRuntimeFailureCode,
   readBotGroupExecutionFailure, type BotGroupExecutionFailureView,
   buildBotGroupThreadShareCard, botGroupThreadShareOperationId, readBotGroupThreadShareCard,
@@ -1437,7 +1437,8 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const cachedCode = failureCodes.get(`${failure.executionId}:${failure.epoch}`);
       return [{ ...failure, botId: localBot(failure.botId)?.id ?? failure.botId,
         botName: member ? memberName(member) : actors.find(actor => actor.id === failure.botId)?.name ?? '',
-        code: !isBotGroupRuntimeFailureCode((row as Record<string, unknown>).failure_code) && cachedCode ? cachedCode : failure.code }];
+        // Older servers may normalize a newly introduced category to RUNTIME_ERROR.
+        code: failure.code === 'RUNTIME_ERROR' && cachedCode ? cachedCode : failure.code }];
     });
   }
   /** One execution gets one immutable terminal result, regardless of which boundary ends it. */
@@ -1654,7 +1655,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
           ...(run.plan?.kind === 'talk' ? { talkPlanId: run.plan.id }
             : run.plan ? { plan: { planId: run.plan.id, workDir: run.workspace?.workDir ?? '', sessionId: run.workspace?.ownerSessionId ?? undefined } } : {}),
           ...(threadRootId ? { threadRootId } : {}) });
-        if (!lane.ok) throw new Error(lane.errorCode);
+        if (!lane.ok) throw new Error(botGroupRuntimeFailureCode({ code: lane.errorCode, message: lane.message }));
         run.sessionId = lane.sessionId;
         run.releaseToolAuthority = registerGroupToolAuthority(lane.sessionId, {
           botId: bot.id, mode: execution.access_mode,

@@ -194,6 +194,22 @@ describe('parseChatQuoteSegments', () => {
     ]);
   });
 
+  it('does not let marker-looking prose disable legacy leading quotes', () => {
+    const content = '> old product quote\n\n正文：body > <!-- cindy-composer-quote -->';
+    expect(parseChatQuoteSegments(content)).toEqual([
+      { kind: 'quote', quote: { text: 'old product quote' } },
+      { kind: 'text', text: '正文：body > <!-- cindy-composer-quote -->' },
+    ]);
+  });
+
+  it('keeps a standalone marker-looking body line when no quote follows it', () => {
+    const content = `正文\n> <!-- cindy-composer-quote -->\n下一行`;
+    expect(parseChatQuoteSegments(content)).toEqual([
+      { kind: 'text', text: content },
+    ]);
+    expect(stripChatQuoteMarkerLines(content)).toBe(content);
+  });
+
   it('never treats unmarked body blockquotes as product quotes when any explicit marker exists', () => {
     const content = `> leading manual\n\n正文开头\n\n${formatQuoteForSend({ text: 'selected' })}\n\n正文：\n> manual`;
     expect(parseChatQuoteSegments(content)).toEqual([

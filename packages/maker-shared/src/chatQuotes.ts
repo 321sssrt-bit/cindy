@@ -52,6 +52,28 @@ const ESCAPED_QUOTE_BLOCK_MARKER_LINE = '> <!-- cindy-composer-quote:v1 -->';
 const COMMENT_LINE = '— comment:';
 const COMMENT_END = '<!-- /cindy-quote-comment -->';
 
+function markerInfo(line: string): { indent: string; escaped: boolean } | null {
+  const trimmed = line.trimStart();
+  if (trimmed !== QUOTE_BLOCK_MARKER_LINE && trimmed !== ESCAPED_QUOTE_BLOCK_MARKER_LINE) {
+    return null;
+  }
+  return {
+    indent: line.slice(0, line.length - trimmed.length),
+    escaped: trimmed === ESCAPED_QUOTE_BLOCK_MARKER_LINE,
+  };
+}
+
+/** A marker is only a control line when it starts an actual quoted block. */
+function hasMarkedQuoteLine(
+  lines: readonly string[],
+  markerIndex: number,
+  indent: string,
+): boolean {
+  const prefix = `${indent}>`;
+  const next = lines[markerIndex + 1];
+  return next === prefix || next?.startsWith(`${prefix} `) === true;
+}
+
 function escapeQuoteLine(line: string): string {
   return line.startsWith('\\') || line.startsWith('<!--') ||
     line.startsWith(SOURCE_LINE_PREFIX) || line.startsWith(COMMENT_LINE)
@@ -84,9 +106,10 @@ export function stripChatQuoteMarkerLines(content: string): string {
     }
     prefix = null;
     escaped = false;
-    if (line.trimStart() === QUOTE_BLOCK_MARKER_LINE || line.trimStart() === ESCAPED_QUOTE_BLOCK_MARKER_LINE) {
-      prefix = `${line.slice(0, line.length - line.trimStart().length)}>`;
-      escaped = line.trimStart() === ESCAPED_QUOTE_BLOCK_MARKER_LINE;
+    const marker = markerInfo(line);
+    if (marker && hasMarkedQuoteLine(lines, index, marker.indent)) {
+      prefix = `${marker.indent}>`;
+      escaped = marker.escaped;
       continue;
     }
     visible.push(line);
@@ -236,17 +259,19 @@ export function parseChatQuoteSegments(
   // 写出 markerless 交错块，但它与正文里的用户 Markdown blockquote 无法
   // 从 wire text 区分；不能拿 quotesEncoded 当版本号放宽整条消息，否则旧
   // 消息正文里的 `> ...` 会被误还原成产品引用。新版 marker 才允许交错解析。
-  const hasExplicitMarkers = content.includes(QUOTE_BLOCK_MARKER_LINE) || content.includes(ESCAPED_QUOTE_BLOCK_MARKER_LINE);
+  const hasExplicitMarkers = lines.some((line, lineIndex) => {
+    const marker = markerInfo(line);
+    return marker !== null && hasMarkedQuoteLine(lines, lineIndex, marker.indent);
+  });
   // 只要同条消息出现新版 marker，整条内容就按无歧义的新格式解析。否则正文
   // 开头的用户手写 Markdown blockquote 会被旧版兼容分支误认成产品引用。
   let allowLegacyLeadingQuotes = !hasExplicitMarkers;
   let index = 0;
   while (index < lines.length) {
     const line = lines[index];
+    const marker = markerInfo(line);
     const markerIndent =
-      line.trimStart() === QUOTE_BLOCK_MARKER_LINE || line.trimStart() === ESCAPED_QUOTE_BLOCK_MARKER_LINE
-        ? line.slice(0, line.length - line.trimStart().length)
-        : null;
+      marker && hasMarkedQuoteLine(lines, index, marker.indent) ? marker.indent : null;
     const marked = markerIndent !== null;
     const legacyLeading = allowLegacyLeadingQuotes && line.startsWith('> ');
     if (!marked && !legacyLeading) {
@@ -277,7 +302,7 @@ export function parseChatQuoteSegments(
       }
       break;
     }
-    segments.push({ kind: 'quote', quote: quoteFromLines(quoteLines, line.trimStart() === ESCAPED_QUOTE_BLOCK_MARKER_LINE) });
+    segments.push({ kind: 'quote', quote: quoteFromLines(quoteLines, marker?.escaped === true) });
   }
 
   flushText({ beforeQuote: false });

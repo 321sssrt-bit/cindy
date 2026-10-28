@@ -87,6 +87,7 @@ import { getSessionProvider, hasHostedSessionModelAccess } from './session-provi
 import {
   GUEST_ROUTE_HEADER,
   guestProviderOffersModel,
+  guestProviderModelDenial,
   hostedProviderOffersModel,
   guestProviderRouteForSession,
   guestProviderRouteForToken,
@@ -719,6 +720,8 @@ export function createModelRoutingTransform(): RoutingTransform {
         if (!allowed) { deniedModel = model; break; }
       }
       if (requestModels.length === 0 || deniedModel !== undefined) {
+        const denial = piGuest && deniedModel ? guestProviderModelDenial(piGuest.sessionId, deniedModel, 'pi') : null;
+        if (denial) return refuseGuestProviderRoute(403, denial.code, denial.message);
         return piGuest ? refuseGuestForeignRoute(deniedModel ?? '')
           : refuseGuestProviderRoute(403, 'remote_model_not_allowed', 'This model is not available for this remote task.');
       }
@@ -1136,7 +1139,10 @@ export function createModelRoutingTransform(): RoutingTransform {
           : refuseGuestProviderRoute(403, 'shared_provider_only', 'This request is outside the provider shared with you.');
       }
       const wireModel = typeof body.model === 'string' ? body.model : '';
-      if (!await guestProviderOffersModel(guest.providerId, 'claude-code', wireModel, guest.sessionId)) return refuseGuestForeignRoute(wireModel);
+      if (!await guestProviderOffersModel(guest.providerId, 'claude-code', wireModel, guest.sessionId)) {
+        const denial = guestProviderModelDenial(guest.sessionId, wireModel, 'claude-code');
+        return denial ? refuseGuestProviderRoute(403, denial.code, denial.message) : refuseGuestForeignRoute(wireModel);
+      }
       return route(body, ctx, guest);
     };
     try {

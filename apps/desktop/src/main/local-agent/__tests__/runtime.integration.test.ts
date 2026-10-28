@@ -351,10 +351,13 @@ describe('local client runtime lifecycle', () => {
     );
     expect(third.send).toHaveBeenCalledTimes(1);
   });
-  it('releases the execution when the engine declines a send before dispatch', async () => {
-    const f = await fixture();
-    f.first.send.mockResolvedValueOnce({ accepted: false });
+  it.each(['declines', 'rejects'] as const)('releases execution and reports settled load when the engine %s a send', async (outcome) => {
+    const changed = vi.fn();
+    const f = await fixture({ trackLoad: () => changed });
+    if (outcome === 'declines') f.first.send.mockResolvedValueOnce({ accepted: false });
+    else f.first.send.mockRejectedValueOnce(new Error('fixture engine unavailable'));
     await f.runtime.call('send', message);
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(f.runtime.call('send', message)).resolves.toEqual({}));
     expect(f.first.send).toHaveBeenCalledTimes(2);
   });

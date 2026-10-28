@@ -504,12 +504,13 @@ export async function openLocalAgentRuntime(
         releaseInputs();
         turnInputs.push(sending);
         void (async () => {
-          const sent = handle.send(sending);
-          // Session reserves the turn synchronously, even if the engine has no output yet.
-          notifyLoad();
-          const result = await sent.finally(() => notifyLoad());
-          if (!result.accepted) await discard(sending);
-          assertSendDispatched(result, 'local-agent/send');
+          try {
+            const result = await handle.send(sending);
+            if (!result.accepted) await discard(sending);
+            assertSendDispatched(result, 'local-agent/send');
+          } finally {
+            notifyLoad();
+          }
         })().catch(() => {
           if (closed || turn !== generation) return;
           if (epoch === current) {
@@ -520,6 +521,8 @@ export async function openLocalAgentRuntime(
             projection.fail('', 'interrupted');
           }
         });
+        // send reserves the turn before its first await, even without engine output.
+        notifyLoad();
         return {};
       } catch (error) {
         if (epoch === current) {

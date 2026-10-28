@@ -307,6 +307,19 @@ _Dark Mode text uses softened neutrals to reduce eye strain: **Soft Gray** (`#d4
 - **None in the core UI.** Cindy uses no gradients; visual separation comes from flat color blocks and single-pixel borders. This is a deliberate, almost philosophical design choice. (The login canvas is also flat by ruling — see §16.5.)
 - **Session-loading wordmark sheen — narrow functional exception (Desktop approved 2026-08-10).** `BrandLoadingMark` may use one neutral `transparent → --text-primary → transparent` gradient solely as a mask-clipped highlight inside the official Light/Dark wordmark while a session's message tree is deferred. It is a loading-progress signal, not a background, separator, fill, or reusable surface treatment. It may appear only after the 200ms delayed-reveal threshold, disappears as soon as the message tree mounts, and may not leak to messages, cards, dialogs, sidebars, or static branding. Full motion and brand-surface constraints are registered in §14.4 and §15.7.
 
+### Filter reminder inside display settings (2026-10-28)
+
+When the sidebar display-settings trigger shows the archived-view reminder, repeat
+the same static accent dot on the Task status submenu and its selected Archived
+option. Desktop and Mobile retain neutral labels and selection checkmarks. Active
+and All remove the whole reminder path. Native iOS menus retain their system UIMenu
+and toolbar presenters and use the image slot for the dot. MenuView receives an
+absolute path to a temporary 1x copy of the bundled PNG: a 20pt canvas containing
+the same 6pt dot. Ordinary row icons and selection checkmarks remain available.
+Custom menus remain fallback paths and use the shared inline dot. This extends
+the existing filter reminder registration without changing which settings light
+the entry indicator.
+
 ## 3. Typography Rules
 
 ### Font Family

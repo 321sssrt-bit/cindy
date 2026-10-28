@@ -188,6 +188,27 @@ describe('Agent Island activity text stream', () => {
     }
   });
 
+  // #7566 review, unit: definitions/comments keep display text short while source
+  // grows. The stream must bound parsing work, and final text must still recover.
+  it.each([
+    { opening: '# 摘要\n[id]: https://example.com/', closing: '\n\n正文' },
+    { opening: '摘要\n<!--', closing: '-->\n正文' },
+  ])('bounds invisible Markdown source (%j)', ({ opening, closing }) => {
+    const parse = vi.spyOn(previewText, 'streamingMarkdownPreviewText');
+    const stream = createActivityTextStreamState();
+    const delta = 'x'.repeat(64);
+    try {
+      expect(appendActivityTextStream(stream, opening)).toBe('摘要');
+      for (let i = 0; i < 128; i++) appendActivityTextStream(stream, delta);
+      const calls = parse.mock.calls.length;
+      for (let i = 0; i < 128; i++) expect(appendActivityTextStream(stream, delta)).toBe('摘要');
+      expect(parse.mock.calls.length).toBe(calls);
+      expect(normalizeActivityText(opening + delta.repeat(256) + closing)).toBe('摘要 正文');
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
   // Review regression: closing ordinary code fences must not retract their
   // content; explicitly quoted component examples remain literal code.
   it.each(['`', '~'])('preserves %s code content and examples during streaming', (fenceCharacter) => {

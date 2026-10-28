@@ -1174,7 +1174,8 @@ describe('Agent Island display state', () => {
     expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('初步结果');
     send(patch.slice(0, 20));
     send(patch.slice(20));
-    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('初步结果');
+    // Complete JSON may project immediately; a separate newline must preserve it.
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('检查完成');
     send(newline);
     expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.messagePreview?.text).toBe('检查完成');
     send('```');

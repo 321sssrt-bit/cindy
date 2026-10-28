@@ -2,8 +2,9 @@ import { richAnswerText, splitRichAnswer } from '@cindy/maker-shared/rich-answer
 import { markdownTextPreview, streamingMarkdownPreviewText } from '../../shared/markdownPreviewText.js';
 
 export const AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH = 280;
-// Match the rich-answer parser's source ceiling, separately from visible text.
-const ACTIVITY_SOURCE_MAX_LENGTH = 2_000_000;
+// Bound repeated Main-process projection even when Markdown hides the source.
+// Final replies still normalize their full original text independently.
+const ACTIVITY_SOURCE_MAX_LENGTH = 4_096;
 
 type ActivityTextStreamMode = 'pending' | 'plain' | 'structured' | 'structured-extracted';
 
@@ -14,7 +15,6 @@ export interface ActivityTextStreamState {
   rawPreviewHasPendingWhitespace: boolean;
   rawPreviewHasPendingNewline: boolean;
   rawPreviewPendingLink: boolean;
-  rawPreviewPendingRich: boolean;
   jsonClosingStack: Array<'}' | ']'>;
   jsonInString: boolean;
   jsonEscapePending: boolean;
@@ -37,7 +37,6 @@ export function createActivityTextStreamState(): ActivityTextStreamState {
     rawPreviewHasPendingWhitespace: false,
     rawPreviewHasPendingNewline: false,
     rawPreviewPendingLink: false,
-    rawPreviewPendingRich: false,
     jsonClosingStack: [],
     jsonInString: false,
     jsonEscapePending: false,
@@ -64,9 +63,8 @@ export function appendActivityTextStream(
   const previousNewline = state.rawPreviewHasPendingNewline;
   appendRawPreview(state, chunk, metrics);
   const destinationOnly = state.rawPreviewPendingLink && !/[\s\\()[\]<>`"']/.test(chunk);
-  const richLineBoundary = state.rawPreviewPendingRich && /[\r\n]/.test(chunk);
-  const uncommittedRich = state.rawPreviewPendingRich && !richLineBoundary && !previousNewline;
-  const previewChanged = (state.rawPreview !== previousPreview || richLineBoundary) && !destinationOnly && !uncommittedRich;
+  const previewChanged = (state.rawPreview !== previousPreview || state.rawPreviewHasPendingNewline !== previousNewline)
+    && !destinationOnly;
 
   if (state.mode === 'plain') {
     return rawPreviewText(state, previewChanged);
@@ -292,8 +290,6 @@ function rawPreviewText(state: ActivityTextStreamState, changed = true): string 
       source = source.slice(0, start);
     }
   }
-  const lastPart = splitRichAnswer(source).at(-1);
-  state.rawPreviewPendingRich = lastPart?.kind === 'rich' && !lastPart.complete;
   const readable = richAnswerText(source);
   const projection = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(readable)
     ? streamingMarkdownPreviewText(readable)

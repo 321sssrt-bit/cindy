@@ -1740,6 +1740,7 @@ export class ClaudeCodeAgent extends BaseAgent {
     // 再开后 Lead 工具仍指向第一次的 workflow / worker"的 bug。必须用 Object.assign
     // 原地改, 让所有持有这个 ref 的闭包共享同一份最新状态。
     const vo: Record<string, unknown> = { ...(opts.vendorOptions ?? {}) };
+    const requireNativeResume = vo._cindyRequireNativeResume === true && !!opts.resumeSessionId;
 
     log.info('startSession', {
       model: sdkModel,
@@ -6024,7 +6025,10 @@ export class ClaudeCodeAgent extends BaseAgent {
       expectedResumeSessionId: string,
       source: 'transcript_preflight' | 'sdk_runtime',
     ): Promise<boolean> {
-      if (resumeRecoveryAttempted || !opts.onInvalidResumeSession) return false;
+      // Transferred history belongs to the host switch transaction. It must
+      // choose/confirm fallback; the adapter cannot silently erase that history.
+      if ((requireNativeResume && resumeValidationPending)
+        || resumeRecoveryAttempted || !opts.onInvalidResumeSession) return false;
       try {
         const cleared = await opts.onInvalidResumeSession(expectedResumeSessionId);
         if (!cleared) {
@@ -7927,6 +7931,19 @@ export class ClaudeCodeAgent extends BaseAgent {
       },
     };
 
+    if (requireNativeResume) {
+      try {
+        // query() returns before resume is checked; the CLI rejects a bad resume
+        // through initializationResult(), even with no user turn dispatched.
+        await q.initializationResult();
+        if (closed || sdkSessionId !== opts.resumeSessionId) {
+          throw new Error('Native history resume did not restore the transferred session');
+        }
+      } catch (error) {
+        await handle.close();
+        throw error;
+      }
+    }
     return handle;
   }
 

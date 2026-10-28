@@ -825,6 +825,8 @@
     },
     "rebalance": {
       "title": "Continue on {{label}}?",
+      "fallbackTitle": "Continue on {{label}} with a summary?",
+      "fallbackDescription": "The original conversation could not be fully restored. A summary may omit earlier details and tool results. Cancel to send on the original computer.",
       "description": "To use every account’s quota evenly, send this message from {{label}} ({{quota}}). The last few messages and a summary carry over; older details may be lost.",
       "quota": "{{left}}% left",
       "quotaReset": "{{left}}% left · {{reset}}",
@@ -5170,6 +5172,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "Loading {{section}}…",
+        "retrying": "Could not load {{section}}. Retrying automatically…",
+        "error": "Could not load {{section}}.",
+        "retry": "Reload Settings",
+        "browserDetection": "Browser detection"
+      },
       "title": "Automation",
       "description": "Let agents use your computer and connected devices to get things done for you. Browser automation uses an isolated browser; Android automation uses ADB; computer automation relies on a local driver.",
       "codexRefreshDeferred": "Setting saved, but Codex is busy. Restart the app to apply it to new Codex sessions.",
@@ -6362,6 +6371,14 @@
         "toggle-sidebar": {
           "label": "Toggle sidebar",
           "description": "Collapse or expand the session list sidebar"
+        },
+        "session-history-back": {
+          "label": "Previous task",
+          "description": "Go back to the task you viewed before"
+        },
+        "session-history-forward": {
+          "label": "Next task",
+          "description": "Go forward to the task you viewed next"
         },
         "open-settings": {
           "label": "Open settings",
@@ -8665,6 +8682,10 @@
   },
   "titleBar": {
     "menu": "Menu",
+    "historyBack": "Back to previous task",
+    "historyForward": "Forward to next task",
+    "historyBackUnavailable": "No previous task",
+    "historyForwardUnavailable": "No next task",
     "minimize": "Minimize",
     "maximizeOrRestore": "Maximize or Restore Window",
     "close": "Close",
@@ -10740,7 +10761,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "Paste the app secret"
+          "appSecretPlaceholder": "Paste the app secret",
+          "description": "Once connected, you can message {{name}} in {{service}}.",
+          "createPrompt": "Need a {{service}} bot?",
+          "createLink": "Create one on {{service}} Open Platform",
+          "credentialsHint": "After creating the app, copy its App ID and App Secret from Credentials & Basic Info and enter them here.",
+          "stepsLabel": "View setup steps",
+          "stepCreate": "Create a custom app on the Open Platform and add the bot capability. In Permissions, confirm that reading direct messages (im:message.p2p_msg:readonly) and sending messages as the app (im:message:send_as_bot) are enabled. Receiving group @mentions also requires im:message.group_at_msg:readonly.",
+          "stepCredentials": "Open Credentials & Basic Info in your app and copy the App ID and App Secret.",
+          "stepConnect": "Enter the credentials below and click “Connect {{service}}” to establish a connection. In Events & Callbacks on the Open Platform, select the long connection subscription mode and add the Receive message event (im.message.receive_v1). In Callback Configuration, select long connection mode and add the Card action callback (card.action.trigger) so card buttons work. Publish the app version, wait for approval if required, then send the bot a message and click a card button to verify both work.",
+          "confirm": "Connect {{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12701,6 +12731,7 @@
         "toggleHint": "View handoff context",
         "handoffTitle": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
         "handoffTitleEnglishSource": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
+        "fallbackBadge": "Continued from summary",
         "resumedBadge": "session resumed",
         "relocatedHere": "Agent now runs on this computer",
         "relocatedTo": "Agent now runs on {{device}}",
@@ -13546,6 +13577,7 @@
       },
       "renameFailed": "Rename failed",
       "pinFailed": "Operation failed",
+      "muteNotificationsFailed": "Failed to update notification settings",
       "deleteFailed": "Delete failed, please retry",
       "archiveFailed": "Archive failed, please retry",
       "unarchiveFailed": "Restore failed, please retry",
@@ -13666,6 +13698,8 @@
         "delete": "Delete",
         "pin": "Pin",
         "unpin": "Unpin",
+        "muteNotifications": "Mute notifications",
+        "unmuteNotifications": "Allow notifications",
         "archived": "Archived",
         "moveToProject": "Move task",
         "moveToProjectHeading": "Projects on this computer",

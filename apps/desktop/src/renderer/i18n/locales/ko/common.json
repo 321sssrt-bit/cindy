@@ -815,6 +815,8 @@
     },
     "rebalance": {
       "title": "{{label}}(으)로 바꿔서 계속할까요?",
+      "fallbackTitle": "요약으로 {{label}}에서 계속할까요?",
+      "fallbackDescription": "기존 대화를 완전히 복원하지 못했습니다. 요약에는 이전 세부 사항과 도구 결과가 누락될 수 있습니다. 취소하면 원래 컴퓨터에서 전송합니다.",
       "description": "각 계정의 할당량을 고르게 쓰기 위해 이 메시지는 {{label}}에서 보내는 것을 권장합니다({{quota}}). 최근 몇 번의 대화와 요약은 이어지지만, 그 이전의 세부 내용은 빠질 수 있습니다.",
       "quota": "{{left}}% 남음",
       "quotaReset": "{{left}}% 남음 · {{reset}}",
@@ -5139,6 +5141,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "{{section}} 불러오는 중…",
+        "retrying": "{{section}} 불러오기에 실패했습니다. 자동으로 다시 시도하는 중…",
+        "error": "{{section}} 불러오기에 실패했습니다.",
+        "retry": "설정 다시 불러오기",
+        "browserDetection": "브라우저 감지 결과"
+      },
       "title": "자동 조작",
       "description": "에이전트가 컴퓨터와 연결된 기기를 사용해 사용자를 대신해 작업합니다. 브라우저 자동화는 독립 브라우저를 사용하고, Android 자동화는 ADB를 사용하며, 컴퓨터 자동화는 로컬 드라이버에 의존합니다.",
       "codexRefreshDeferred": "설정은 저장되었지만 Codex가 사용 중입니다. 앱을 다시 시작하면 새 Codex 세션에 적용됩니다.",
@@ -6331,6 +6340,14 @@
         "toggle-sidebar": {
           "label": "사이드바 전환",
           "description": "왼쪽 세션 목록을 접거나 펼칩니다"
+        },
+        "session-history-back": {
+          "label": "이전 세션",
+          "description": "탐색 순서대로 이전에 열었던 세션으로 돌아갑니다"
+        },
+        "session-history-forward": {
+          "label": "다음 세션",
+          "description": "탐색 순서대로 다음에 열었던 세션으로 이동합니다"
         },
         "open-settings": {
           "label": "설정 열기",
@@ -8633,6 +8650,10 @@
   },
   "titleBar": {
     "menu": "메뉴",
+    "historyBack": "이전 세션으로 돌아가기",
+    "historyForward": "다음 세션으로 이동",
+    "historyBackUnavailable": "이전 세션이 없습니다",
+    "historyForwardUnavailable": "다음 세션이 없습니다",
     "minimize": "최소화",
     "maximizeOrRestore": "창 최대화 또는 복원",
     "close": "닫기",
@@ -10705,7 +10726,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "App Secret 붙여넣기"
+          "appSecretPlaceholder": "App Secret 붙여넣기",
+          "description": "연결하면 {{service}}에서 {{name}}에게 메시지를 보낼 수 있습니다.",
+          "createPrompt": "{{service}} 봇이 없으신가요?",
+          "createLink": "{{service}} 오픈 플랫폼에서 만들기",
+          "credentialsHint": "앱을 만든 후 “자격 증명 및 기본 정보”에서 App ID와 App Secret을 복사해 여기에 입력하세요.",
+          "stepsLabel": "설정 단계 보기",
+          "stepCreate": "오픈 플랫폼에서 사용자 지정 앱을 만들고 봇 기능을 추가하세요. 권한 관리에서 개인 메시지 읽기(im:message.p2p_msg:readonly)와 앱으로 메시지 보내기(im:message:send_as_bot) 권한이 활성화되어 있는지 확인하세요. 그룹의 @멘션을 받으려면 im:message.group_at_msg:readonly도 필요합니다.",
+          "stepCredentials": "앱의 “자격 증명 및 기본 정보”를 열어 App ID와 App Secret을 복사하세요.",
+          "stepConnect": "아래에 자격 증명을 입력하고 “{{service}} 연결”을 클릭해 연결하세요. 오픈 플랫폼의 이벤트 및 콜백에서 지속 연결로 이벤트를 받는 구독 방식을 선택하고 메시지 수신 이벤트(im.message.receive_v1)를 추가하세요. 콜백 설정에서도 지속 연결 방식을 선택하고 카드 동작 콜백(card.action.trigger)을 추가해 카드 버튼을 사용할 수 있도록 하세요. 앱 버전을 게시하고, 심사가 필요하면 승인을 기다린 뒤 봇에 메시지를 보내고 카드 버튼도 클릭해 동작을 확인하세요.",
+          "confirm": "{{service}} 연결"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12656,6 +12686,7 @@
         "toggleHint": "인계 내용 보기",
         "handoffTitle": "인계 내용——전환 시 새 엔진에 전송된 컨텍스트 요약(대화 기록에 포함되지 않으며 여기에서만 표시)",
         "handoffTitleEnglishSource": "인계 내용——전환 시 새 엔진에 전송된 컨텍스트 요약. 원문은 영어(대화 기록에 포함되지 않으며 여기에서만 표시)",
+        "fallbackBadge": "요약으로 이어감",
         "resumedBadge": "세션 재개됨",
         "relocatedHere": "이제 Agent가 이 컴퓨터에서 실행됩니다",
         "relocatedTo": "이제 Agent가 {{device}}에서 실행됩니다",
@@ -13492,6 +13523,7 @@
       },
       "renameFailed": "이름 변경 실패",
       "pinFailed": "작업 실패",
+      "muteNotificationsFailed": "알림 설정 변경 실패",
       "deleteFailed": "삭제 실패, 다시 시도하세요",
       "archiveFailed": "보관 실패, 다시 시도하세요",
       "unarchiveFailed": "복원 실패, 다시 시도하세요",
@@ -13612,6 +13644,8 @@
         "delete": "삭제",
         "pin": "고정",
         "unpin": "고정 해제",
+        "muteNotifications": "알림 끄기",
+        "unmuteNotifications": "알림 켜기",
         "archived": "보관됨",
         "moveToProject": "작업 이동",
         "moveToProjectHeading": "현재 컴퓨터의 프로젝트",

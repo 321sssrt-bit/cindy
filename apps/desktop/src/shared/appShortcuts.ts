@@ -36,6 +36,8 @@ export type AppShortcutScope = 'app' | 'workdir-doc' | 'browser' | 'composer' | 
 
 export const APP_SHORTCUT_IDS = [
   'toggle-sidebar',
+  'session-history-back',
+  'session-history-forward',
   'open-settings',
   'new-maker',
   'close-tab-or-window',
@@ -159,6 +161,29 @@ export const APP_SHORTCUT_DEFINITIONS: ReadonlyArray<AppShortcutDefinition> = [
     descriptionKey: 'settings.shortcuts.items.toggle-sidebar.description',
     rebindable: true,
     getDefaultCombos: (platform) => [modCombo('KeyB', platform)],
+  },
+  // 任务浏览栈的前进/后退: 与浏览器同一惯例 (⌘[ / ⌘]), 在 ChromeActions
+  // 的左上按钮簇里消费。raw 按键在 macOS 上不会被系统菜单吃掉
+  // (keyboardReserved 不含 Bracket*), webview 内的 ⌘[ 留给浏览器自己的后退。
+  {
+    id: 'session-history-back',
+    scope: 'app',
+    labelKey: 'settings.shortcuts.items.session-history-back.label',
+    descriptionKey: 'settings.shortcuts.items.session-history-back.description',
+    rebindable: true,
+    // 新增默认键位对用户既有改绑让位：老用户把 toggle-sidebar 等动作改绑到 ⌘[ 是
+    // 历史合法绑定，若两个动作同名生效，一次按键会同时切侧栏与后退。
+    yieldsToUserBindings: true,
+    getDefaultCombos: (platform) => [modCombo('BracketLeft', platform)],
+  },
+  {
+    id: 'session-history-forward',
+    scope: 'app',
+    labelKey: 'settings.shortcuts.items.session-history-forward.label',
+    descriptionKey: 'settings.shortcuts.items.session-history-forward.description',
+    rebindable: true,
+    yieldsToUserBindings: true,
+    getDefaultCombos: (platform) => [modCombo('BracketRight', platform)],
   },
   // 全局框选截图: Cindy 不在前台也生效，可复制、保存、贴图或交给新任务。默认键避开系统截图
   // (macOS ⇧⌘3/4/5/6、Windows Win+Shift+S) 与常见 IM 截图键 (Windows: Ctrl+Alt+A、

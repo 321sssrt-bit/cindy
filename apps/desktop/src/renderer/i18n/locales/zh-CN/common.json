@@ -815,6 +815,8 @@
     },
     "rebalance": {
       "title": "换到 {{label}} 继续？",
+      "fallbackTitle": "用摘要换到 {{label}} 继续？",
+      "fallbackDescription": "无法完整接续原来的对话。使用摘要继续可能遗漏早期细节和工具结果；取消则留在原电脑发送。",
       "description": "为了均匀用完各账号的配额，建议这条消息换到 {{label}} 发送（{{quota}}）。换过去会带上最近几轮对话和摘要，更早的细节可能记不全。",
       "quota": "还剩 {{left}}%",
       "quotaReset": "还剩 {{left}}%，{{reset}}",
@@ -5139,6 +5141,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "正在读取{{section}}…",
+        "retrying": "未能读取{{section}}，正在自动重试…",
+        "error": "未能读取{{section}}",
+        "retry": "重新读取设置",
+        "browserDetection": "浏览器检测结果"
+      },
       "title": "自动操作",
       "description": "让 Agent 使用电脑和已连接设备替你完成任务。浏览器自动化使用独立浏览器；Android 自动化使用 ADB；电脑自动化依赖本机 driver。",
       "codexRefreshDeferred": "设置已保存，但 Codex 正忙；重启应用后将对新的 Codex Agent 会话生效",
@@ -6325,6 +6334,14 @@
         "toggle-sidebar": {
           "label": "切换侧边栏",
           "description": "收起或展开左侧任务列表"
+        },
+        "session-history-back": {
+          "label": "上一个任务",
+          "description": "按浏览顺序回到上一个打开的任务"
+        },
+        "session-history-forward": {
+          "label": "下一个任务",
+          "description": "按浏览顺序前往下一个任务"
         },
         "open-settings": {
           "label": "打开设置",
@@ -8633,6 +8650,10 @@
   },
   "titleBar": {
     "menu": "菜单",
+    "historyBack": "浏览上一个任务",
+    "historyForward": "浏览下一个任务",
+    "historyBackUnavailable": "没有上一个任务",
+    "historyForwardUnavailable": "没有下一个任务",
     "minimize": "最小化",
     "maximizeOrRestore": "最大化或还原窗口",
     "close": "关闭",
@@ -10705,7 +10726,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "粘贴 App Secret"
+          "appSecretPlaceholder": "粘贴 App Secret",
+          "description": "连接后，可以在{{service}}中给 {{name}} 发消息。",
+          "createPrompt": "还没有{{service}}机器人？",
+          "createLink": "前往{{service}}开放平台创建",
+          "credentialsHint": "创建后，从「凭证与基础信息」复制 App ID 和 App Secret，回到这里填写。",
+          "stepsLabel": "查看配置步骤",
+          "stepCreate": "在开放平台创建企业自建应用并添加机器人能力。在「权限管理」确认已开通读取单聊消息（im:message.p2p_msg:readonly）和以应用身份发消息（im:message:send_as_bot）权限；接收群聊 @ 消息还需 im:message.group_at_msg:readonly。",
+          "stepCredentials": "打开应用的「凭证与基础信息」，复制 App ID 和 App Secret。",
+          "stepConnect": "将凭证填入下方，点击「连接{{service}}」建立连接。回到开放平台「事件与回调」，将订阅方式设为「使用长连接接收事件」，并添加「接收消息」（im.message.receive_v1）事件。在「回调配置」中选择使用长连接接收回调，并添加「卡片回传交互」（card.action.trigger），让卡片按钮可用。完成版本发布，需审核时等待通过，再给机器人发消息并点击卡片按钮验证。",
+          "confirm": "连接{{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12656,6 +12686,7 @@
         "toggleHint": "查看交接内容",
         "handoffTitle": "交接内容——切换时发送给新引擎的上下文摘要(不计入对话记录，仅在此展示)",
         "handoffTitleEnglishSource": "交接内容——切换时发送给新引擎的上下文摘要，原文为英文(不计入对话记录，仅在此展示)",
+        "fallbackBadge": "已用摘要接续",
         "resumedBadge": "已续接原任务",
         "relocatedHere": "Agent 已改到这台电脑上运行",
         "relocatedTo": "Agent 已改到 {{device}} 上运行",
@@ -13492,6 +13523,7 @@
       },
       "renameFailed": "重命名失败",
       "pinFailed": "操作失败",
+      "muteNotificationsFailed": "设置消息免打扰失败",
       "deleteFailed": "删除失败，请重试",
       "archiveFailed": "归档失败，请重试",
       "unarchiveFailed": "恢复失败，请重试",
@@ -13612,6 +13644,8 @@
         "delete": "删除",
         "pin": "置顶",
         "unpin": "取消置顶",
+        "muteNotifications": "消息免打扰",
+        "unmuteNotifications": "允许消息通知",
         "archived": "归档",
         "moveToProject": "移动任务",
         "moveToProjectHeading": "当前电脑的项目",

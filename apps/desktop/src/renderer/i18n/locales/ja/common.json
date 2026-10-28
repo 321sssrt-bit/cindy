@@ -815,6 +815,8 @@
     },
     "rebalance": {
       "title": "{{label}} に切り替えて続けますか？",
+      "fallbackTitle": "要約を使って {{label}} で続けますか？",
+      "fallbackDescription": "元の会話を完全に復元できませんでした。要約では以前の詳細やツールの結果が省略される場合があります。キャンセルすると元のコンピューターで送信します。",
       "description": "各アカウントのクォータを均等に使い切るため、このメッセージは {{label}} から送ることをおすすめします（{{quota}}）。直近数回のやり取りと要約は引き継がれますが、それより前の細部は失われることがあります。",
       "quota": "残り {{left}}%",
       "quotaReset": "残り {{left}}%・{{reset}}",
@@ -5139,6 +5141,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "{{section}}を読み込み中…",
+        "retrying": "{{section}}を読み込めませんでした。自動で再試行中…",
+        "error": "{{section}}を読み込めませんでした。",
+        "retry": "設定を再読み込み",
+        "browserDetection": "ブラウザの検出結果"
+      },
       "title": "自動操作",
       "description": "エージェントがコンピュータと接続済みデバイスを使ってあなたの代わりに作業します。ブラウザ自動操作は独立したブラウザを使い、Android 自動操作は ADB を使い、コンピュータ自動操作はローカルドライバーに依存します。",
       "codexRefreshDeferred": "設定は保存されましたが、Codex が使用中です。アプリを再起動すると、新しい Codex セッションに反映されます。",
@@ -6331,6 +6340,14 @@
         "toggle-sidebar": {
           "label": "サイドバーを切り替え",
           "description": "左側のセッションリストを折りたたみ・展開します"
+        },
+        "session-history-back": {
+          "label": "前のセッション",
+          "description": "閲覧順で前に開いていたセッションに戻ります"
+        },
+        "session-history-forward": {
+          "label": "次のセッション",
+          "description": "閲覧順で次に開いていたセッションに進みます"
         },
         "open-settings": {
           "label": "設定を開く",
@@ -8633,6 +8650,10 @@
   },
   "titleBar": {
     "menu": "メニュー",
+    "historyBack": "前のセッションに戻る",
+    "historyForward": "次のセッションに進む",
+    "historyBackUnavailable": "前のセッションがありません",
+    "historyForwardUnavailable": "次のセッションがありません",
     "minimize": "最小化",
     "maximizeOrRestore": "ウィンドウを最大化または元のサイズに戻す",
     "close": "閉じる",
@@ -10705,7 +10726,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "App Secret を貼り付け"
+          "appSecretPlaceholder": "App Secret を貼り付け",
+          "description": "接続すると、{{service}} で {{name}} にメッセージを送れます。",
+          "createPrompt": "{{service}} ボットをお持ちでない場合",
+          "createLink": "{{service}} オープンプラットフォームで作成",
+          "credentialsHint": "作成後、アプリの「認証情報と基本情報」から App ID と App Secret をコピーし、ここに入力してください。",
+          "stepsLabel": "設定手順を見る",
+          "stepCreate": "オープンプラットフォームでカスタムアプリを作成し、ボット機能を追加します。「権限管理」で、個別メッセージの読み取り（im:message.p2p_msg:readonly）とアプリとしてのメッセージ送信（im:message:send_as_bot）が有効か確認します。グループ内の @メンションの受信には im:message.group_at_msg:readonly も必要です。",
+          "stepCredentials": "アプリの「認証情報と基本情報」を開き、App ID と App Secret をコピーします。",
+          "stepConnect": "下の欄に認証情報を入力し、「{{service}} に接続」をクリックして接続します。オープンプラットフォームの「イベントとコールバック」で長接続によるイベント受信を選び、メッセージ受信イベント（im.message.receive_v1）を追加します。コールバック設定でも長接続による受信を選び、カード操作のコールバック（card.action.trigger）を追加して、カードのボタンを使えるようにします。アプリのバージョンを公開し、審査が必要な場合は承認を待ってから、ボットにメッセージを送り、カードのボタンもクリックして動作を確認します。",
+          "confirm": "{{service}} に接続"
         },
         "wecom": {
           "botIdLabel": "Bot ID",
@@ -12656,6 +12686,7 @@
         "toggleHint": "引き継ぎ内容を表示",
         "handoffTitle": "引き継ぎ内容——切り替え時に新しいエンジンへ送信されたコンテキスト要約(チャット履歴には含まれず、ここでのみ表示)",
         "handoffTitleEnglishSource": "引き継ぎ内容——切り替え時に新しいエンジンへ送信されたコンテキスト要約。原文は英語(チャット履歴には含まれず、ここでのみ表示)",
+        "fallbackBadge": "要約から続行",
         "resumedBadge": "セッション再開",
         "relocatedHere": "Agent をこのパソコンで実行するようにしました",
         "relocatedTo": "Agent を {{device}} で実行するようにしました",
@@ -13492,6 +13523,7 @@
       },
       "renameFailed": "名前の変更に失敗しました",
       "pinFailed": "操作に失敗しました",
+      "muteNotificationsFailed": "通知設定の変更に失敗しました",
       "deleteFailed": "削除に失敗しました。再試行してください",
       "archiveFailed": "アーカイブに失敗しました。再試行してください",
       "unarchiveFailed": "復元に失敗しました。再試行してください",
@@ -13612,6 +13644,8 @@
         "delete": "削除",
         "pin": "ピン留め",
         "unpin": "ピン留め解除",
+        "muteNotifications": "通知をミュート",
+        "unmuteNotifications": "通知のミュートを解除",
         "archived": "アーカイブ済み",
         "moveToProject": "タスクを移動",
         "moveToProjectHeading": "現在のコンピューターのプロジェクト",

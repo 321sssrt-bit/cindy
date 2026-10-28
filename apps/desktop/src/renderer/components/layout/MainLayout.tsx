@@ -102,6 +102,8 @@ import {
   toggleAgentIslandSoundEnabled,
 } from '@/hooks/useAgentIslandSettings';
 import { requestNewWorkerFromShortcut } from '@/features/cc-agent/lib/newWorkerShortcut';
+import { useSessionBrowseHistory } from '@/features/cc-agent/useSessionBrowseHistory';
+import { useAuth } from '@/contexts/AuthContext';
 // chat-data-localization F1 V0.4 / M-FE6
 import { useCorruptionRestoredToast } from '@/hooks/useCorruptionRestoredToast';
 // #37 schema-drift release-side toast
@@ -454,6 +456,15 @@ export function MainLayout() {
   }, []);
 
   const isSettingsRoute = location.pathname === '/settings';
+
+  // 任务浏览栈与它的快捷键监听挂在常驻壳层:设置页会整个卸载左上按钮簇
+  // (下面的 `!isSettingsRoute && <ChromeActions>`)，快捷键不能跟着一起消失——
+  // hook 的语义包含「从设置等栈外页后退回最近任务」。浏览栈按数据所有者
+  // (账号 + 恢复代次)隔离：切号时不能把上一个账号的任务带过来。
+  const { dataOwnerId, dataOwnerRecoveryEpoch } = useAuth();
+  const browseHistory = useSessionBrowseHistory({
+    ownerKey: `${dataOwnerId ?? 'signed-out'}:${dataOwnerRecoveryEpoch}`,
+  });
 
   // 完全隐藏态 hover 临时浮出(peek)状态机 —— hover 折叠按钮抽屉滑出预览,
   // 点击/⌘B 固定展开(pin)。rail 态(isCollapsed=false)不触发。见 useSidebarPeek。
@@ -1709,6 +1720,7 @@ export function MainLayout() {
           <ChromeActions
             isSidebarCollapsed={isSidebarCollapsed}
             onToggleSidebar={handleToggleSidebar}
+            browseHistory={browseHistory}
             peekTriggerProps={sidebarPeek.triggerProps}
           />
         )}
@@ -1745,8 +1757,9 @@ export function MainLayout() {
                 }}
               >
                 {/* showCollapsedActions: 完全隐藏(isSidebarCollapsed)**和** rail 态(isRailMode)
-                    都要为浮动 ChromeActions 簇预留 68px 占位 —— rail 下侧栏仅 64px,chrome 簇
-                    贴在 rail 右缘(见上方 sidebarWidth),不留占位会压住会话标题左侧。 */}
+                    都要为浮动 ChromeActions 簇预留占位(CHROME_ACTIONS_GEOMETRY.clusterWidth + 8)
+                    —— rail 下侧栏仅 64px,chrome 簇贴在 rail 右缘(见上方 sidebarWidth),
+                    不留占位会压住会话标题左侧。 */}
                 {/* rail 态在 sidebarVisible 口径里视同"不可见"(codex review): 否则 mac 无
                     headerContent 路由下 ContentHeader 会因 sidebarVisible=true 提前 return null,
                     我们为 rail 浮动 chrome 预留的 spacer 不渲染、按钮悬空。 */}
@@ -1754,6 +1767,9 @@ export function MainLayout() {
                   sidebarVisible={!isSettingsRoute && !isSidebarCollapsed && !isRailMode}
                   showCollapsedActions={!isSettingsRoute && (isSidebarCollapsed || isRailMode)}
                   isSidebarRail={hasRailChromeActions && !rightSidebarOwnsRailChromeActions}
+                  // 展开态侧栏可拖到 180(比按钮簇右缘 202 窄):那一段的按钮悬在 header
+                  // 拖拽区上,由 ContentHeader 按侧栏宽补挖 no-drag。
+                  sidebarWidth={sidebarWidth}
                   // M2(2026-07-09 口径修订):mac 右上浮层随面板在场常驻(折叠
                   // toggle 永远钉窗口右上角),ContentHeader 右端占位不再分侧别。
                   rightSidebarAvailable={rightSidebarAvailable}

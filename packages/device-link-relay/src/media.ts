@@ -93,6 +93,7 @@ function parseRange(header: string | undefined, size: number): ByteRange | 'igno
 
 export class MediaStore {
   private usedBytes = 0;
+  private uploadingBytes = 0;
   private readonly reservations = new Map<string, Reservation>();
 
   constructor(
@@ -114,7 +115,7 @@ export class MediaStore {
   }
 
   get stats(): { usedBytes: number; reservedBytes: number } {
-    let reservedBytes = 0;
+    let reservedBytes = this.uploadingBytes;
     for (const reservation of this.reservations.values()) reservedBytes += reservation.size;
     return { usedBytes: this.usedBytes, reservedBytes };
   }
@@ -193,7 +194,7 @@ export class MediaStore {
     if (!reservation || reservation.expiresAt < this.now()) {
       throw new RelayError('CONFLICT', 'media link was already used or has expired');
     }
-    // 一个签名地址只能上传一次:先摘掉预留,失败时也不复用。
+    // 一个签名地址只能上传一次;开始上传后仍占配额,直到完成或失败,不随 URL 过期释放。
     this.reservations.delete(key);
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > reservation.size) {
@@ -211,6 +212,7 @@ export class MediaStore {
         callback(null, chunk);
       },
     });
+    this.uploadingBytes += reservation.size;
     try {
       await pipeline(req, limiter, createWriteStream(partPath, { flags: 'wx', mode: 0o600 }));
       if (received === 0) throw new RelayError('BAD_REQUEST', 'empty upload');
@@ -224,6 +226,8 @@ export class MediaStore {
       await rm(this.dataPath(key), { force: true }).catch(() => undefined);
       if (error instanceof RelayError) throw error;
       throw new RelayError('INTERNAL', 'failed to store media object');
+    } finally {
+      this.uploadingBytes -= reservation.size;
     }
     res.writeHead(200, { 'Content-Length': '0' });
     res.end();

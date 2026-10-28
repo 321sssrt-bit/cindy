@@ -92,7 +92,7 @@ export function relaySummary(
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <section className="flex flex-col gap-3 rounded-lg bg-[var(--settings-input-bg)] p-3">{children}</section>;
+  return <section className="flex flex-col gap-3 rounded-xl bg-[var(--settings-input-bg)] p-3">{children}</section>;
 }
 
 function Hint({ children }: { children: React.ReactNode }) {
@@ -228,9 +228,9 @@ function AddDevice({ state, controller }: { state: SelfHostedRelayState; control
           <Hint>{t(`${k}.hint`)}</Hint>
           <div className="flex items-start gap-4">
             {qr ? (
-              <img src={qr} alt={t(`${k}.qrAlt`)} className="h-[160px] w-[160px] shrink-0 rounded-md" />
+              <img src={qr} alt={t(`${k}.qrAlt`)} className="h-[160px] w-[160px] shrink-0 rounded-xl" />
             ) : (
-              <div className="h-[160px] w-[160px] shrink-0 rounded-md bg-[var(--surface-elevated)]" />
+              <div className="h-[160px] w-[160px] shrink-0 rounded-xl bg-[var(--surface-elevated)]" />
             )}
             <div className="flex min-w-0 flex-col gap-2">
               <p className="break-all font-mono text-12 text-[var(--text-secondary)]">{link}</p>
@@ -263,7 +263,7 @@ function AddDevice({ state, controller }: { state: SelfHostedRelayState; control
       {state.pendingRequests.map((request) => (
         <div
           key={request.requestId}
-          className="flex items-center justify-between gap-4 rounded-md border border-[var(--border-default)] p-3"
+          className="flex items-center justify-between gap-4 rounded-xl border border-[var(--border-default)] p-3"
         >
           <div className="flex min-w-0 flex-col gap-1">
             <p className="truncate text-13 font-medium text-[var(--text-primary)]">
@@ -600,6 +600,15 @@ function DeploymentCard({ state, controller }: { state: SelfHostedRelayState; co
         ) : null}
       </div>
       <div className="flex flex-wrap justify-end gap-2">
+        {!deployment.relayVersion && !state.deployJob ? (
+          <Button
+            size="sm"
+            disabled={controller.busy || running || !state.bundledRelayVersion}
+            onClick={() => void controller.run({ type: 'deploy', sshHostId: deployment.sshHostId, address: deployment.address, name: deployment.name, replaceExisting: false })}
+          >
+            {t('settings.remoteControl.relay.deploy.retry')}
+          </Button>
+        ) : null}
         {deployment.upgradeAvailable ? (
           <Button
             variant="secondary"

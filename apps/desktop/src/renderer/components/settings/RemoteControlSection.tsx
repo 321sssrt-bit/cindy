@@ -190,6 +190,7 @@ export function RemoteControlSection() {
   useLayoutEffect(() => {
     if (entry?.targetId === 'settings-search-target-remote-ssh') setSshOpen(true);
     if (entry?.targetId === 'settings-search-target-remote-devices') setDevicesOpen(true);
+    if (entry?.targetId === 'settings-search-target-remote-relay') setRelayOpen(true);
   }, [entry, activation]);
 
   const collapseRequestedRef = useRef(false);

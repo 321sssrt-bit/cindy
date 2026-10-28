@@ -4,7 +4,7 @@
  * - 发出:经中转转发的每条对端消息用本机签名密钥签名。
  * - 收到:对端消息必须带发送设备的有效签名,证书由主人公钥核对;中转(哪怕被人控制)伪造、篡改、
  *   重放的消息在分发前丢弃。电脑会执行远程请求,所以电脑端核对所有对端消息。
- * - 证书列表从中转取,用主人公钥逐个核对(中转无法伪造);遇到不认识的设备时刷新。
+ * - 证书列表从中转取,用主人公钥逐个核对(中转无法伪造);遇到未知或更换密钥的设备时节流刷新。
  *
  * 只依赖路由模块与共享协议包,不碰 electron / 账号文件,device-link 主模块可直接引用。
  */
@@ -91,7 +91,12 @@ function create(relay: ActiveSelfHostedRelay): Current {
     authenticator,
     frameAuth: {
       sign: (frame) => authenticator.sign(frame),
-      verify: (frame) => authenticator.verify(frame) === 'ok',
+      verify: (frame) => {
+        const verdict = authenticator.verify(frame);
+        // 同一设备重新加入会换密钥；当前帧仍拒绝，刷新后核对后续帧。
+        if (verdict === 'bad-signature' && self) scheduleRefresh(self, UNKNOWN_SIGNER_REFRESH_MIN_MS);
+        return verdict === 'ok';
+      },
     },
     timer,
     refreshing: null,

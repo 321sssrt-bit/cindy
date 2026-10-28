@@ -47,7 +47,7 @@ vi.mock('../../remote-ssh/index.js', () => ({
   }),
 }));
 
-import { deployRelayToServer, RelayDeployError } from '../selfHostedRelayDeploy';
+import { deployRelayToServer, uninstallRelayFromServer, RelayDeployError } from '../selfHostedRelayDeploy';
 
 const ok = (stdout: string): Exec => ({ stdout, stderr: '', exitCode: 0 });
 const PROBE_SUDO = 'OS Linux\nARCH x86_64\nROOT sudo\nSYSTEMD yes\nIPV6 no\nFETCH yes\n';
@@ -159,5 +159,20 @@ describe('deployRelayToServer', () => {
     const { error } = await run({ assertCurrent: () => { if (!current) throw new Error('owner changed'); } });
     expect(error).toMatchObject({ message: 'owner changed' });
     expect(mocks.commands).toEqual([]);
+  });
+
+  // Bug：RELAY_MISMATCH 失败后仍有本地记录，卸载不能绕过部署时的身份保护。
+  // 最小输入：同一 SSH 主机的 STATE 属于另一主人；tier: unit，观察没有卸载写操作。
+  it('refuses uninstall when the server belongs to another relay owner', async () => {
+    mocks.responses['relay-deploy-inspect'] = () => ok(`STATE 2 ${init.relayId} ${'R'.repeat(43)}\n`);
+    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({ code: 'RELAY_MISMATCH' });
+    expect(mocks.commands.some(c => c.label === 'relay-deploy-uninstall')).toBe(false);
+  });
+
+  it('uninstalls a matching relay and rejects an identity changed before deletion', async () => {
+    mocks.responses['relay-deploy-inspect'] = () => ok(`STATE 2 ${init.relayId} ${init.ownerPublicKey}\n`);
+    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).resolves.toBeUndefined();
+    mocks.responses['relay-deploy-uninstall'] = () => ({ stdout: 'RELAY_MISMATCH\n', stderr: '', exitCode: 22 });
+    await expect(uninstallRelayFromServer('my-vps', init, true, () => {})).rejects.toMatchObject({ code: 'RELAY_MISMATCH' });
   });
 });

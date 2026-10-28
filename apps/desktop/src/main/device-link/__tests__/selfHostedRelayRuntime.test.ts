@@ -130,6 +130,23 @@ it('records a completed deployment and activates it for the account that started
   expect(h.restart).toHaveBeenCalledOnce();
 });
 
+// Bug：重启后进度对象不存在，持久部署记录仍须能继续，并保留已写入服务器的主人身份。tier: unit。
+it('resumes an incomplete persisted deployment with the same relay identity', async () => {
+  h.deploy.mockRejectedValueOnce(new Error('connection lost'));
+  await command(deployCommand);
+  await vi.runAllTimersAsync();
+  const previous = structuredClone(h.config.get('account-a')!.deployment!);
+  await switchOwner('account-b');
+  await switchOwner('account-a');
+  expect(getState().deployJob).toBeNull();
+  expect(getState().deployment?.relayVersion).toBe('');
+  h.deploy.mockResolvedValueOnce({ relayVersion: '0.2.0' });
+  await command(deployCommand);
+  await vi.runAllTimersAsync();
+  expect(h.deploy.mock.calls.at(-1)![0].init.relayId).toBe(previous.relayId);
+  expect(h.config.get('account-a')!.deployment?.complete).toBe(true);
+});
+
 it.each(['resolve', 'reject'] as const)('ignores an old deployment that later %s after a new account starts its own', async (outcome) => {
   const old = deferred<{ relayVersion: string }>();
   const next = deferred<{ relayVersion: string }>();

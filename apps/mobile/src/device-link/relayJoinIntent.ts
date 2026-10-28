@@ -71,7 +71,8 @@ export function receiveRelayJoinIntent(path: string): boolean {
     expiry = setTimeout(clearRelayJoinIntent, RELAY_JOIN_INTENT_TTL_MS);
     stopWatching = subscribeMobileAuthOwner(() => {
       const next = getMobileAuthOwner();
-      if (next.switching || (owner.accountKey && !isMobileAuthOwnerCurrent(owner))) clearRelayJoinIntent();
+      // 首次登录也会先发布 switching 来清理缓存;尚未归属账号的扫码意图要保留到登录完成。
+      if (owner.accountKey && !isMobileAuthOwnerCurrent(owner)) clearRelayJoinIntent();
       else if (next.accountKey) owner = next; // 登录前收到的链接由第一次登录的账号接手。
     });
   }

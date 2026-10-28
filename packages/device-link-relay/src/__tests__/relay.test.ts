@@ -15,6 +15,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { connect as connectTcp } from 'node:net';
+import { PassThrough } from 'node:stream';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   acceptRelayDeviceCert,
   buildRelayJoinLink,
@@ -36,6 +39,8 @@ import type { Envelope } from '@cindy/device-link-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { createDeviceCredential, initializeRelay, startRelayServer, type RelayServerHandle } from '../index';
+import { startChallengeServer } from '../certificates';
+import { DEFAULT_MEDIA_LIMITS, MediaStore } from '../media';
 
 const OWNER_USER = 'user-owner';
 const OWNER_DEVICE = 'owner-desktop';
@@ -222,7 +227,64 @@ function upgradeStatus(base: string, authorization?: string): Promise<number> {
   });
 }
 
+/** 原始请求目标不会被 fetch/URL 预先校验,复现 Node HTTP parser 会放行的坏绝对地址。 */
+function rawRequest(port: number, upgrade = false): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connectTcp({ host: '127.0.0.1', port }, () => {
+      socket.end(`GET http://[ HTTP/1.1\r\nHost: relay.invalid\r\nConnection: ${upgrade ? 'Upgrade' : 'close'}\r\n${upgrade ? 'Upgrade: websocket\r\n' : ''}\r\n`);
+    });
+    let response = '';
+    socket.setEncoding('utf8');
+    socket.on('data', chunk => { response += chunk; });
+    socket.once('error', reject);
+    socket.once('end', () => resolve(response));
+  });
+}
+
 describe('device-link relay wire contract', () => {
+  // 上传开始时签名 URL 被消费,但流仍持有声明大小的配额;过期也不能让并发上传绕过总量。
+  // 生产 MediaStore 入口 + 真实文件/流,仅响应对象为桩,无网络与真实等待。tier: unit。
+  it('keeps in-flight uploads in the storage quota until completion or failure', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'cindy-relay-quota-'));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    let now = 1;
+    const store = new MediaStore(dir, 'test-signing-key', { ...DEFAULT_MEDIA_LIMITS, maxTotalBytes: 100 }, () => now);
+    await store.init();
+    const input = { size: 100, ext: 'bin', contentType: 'application/octet-stream' };
+    const target = store.presignPut(input, 'http://relay.invalid');
+    const stream = Object.assign(new PassThrough(), { method: 'PUT', headers: { 'content-length': '100' } });
+    const response = { writeHead: () => {}, end: () => {} } as unknown as ServerResponse;
+    const uploading = store.handleBlobRequest(stream as unknown as IncomingMessage, response, new URL(target.putUrl));
+    expect(store.stats).toEqual({ usedBytes: 0, reservedBytes: 100 });
+    now += DEFAULT_MEDIA_LIMITS.urlTtlMs + 1;
+    expect(() => store.presignPut(input, 'http://relay.invalid')).toThrow(expect.objectContaining({ code: 'QUOTA_EXCEEDED' }));
+    stream.end(Buffer.alloc(100));
+    await uploading;
+    expect(store.stats).toEqual({ usedBytes: 100, reservedBytes: 0 });
+    await store.delete(target.key);
+    const retry = store.presignPut(input, 'http://relay.invalid');
+    const failing = Object.assign(new PassThrough(), { method: 'PUT', headers: { 'content-length': '100' } });
+    const failed = store.handleBlobRequest(failing as unknown as IncomingMessage, response, new URL(retry.putUrl));
+    const rejected = expect(failed).rejects.toMatchObject({ code: 'INTERNAL' });
+    failing.destroy(new Error('upload interrupted'));
+    await rejected;
+    expect(store.stats).toEqual({ usedBytes: 0, reservedBytes: 0 });
+    expect(() => store.presignPut(input, 'http://relay.invalid')).not.toThrow();
+  });
+  // 公网入口的畸形 request-target 曾在鉴权前抛出未捕获异常；必须回400且仍能处理正常请求。
+  // 覆盖生产 HTTP、WS upgrade 与 ACME HTTP 回调，复用现有回环fixture，tier: unit。
+  it('rejects malformed HTTP targets on relay, WebSocket and ACME ports without stopping the servers', async () => {
+    const h = await setup();
+    expect(await rawRequest(h.handle.port)).toMatch(/^HTTP\/1\.1 400 /);
+    expect(await rawRequest(h.handle.port, true)).toMatch(/^HTTP\/1\.1 400 /);
+    expect((await fetch(h.base + '/api/device-link/relay/info')).status).toBe(200);
+    const challenge = await startChallengeServer({ host: '127.0.0.1', port: 0, challenges: new Map([['test-token', 'test-answer']]) });
+    cleanups.push(() => challenge.close());
+    expect(await rawRequest(challenge.port)).toMatch(/^HTTP\/1\.1 400 /);
+    const response = await fetch(`http://127.0.0.1:${challenge.port}/.well-known/acme-challenge/test-token`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('test-answer');
+  });
   it('authenticates with CindyRelay credentials only and binds identity to the credential', async () => {
     const h = await setup();
     // 没有凭证、凭证错误、用 Bearer 方案(可能是误发的账号 token)都在升级阶段 401。

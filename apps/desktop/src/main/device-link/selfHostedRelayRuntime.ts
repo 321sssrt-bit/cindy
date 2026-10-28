@@ -776,7 +776,7 @@ function uninstallDeployment(removeData: boolean): CommandResult {
   const deployment = readRelayConfig().deployment;
   if (!deployment) return { state: getState(), error: 'NO_DEPLOYMENT' };
   runDeployJob('uninstall', async (onStep, assertOwner) => {
-    await uninstallRelayFromServer(deployment.sshHostId, removeData, onStep, assertOwner);
+    await uninstallRelayFromServer(deployment.sshHostId, deployment, removeData, onStep, assertOwner);
     onStep('finish');
     forgetDeploymentLocally(deployment, removeData);
   });

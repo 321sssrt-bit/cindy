@@ -30,9 +30,14 @@ vi.mock('../../logger', () => ({ createLogger: () => ({ error: vi.fn(), warn: vi
 vi.mock('../../clientEndpointsService.js', () => ({
   getClientEndpoint: () => 'https://device-link.official.invalid',
 }));
+vi.mock('../index.js', () => ({ deviceLinkApiBase: () => 'http://192.168.1.20:47820', remoteBackgroundInvoke: vi.fn() }));
+vi.mock('../providerShareGuest.js', () => ({ getReceivedShares: () => [] }));
+vi.mock('../settings-store.js', () => ({ readDeviceLinkSettings: () => ({ disabledControlDeviceIds: [], lastKnownDeviceNames: {} }) }));
+vi.mock('../../remote-agent/controller/deviceCatalog.js', () => ({ readDeviceProviderViews: vi.fn(async () => []) }));
 
 import { deviceLinkApiFetch } from '../deviceLinkApi';
 import { setSelfHostedRelaySource } from '../selfHostedRelayRouting';
+import { remoteLocalAgentModels } from '../../local-agent/remoteCatalog.js';
 
 setSelfHostedRelaySource(() => mocks.relay);
 
@@ -45,6 +50,19 @@ describe('deviceLinkApiFetch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.relay = null;
+  });
+
+  // /models 复用真实目录读取与 API 路由；旧 caller 直接用 serverApiFetch 会把官方 token 发到自建中转。
+  // 最小输入为自建路由 + 空设备目录，不能仅 mock 新 helper，否则会漏掉 caller 未迁移的问题。tier: unit。
+  it('uses the relay credential when the local Agent reads its remote model directory', async () => {
+    mocks.relay = {
+      baseUrl: 'http://192.168.1.20:47820', credential: 'relay-credential', role: 'member',
+      relayId: 'r', name: 'Home', deviceId: 'pc', signingSeed: 'A'.repeat(43), ownerPublicKey: 'A'.repeat(43),
+    };
+    mocks.netFetch.mockResolvedValue(new Response(JSON.stringify({ devices: [] }), { status: 200 }));
+    await expect(remoteLocalAgentModels(() => true)).resolves.toEqual([]);
+    expect(lastRequest()).toEqual({ url: 'http://192.168.1.20:47820/api/device-link/devices', authorization: 'CindyRelay relay-credential' });
+    expect(mocks.getAccessToken).not.toHaveBeenCalled();
   });
 
   it('sends the relay credential, never the account token, and keeps the Cindy session on a relay 401', async () => {

@@ -294,7 +294,14 @@ export async function startRelayServer(options: RelayServerOptions): Promise<Rel
   });
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', 'http://relay.invalid');
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://relay.invalid');
+    } catch {
+      res.setHeader('Connection', 'close');
+      sendJson(res, 400, { error: { code: 'BAD_REQUEST', message: 'invalid request target' } });
+      return;
+    }
     try {
       if (url.pathname.startsWith(BLOB_PATH_PREFIX)) {
         await media.handleBlobRequest(req, res, url);
@@ -334,7 +341,13 @@ export async function startRelayServer(options: RelayServerOptions): Promise<Rel
   const wss = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     socket.on('error', () => undefined);
-    const url = new URL(req.url ?? '/', 'http://relay.invalid');
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'http://relay.invalid');
+    } catch {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     const credential = parseRelayAuthorization(req.headers.authorization);
     const device = credential ? store.findByCredential(credential) : undefined;
     if (url.pathname !== WS_PATH || !device) {

@@ -148,6 +148,19 @@ describe('mobile native deep-link redirects', () => {
     expect(getPendingRelayJoinIntent()).toBeNull();
   });
 
+  // 首次登录的真实账号发布顺序：匿名扫码 → switching 缓存清理 → 账号提交。
+  // 旧测试只直接 setMobileAuthOwner，漏掉了会清空扫码意图的中间步骤。tier: unit，生产深链入口。
+  it('preserves an anonymous relay join through fresh-login cleanup and clears it on a later account switch', () => {
+    expect(redirectSystemPath({ path: relayIncoming, initial: true })).toBe('/relay-join');
+    const original = getPendingRelayJoinIntent();
+    invalidateMobileAuthOwnerForSwitch();
+    expect(getPendingRelayJoinIntent()).toBe(original);
+    setMobileAuthOwner('first');
+    expect(getPendingRelayJoinIntent()).toBe(original);
+    invalidateMobileAuthOwnerForSwitch();
+    expect(getPendingRelayJoinIntent()).toBeNull();
+  });
+
   it.each([true, false])('keeps WeChat SDK callbacks out of navigation (initial=%s)', (initial) => {
     for (const path of [
       'cindycn://oauth?code=test-wechat-code&state=test-state',

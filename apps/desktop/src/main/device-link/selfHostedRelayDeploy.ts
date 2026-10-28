@@ -289,6 +289,11 @@ if [ -f ${DATA_DIR}/status.json ]; then echo "STATUS $(cat ${DATA_DIR}/status.js
 const JOURNAL_SCRIPT = `journalctl -u cindy-relay -n 15 --no-pager -o cat 2>/dev/null | tail -n 15`;
 
 const UNINSTALL_SCRIPT = `
+set -e
+NODE=${INSTALL_DIR}/node/bin/node
+STATE=${DATA_DIR}/relay-state.json
+if [ ! -x "$NODE" ] || [ ! -f "$STATE" ]; then echo "RELAY_MISMATCH"; exit 22; fi
+"$NODE" -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(s.relayId!==process.argv[2]||s.ownerPublicKey!==process.argv[3])process.exit(22)}catch{process.exit(22)}' "$STATE" "$2" "$3" || { echo "RELAY_MISMATCH"; exit 22; }
 systemctl disable --now cindy-relay >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/cindy-relay.service
 systemctl daemon-reload >/dev/null 2>&1 || true
@@ -445,12 +450,18 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
 
 export async function uninstallRelayFromServer(
   sshHostId: string,
+  identity: { relayId: string; ownerPublicKey: string },
   removeData: boolean,
   onStep: (step: RelayDeployStep) => void,
   assertCurrent: () => void = () => {},
 ): Promise<void> {
   onStep('connect');
   const { remote } = await prepare(sshHostId, assertCurrent);
+  const inspected = expectOk(await remote.root(INSPECT_SCRIPT, [], { label: 'relay-deploy-inspect' }), 'DEPLOY_FAILED');
+  const [, relayId, ownerPublicKey] = (first(inspected, 'STATE') ?? '').split(' ');
+  if (relayId !== identity.relayId || ownerPublicKey !== identity.ownerPublicKey) throw new RelayDeployError('RELAY_MISMATCH');
   onStep('configure');
-  expectOk(await remote.root(UNINSTALL_SCRIPT, [removeData ? '1' : '0'], { label: 'relay-deploy-uninstall' }), 'DEPLOY_FAILED');
+  const result = await remote.root(UNINSTALL_SCRIPT, [removeData ? '1' : '0', identity.relayId, identity.ownerPublicKey], { label: 'relay-deploy-uninstall' });
+  if (parseLines(result.stdout).has('RELAY_MISMATCH')) throw new RelayDeployError('RELAY_MISMATCH');
+  expectOk(result, 'DEPLOY_FAILED');
 }

@@ -402,12 +402,12 @@ describe('self-hosted relay device signatures', () => {
     const certs = [...keys].map(([deviceId, key]) => issueRelayDeviceCert(nodeRelayAuthCrypto, owner.seed, {
       relayId: 'test-relay', deviceId, publicKey: key.publicKey, role: 'member', issuedAt: 1,
     }));
-    return (deviceId: string) => {
+    return Object.assign((deviceId: string) => {
       const auth = new RelayFrameAuthenticator({ crypto: nodeRelayAuthCrypto, relayId: 'test-relay', deviceId,
         seed: keys.get(deviceId)!.seed, ownerPublicKey: owner.publicKey });
       auth.setCertificates(certs);
       return auth;
-    };
+    }, { certs });
   }
 
   function frameAuth(auth: RelayFrameAuthenticator) {
@@ -486,12 +486,14 @@ describe('self-hosted relay device signatures', () => {
     } finally { h.client.stop(); vi.useRealTimers(); }
   });
 
+  // #7722:冷启动证书迟到不丢首次link-open；认证完成后再发送它。
   // 已协商可靠流后认证器更新，完整大请求必须仍由可靠层分片；认证等待不能计作已写 socket。
   it('keeps a fragmented request in the reliable stream until fresh authentication completes', async () => {
     vi.useFakeTimers();
     const relay = new MemoryRelay();
     const signer = signingPeers(['host', 'phone']);
     const hostAuth = signer('host');
+    hostAuth.setCertificates([]);
     let phoneAuth = signer('phone');
     const host = makeRelayClient(relay, 'host', undefined, { frameAuth: () => frameAuth(hostAuth) });
     const phone = makeRelayClient(relay, 'phone', undefined, { frameAuth: () => frameAuth(phoneAuth) });
@@ -507,6 +509,10 @@ describe('self-hosted relay device signatures', () => {
     try {
       host.start(); phone.start(); await pump();
       const opening = phone.openLink('host', { controllerName: 'Phone', protocolVersion: 1, appVersion: '1' });
+      await pump();
+      expect((relay.deliveredTo.get('host') ?? []).some(env => env.kind === 'link-open')).toBe(false);
+      hostAuth.setCertificates(signer.certs);
+      await vi.advanceTimersByTimeAsync(1_000);
       await pump(); await opening;
       phoneAuth = signer('phone');
       const payload = { channel: 'maker:send', args: ['x'.repeat(2 * MAX_TRANSPORT_CHUNK_BYTES)] };

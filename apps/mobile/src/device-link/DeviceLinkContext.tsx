@@ -1030,9 +1030,8 @@ export function DeviceLinkProvider({ children }: { children: ReactNode }) {
         return getSelfHostedRelayRouteGeneration() === clientRelayRoute ? token : null;
       },
       authorizationScheme: () => (getActiveSelfHostedRelay() ? 'CindyRelay' : 'Bearer'),
-      // 自建中转的设备签名(docs/self-hosted-relay-plan.md §16);官方中转返回 null。手机只签名、不核对
-      // 收到的消息:Hermes 上纯 JS 的 Ed25519 核对太慢,跟不上推送流。电脑核对所有对端消息,所以被人
-      // 控制的中转最多能在手机上显示伪造的内容,无法让任何一台电脑执行任何操作。
+      // 自建中转的设备签名(docs/self-hosted-relay-plan.md §16);官方中转返回 null。
+      // 收到的消息在分发前核对主人签发的设备证书与帧签名，防止中转替换权限请求的展示内容。
       frameAuth: currentSelfHostedRelayFrameAuth,
       getHello: () => ({
         capabilities: [SHARED_TASK_CAPABILITY],

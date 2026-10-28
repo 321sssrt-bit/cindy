@@ -271,6 +271,35 @@ describe('device-link relay wire contract', () => {
     expect(store.stats).toEqual({ usedBytes: 0, reservedBytes: 0 });
     expect(() => store.presignPut(input, 'http://relay.invalid')).not.toThrow();
   });
+  // 同 key 并发 DELETE / sweep 不能重复释放额度；保留对象仍须计入总量。
+  // 两个真实上传各100字节，总量200；并发删其中一个后，新的200字节上传必须拒绝。tier: unit。
+  it('releases an object quota once when deletes overlap the expiry sweep', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'cindy-relay-delete-quota-'));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    let now = 1;
+    const store = new MediaStore(dir, 'test-signing-key', { ...DEFAULT_MEDIA_LIMITS, maxTotalBytes: 200 }, () => now);
+    await store.init();
+    const base = 'http://relay.invalid';
+    const upload = async () => {
+      const target = store.presignPut({ size: 100, ext: 'bin', contentType: 'application/octet-stream' }, base);
+      const stream = Object.assign(new PassThrough(), { method: 'PUT', headers: { 'content-length': '100' } });
+      const response = { writeHead: () => {}, end: () => {} } as unknown as ServerResponse;
+      const uploading = store.handleBlobRequest(stream as unknown as IncomingMessage, response, new URL(target.putUrl));
+      stream.end(Buffer.alloc(100));
+      await uploading;
+      return target.key;
+    };
+    const expired = await upload();
+    now += DEFAULT_MEDIA_LIMITS.objectTtlMs + 1;
+    const retained = await upload();
+    await Promise.all([...Array.from({ length: 16 }, () => store.delete(expired)), store.sweep()]);
+    expect(store.stats).toEqual({ usedBytes: 100, reservedBytes: 0 });
+    await expect(store.presignGet(retained, base)).resolves.toMatchObject({ getUrl: expect.any(String) });
+    expect(() => store.presignPut({ size: 200, ext: 'bin', contentType: 'application/octet-stream' }, base))
+      .toThrow(expect.objectContaining({ code: 'QUOTA_EXCEEDED' }));
+    expect(() => store.presignPut({ size: 100, ext: 'bin', contentType: 'application/octet-stream' }, base)).not.toThrow();
+  });
+
   // 公网入口的畸形 request-target 曾在鉴权前抛出未捕获异常；必须回400且仍能处理正常请求。
   // 覆盖生产 HTTP、WS upgrade 与 ACME HTTP 回调，复用现有回环fixture，tier: unit。
   it('rejects malformed HTTP targets on relay, WebSocket and ACME ports without stopping the servers', async () => {

@@ -95,6 +95,7 @@ export class MediaStore {
   private usedBytes = 0;
   private uploadingBytes = 0;
   private readonly reservations = new Map<string, Reservation>();
+  private readonly removals = new Map<string, Promise<void>>();
 
   constructor(
     private readonly dir: string,
@@ -309,7 +310,16 @@ export class MediaStore {
     }
   }
 
-  private async removeObject(key: string): Promise<void> {
+  private removeObject(key: string): Promise<void> {
+    const pending = this.removals.get(key);
+    if (pending) return pending;
+    // DELETE 与过期清理共用同一次删除，不能各自减掉同一份 meta.size。
+    const removing = this.removeObjectOnce(key).finally(() => { this.removals.delete(key); });
+    this.removals.set(key, removing);
+    return removing;
+  }
+
+  private async removeObjectOnce(key: string): Promise<void> {
     const meta = await this.readMeta(key);
     await rm(this.dataPath(key), { force: true }).catch(() => undefined);
     await rm(this.metaPath(key), { force: true }).catch(() => undefined);

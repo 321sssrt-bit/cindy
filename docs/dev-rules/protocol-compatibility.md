@@ -269,6 +269,8 @@ stream 匹配后才处理；信令不进入业务可靠 FIFO，也不走直连�
   - 官方中转时它返回 null，wire 与旧版逐字节一致。
   - 签名覆盖的字段与序列化规则以 `packages/device-link/src/selfHostedRelayAuth.ts` 为准，改动它就是改协议，Desktop、Mobile、中转必须一起改。
   - 中转新增 `GET /api/device-link/relay/certs`（主人签发的设备证书）。
+  - Desktop 与 Mobile 都在分发前核对入站帧，包含权限请求文案；证书未就绪时拒绝当前帧，
+    未知设备或已知设备签名不符时有界刷新，不重连共享链路。Mobile 复用已有纯 JS 加密实现。
   - 加入申请必须带 `publicKey` / `proof`，同意必须带证书；`/relay/info` 的 `features` 声明 `device-signatures-v1`。
 - 加入链接 `<cindy|cindycn|cindydev>://relay/join?u=<中转地址>&c=<一次性加入码>&o=<主人公钥>&s=<配对秘密>` 由 `@cindy/device-link` 的
   `buildRelayJoinLink` / `parseRelayJoinLink` 生成与解析，Desktop 与 Mobile 共用 `fetchRelayInfo` /

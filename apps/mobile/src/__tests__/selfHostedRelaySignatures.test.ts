@@ -12,18 +12,20 @@
  * - 实测耗时：单独运行 1.8 秒,用例本身 38ms(apps/mobile 下 npx vitest run src/__tests__/selfHostedRelaySignatures.test.ts)。
  */
 import { randomBytes } from 'node:crypto';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   acceptRelayDeviceCert,
   createRelayJoinIdentity,
   createRelayPairSecret,
   createRelaySigningKey,
+  DeviceLinkClient,
   issueRelayDeviceCert,
   PROTOCOL_VERSION,
   RelayFrameAuthenticator,
   verifyRelayPairProof,
   type Envelope,
   type RelayJoinLink,
+  type WsLike,
 } from '@cindy/device-link';
 import { nodeRelayAuthCrypto } from '@cindy/device-link/node-relay-crypto';
 
@@ -33,7 +35,15 @@ import { mobileRelayAuthCrypto } from '@/device-link/relayAuthCrypto';
 import { currentSelfHostedRelayFrameAuth } from '@/device-link/selfHostedRelayFrameAuth';
 import { __testing as relayRouting, setActiveSelfHostedRelay } from '@/device-link/selfHostedRelayRouting';
 
-afterEach(() => relayRouting.reset());
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ certs: [] }), { status: 200 })));
+});
+afterEach(() => {
+  relayRouting.reset();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 it('phone (@noble) and computer (node:crypto) accept each other’s pairing proof, certificate and frame signatures', () => {
   const relayId = 'relay-7f3c';
@@ -90,4 +100,123 @@ it('phone (@noble) and computer (node:crypto) accept each other’s pairing proo
   expect(computer.verify(delivered(invoke(['继续 👋'])))).toBe('ok');
   const tampered = delivered(invoke(['继续 👋']));
   expect(computer.verify({ ...tampered, payload: { channel: 'maker:send', args: ['tampered'] } })).toBe('bad-signature');
+});
+
+class RelaySocket implements WsLike {
+  private handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+  send(): void {}
+  close(): void {}
+  on(event: string, callback: (...args: never[]) => void): void {
+    this.handlers.set(event, [...(this.handlers.get(event) ?? []), callback as (...args: unknown[]) => void]);
+  }
+  emit(event: string, ...args: unknown[]): void {
+    for (const callback of this.handlers.get(event) ?? []) callback(...args);
+  }
+  push(frame: unknown): void { this.emit('message', { toString: () => JSON.stringify(frame) }); }
+}
+
+function incomingFixture() {
+  const owner = createRelaySigningKey(nodeRelayAuthCrypto);
+  const peer = createRelaySigningKey(nodeRelayAuthCrypto);
+  const phone = createRelaySigningKey(mobileRelayAuthCrypto);
+  const route = {
+    relayId: 'relay-consent', name: 'Home', baseUrl: 'https://relay.home.example', credential: 'relay-credential',
+    signing: { deviceId: 'phone-1', ownerPublicKey: owner.publicKey, seed: phone.seed },
+  };
+  const cert = (publicKey: string, signerSeed = owner.seed) => issueRelayDeviceCert(nodeRelayAuthCrypto, signerSeed, {
+    relayId: route.relayId, deviceId: 'computer-1', publicKey, role: 'member', issuedAt: 1,
+  });
+  const sender = (seed = peer.seed) => new RelayFrameAuthenticator({
+    crypto: nodeRelayAuthCrypto, relayId: route.relayId, deviceId: 'computer-1', seed, ownerPublicKey: owner.publicKey,
+  });
+  const signed = (auth: RelayFrameAuthenticator, payload: unknown): Envelope => {
+    const frame = { v: PROTOCOL_VERSION, kind: 'push' as const, src: 'computer-1', dst: 'phone-1', payload };
+    return { ...frame, auth: auth.sign(frame) } as Envelope;
+  };
+  return { route, peer, cert, sender, signed };
+}
+
+// #7722 discussion_r4402815051:中转保留真实请求 ID 却替换审批文案，手机不得把它分发给 UI。
+// 真实 DeviceLinkClient + 手机 frameAuth；现有跨实现用例仅验证出站。最小输入为一条篡改权限 push，tier: unit。
+it('dispatches only owner-certified, untampered permission frames and rejects replays', async () => {
+  const f = incomingFixture();
+  const attacker = createRelaySigningKey(nodeRelayAuthCrypto);
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
+    certs: [f.cert(f.peer.publicKey), f.cert(attacker.publicKey, attacker.seed)],
+  }), { status: 200 }));
+  setActiveSelfHostedRelay(f.route);
+  const auth = currentSelfHostedRelayFrameAuth()!;
+  const peer = f.sender();
+  await vi.waitFor(() => expect(auth.verify(f.signed(peer, { probe: true }) as unknown as Record<string, unknown>)).toBe(true));
+  const ws = new RelaySocket();
+  const client = new DeviceLinkClient({
+    getWsUrl: () => 'wss://relay.home.example/api/device-link/ws',
+    getToken: async () => 'relay-credential',
+    authorizationScheme: 'CindyRelay',
+    getHello: () => ({ deviceName: 'Phone', platform: 'ios', appVersion: '1', remoteControlEnabled: false, busy: false }),
+    createWebSocket: () => ws,
+    frameAuth: currentSelfHostedRelayFrameAuth,
+  });
+  const received: unknown[] = [];
+  client.onFrame(frame => { if (frame.kind === 'push') received.push(frame.payload); });
+  try {
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    ws.emit('open');
+    ws.push({ v: PROTOCOL_VERSION, kind: 'hello-ack', payload: { serverProtocolVersion: PROTOCOL_VERSION, deviceId: 'phone-1', userId: 'u1', capabilities: [] } });
+    const real = { channel: 'maker:interaction-request', payload: { request: { id: 'request-1', kind: 'permission', command: 'dangerous command' } } };
+    const genuine = f.signed(peer, real);
+    ws.push({ ...genuine, auth: undefined });
+    ws.push(f.signed(f.sender(attacker.seed), real));
+    ws.push({ ...genuine, payload: { ...real, payload: { request: { ...real.payload.request, command: 'harmless command' } } } });
+    ws.push(genuine);
+    ws.push(genuine);
+    expect(received).toEqual([real]);
+    expect(fetch).toHaveBeenCalledWith('https://relay.home.example/api/device-link/relay/certs', expect.objectContaining({
+      headers: { Authorization: 'CindyRelay relay-credential' },
+    }));
+  } finally {
+    client.stop();
+  }
+});
+
+// 同一设备重新加入换密钥时刷新证书；无证书/刷新失败都保持拒绝，不重启共享连接。
+it('refreshes rotated signer certificates with throttling and fails closed on fetch errors', async () => {
+  const f = incomingFixture();
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ certs: [f.cert(f.peer.publicKey)] }), { status: 200 }));
+  setActiveSelfHostedRelay(f.route);
+  const auth = currentSelfHostedRelayFrameAuth()!;
+  await vi.waitFor(() => expect(auth.verify(f.signed(f.sender(), {}) as unknown as Record<string, unknown>)).toBe(true));
+  const replacement = createRelaySigningKey(nodeRelayAuthCrypto);
+  const sender = f.sender(replacement.seed);
+  vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'));
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(auth.verify(f.signed(sender, {}) as unknown as Record<string, unknown>)).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  for (let i = 0; i < 3; i++) expect(auth.verify(f.signed(sender, {}) as unknown as Record<string, unknown>)).toBe(false);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ certs: [f.cert(replacement.publicKey)] }), { status: 200 }));
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(auth.verify(f.signed(sender, {}) as unknown as Record<string, unknown>)).toBe(false);
+  await vi.waitFor(() => expect(auth.verify(f.signed(sender, {}) as unknown as Record<string, unknown>)).toBe(true));
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+// 切账号/中转后，旧请求的证书不能写入新路由，也不能恢复已失效的验签实例。
+it('discards late certificate replies after credentials or the selected relay change', async () => {
+  const f = incomingFixture();
+  let reply!: (response: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }));
+  setActiveSelfHostedRelay(f.route);
+  const old = currentSelfHostedRelayFrameAuth()!;
+  setActiveSelfHostedRelay({ ...f.route, credential: 'new-relay-credential' });
+  const current = currentSelfHostedRelayFrameAuth()!;
+  expect(current).not.toBe(old);
+  reply(new Response(JSON.stringify({ certs: [f.cert(f.peer.publicKey)] }), { status: 200 }));
+  await vi.advanceTimersByTimeAsync(0);
+  const frame = f.signed(f.sender(), {}) as unknown as Record<string, unknown>;
+  expect(old.verify(frame)).toBe(false);
+  expect(current.verify(frame)).toBe(false);
+  setActiveSelfHostedRelay(null);
+  expect(currentSelfHostedRelayFrameAuth()).toBeNull();
 });

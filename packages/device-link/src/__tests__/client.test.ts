@@ -526,6 +526,91 @@ describe('self-hosted relay device signatures', () => {
     } finally { host.stop(); phone.stop(); vi.useRealTimers(); }
   });
 
+  // #7722 discussion_r4403909690：手机保持热进程、电脑重启后，旧挑战拒绝不能丢掉仍有效的首次建链。
+  // 重建真实接收Client与认证器，发送端socket保留；覆盖冷证书，超时/取消/换身份不能补发。tier: unit。
+  it.each(['connected', 'cold-certificates', 'expired', 'closed', 'identity-changed'] as const)('handles a receiver restart while the original link request is %s', async mode => {
+    vi.useFakeTimers();
+    const relay = new MemoryRelay();
+    const sockets = vi.spyOn(relay, 'makeWebSocket');
+    const signer = signingPeers(['host', 'phone']);
+    let hostAuth = signer('host');
+    const makeHost = () => makeRelayClient(relay, 'host', { requestTimeoutMs: 2_000 }, { frameAuth: () => frameAuth(hostAuth) });
+    let host = makeHost();
+    let phoneAuth = signer('phone');
+    const phone = makeRelayClient(relay, 'phone', { requestTimeoutMs: 2_000 }, { frameAuth: () => frameAuth(phoneAuth) });
+    const received: Envelope[] = [];
+    const accept = (client: DeviceLinkClient) => client.onFrame(env => {
+      if (env.kind !== 'link-open') return;
+      received.push(env);
+      client.sendLinkAccept(env.src!, env.id!, { appVersion: '1', allowlistHash: 'hash' });
+    });
+    const pump = () => relay.settle(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const opening = () => phone.openLink('host', { controllerName: 'Phone', protocolVersion: 1, appVersion: '1' });
+    accept(host);
+    try {
+      host.start(); phone.start(); await pump();
+      const initial = opening(); await pump(); await initial;
+      expect(phoneAuth.peerChallenge('host')).toBe('ready');
+      host.stop(); hostAuth = signer('host');
+      if (mode === 'cold-certificates') hostAuth.setCertificates([]);
+      host = makeHost(); accept(host); host.start(); await pump();
+      received.length = 0;
+      const settled = vi.fn();
+      const restored = opening();
+      void restored.then(value => settled(value), error => settled(error));
+      if (mode === 'identity-changed') phoneAuth = signer('phone');
+      if (mode === 'expired') await vi.advanceTimersByTimeAsync(2_001);
+      if (mode === 'closed') phone.closeLink('host', 'user');
+      await pump();
+      if (mode === 'cold-certificates') {
+        expect(settled).not.toHaveBeenCalled();
+        expect(received).toHaveLength(0);
+        hostAuth.setCertificates(signer.certs);
+        await vi.advanceTimersByTimeAsync(1_000);
+        await pump();
+      }
+      expect(settled).toHaveBeenCalledOnce();
+      if (mode === 'connected' || mode === 'cold-certificates') {
+        await expect(restored).resolves.toMatchObject({ appVersion: '1' });
+        expect(received).toHaveLength(1);
+        const attempts = (relay.deliveredTo.get('host') ?? []).filter(env => env.kind === 'link-open');
+        expect(attempts.at(-1)!.id).toBe(attempts.at(-2)!.id);
+      } else {
+        await expect(restored).rejects.toMatchObject({ code: mode === 'expired' ? 'INVOKE_TIMEOUT'
+          : mode === 'closed' ? 'LINK_NOT_OPEN' : 'NOT_CONNECTED' });
+        expect(received).toHaveLength(0);
+      }
+      expect(sockets.mock.calls.filter(([id]) => id === 'phone')).toHaveLength(1);
+    } finally { host.stop(); phone.stop(); vi.useRealTimers(); }
+  });
+
+  // 冷证书恢复会探测未知来源；恶意中转不能借此执行未验签业务或无限保留任意来源。tier: unit。
+  it('bounds unauthenticated probes without retaining or delivering the rejected business frame', async () => {
+    vi.useFakeTimers();
+    const signer = signingPeers(['dev-self', 'peer']);
+    const signerSelf = signer('dev-self'), peer = signer('peer');
+    const h = makeHarness({ timing: { pingIntervalMs: 60_000, requestTimeoutMs: 1_000 }, frameAuth: () => frameAuth(signerSelf) });
+    signerSelf.setCertificates([]);
+    const received = vi.fn();
+    h.client.onFrame(received);
+    try {
+      h.client.start(); await vi.advanceTimersByTimeAsync(0); h.current().ack();
+      const frame = { v: 1, kind: 'invoke', id: 'rejected', dst: 'dev-self',
+        payload: { channel: 'maker:send', args: ['must not execute'] } } as Envelope;
+      for (const src of ['', 'x'.repeat(257), ...Array.from({ length: 40 }, (_, i) => `unknown-${i}`)]) {
+        h.current().push({ ...frame, src, auth: peer.sign(frame) } as Envelope);
+      }
+      const probes = h.current().sent.filter(env => env.kind === 'push');
+      expect(probes).toHaveLength(32);
+      expect(probes.every(env => (env.payload as { channel: string }).channel === RELAY_AUTH_CHANNEL)).toBe(true);
+      expect(probes.every(env => env.dst?.startsWith('unknown-'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(2_001);
+      expect(h.current().sent.filter(env => env.kind === 'push')).toHaveLength(32);
+      expect(received).not.toHaveBeenCalled();
+      expect(h.sockets).toHaveLength(1);
+    } finally { h.client.stop(); vi.useRealTimers(); }
+  });
+
   // #7722 discussion_r4403285988:内存计数在接收端重启后消失，旧写请求不能在十分钟内再次执行。
   // 真实认证器公开握手/验签入口；重放建链和invoke，并验证新的握手仍能恢复正常写请求。tier: unit。
   it('binds requests to the receiver boot so a restart cannot replay an executed write', () => {

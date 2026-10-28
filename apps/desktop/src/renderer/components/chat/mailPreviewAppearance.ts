@@ -94,6 +94,9 @@ export function followMailPreviewTheme(doc: Document, host: Document, reading = 
       const set = (name: string, value: string) => el.style.setProperty(name, value, 'important');
       if (reading) {
         const palette = { surface, text };
+        // Gradients can remain bright even when backgroundColor is transparent.
+        // Remove CSS decoration before making its foreground light, as in compose.
+        if (entry.image && entry.image !== 'none') set('background-image', 'none');
         set('background-color', mailReadingColor(entry.background, 'background', palette));
         set('color', mailReadingColor(entry.color, 'text', palette));
         ['top', 'right', 'bottom', 'left'].forEach((side, index) =>

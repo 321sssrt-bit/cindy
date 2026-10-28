@@ -230,7 +230,7 @@ it('adapts the reading palette without changing text structure or accumulating d
     root.classList.add('dark');
     root.style.setProperty('--surface', '#181818');
     root.style.setProperty('--text-primary', '#eeeeee');
-    const source = '<body style="background:#f99a3c;color:black"><div style="background:white;border:5px solid white"><p style="margin:0;line-height:28px">\n    Alex\n  </p></div><img src="cid:logo"></body>';
+    const source = '<body style="background:#f99a3c;color:black"><div style="background:white;border:5px solid white"><p style="margin:0;line-height:28px">\n    Alex\n  </p></div><section style="background:linear-gradient(#fff,#eee);color:#000">Gradient</section><img src="cid:logo"></body>';
     const view = render(<MailHtmlPreview value={source} reading />);
     const frame = screen.getByTitle('chat.ghostCall.mailPreview') as HTMLIFrameElement, doc = frame.contentDocument!;
     doc.open(); doc.write(frame.srcdoc); doc.close(); fireEvent.load(frame);
@@ -242,6 +242,9 @@ it('adapts the reading palette without changing text structure or accumulating d
       expect(doc.querySelector('div')!.style.backgroundColor).toBe(dark ? 'rgb(24, 24, 24)' : 'white');
       expect(doc.querySelector('div')!.style.borderTopColor).toBe(dark ? 'rgb(24, 24, 24)' : 'white');
       expect(doc.querySelector('img')!.getAttribute('style')).toBeNull();
+      // jsdom miscomputes !important longhands beside background shorthand;
+      // the Electron fixture separately checks the real computed background.
+      expect(doc.querySelector('section')!.style.backgroundImage).toBe(dark ? 'none' : 'linear-gradient(rgb(255, 255, 255), rgb(238, 238, 238))');
       expect(doc.querySelector('[data-cindy-mail-run]')).toBeNull();
       expect(doc.querySelector('p')).toBe(paragraph);
       expect(doc.body.contentEditable).toBe('false');
@@ -259,7 +262,7 @@ it('uses the same reading palette in native injection and restores the original 
   const frame = document.createElement('iframe'); document.body.append(frame);
   try {
     const doc = frame.contentDocument!;
-    doc.body.innerHTML = '<p style="background:rgb(249,154,60);color:black;border:5px solid white">Ticket</p><img src="data:image/png;base64,YQ==">';
+    doc.body.innerHTML = '<p style="background:rgb(249,154,60);color:black;border:5px solid white">Ticket</p><section style="background:linear-gradient(#fff,#eee);color:#000">Gradient</section><img src="data:image/png;base64,YQ==">';
     const original = doc.body.innerHTML;
     const palette = { surface: '#181818', text: '#eeeeee' };
     const apply = (dark: boolean) => new Function('document', 'getComputedStyle', mailReadingThemeScript(dark, palette))(doc, doc.defaultView!.getComputedStyle.bind(doc.defaultView));
@@ -269,6 +272,7 @@ it('uses the same reading palette in native injection and restores the original 
     expect(mailReadingColor('rgb(249, 154, 60)', 'background', palette)).toBe('rgba(129, 71, 14, 1)');
     expect(doc.querySelector('p')!.style.color).toBe('rgb(238, 238, 238)');
     expect(doc.querySelector('img')!.getAttribute('style')).toBeNull();
+    expect(doc.querySelector('section')!.style.backgroundImage).toBe('none');
     apply(true);
     expect(doc.body.innerHTML).toBe(painted);
     apply(false);

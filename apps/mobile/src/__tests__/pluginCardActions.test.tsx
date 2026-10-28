@@ -193,7 +193,7 @@ describe("native plugin card deliberate actions", () => {
   it('repaints native reading colors on theme changes without replacing the document or changing mail', async () => {
     const container = document.createElement('div'), root = createRoot(container);
     unmount = () => act(() => root.unmount());
-    const html = '<p style="background:rgb(249,154,60);color:black">Ticket</p>';
+    const html = '<p style="background:rgb(249,154,60);color:black">Ticket</p><section style="background:linear-gradient(#fff,#eee);color:#000">Gradient</section>';
     const render = () => act(async () => root.render(createElement(MobileMailHtmlPreview, { html, deviceId: 'device' })));
     await render();
     const source = h.web.source;
@@ -207,6 +207,7 @@ describe("native plugin card deliberate actions", () => {
         await render();
         expect(h.web.source).toBe(source);
         expect(doc.querySelector('p')!.style.backgroundColor).toBe(mode === 'dark' ? 'rgb(129, 71, 14)' : 'rgb(249, 154, 60)');
+        expect(doc.querySelector('section')!.style.backgroundImage).toBe(mode === 'dark' ? 'none' : 'linear-gradient(rgb(255, 255, 255), rgb(238, 238, 238))');
         expect(doc.querySelector('[data-cindy-mail-run]')).toBeNull();
       }
       expect(h.invoke).not.toHaveBeenCalled();

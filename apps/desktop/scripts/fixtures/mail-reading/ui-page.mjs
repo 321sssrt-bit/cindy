@@ -25,6 +25,7 @@ export default {
         heights: paragraphs.map(el => el.getBoundingClientRect().height),
         runs: doc.querySelectorAll('[data-cindy-mail-run]').length,
         padding: css(doc.querySelector('.address')).paddingLeft,
+        gradient: css(doc.querySelector('.gradient')).backgroundImage,
       };
     });
     if (ui.case === 'fixed-width') {
@@ -33,6 +34,7 @@ export default {
       return;
     }
     if (result.background !== (ui.theme === 'dark' ? 'rgb(129, 71, 14)' : 'rgb(249, 154, 60)')) throw new Error('Mail background lost its intended hue/brightness');
+    if (ui.theme === 'dark' ? result.gradient !== 'none' : !result.gradient.includes('linear-gradient')) throw new Error('Gradient decoration must clear only in dark mode');
     if (ui.theme === 'light' && result.color !== 'rgb(0, 0, 0)') throw new Error('Authored light text changed');
     if (ui.theme === 'dark' && result.color === 'rgb(0, 0, 0)') throw new Error('Text was not adapted to the dark background');
     if (result.runs || result.heights.some(height => height !== 28)) throw new Error('Source indentation changed the rendered line spacing');

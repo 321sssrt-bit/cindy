@@ -23,6 +23,7 @@ body{margin:0;background:white;font-family:Arial,sans-serif}
                           Example City
                       </p></div>
 <p style="text-align:center;padding:20px;color:black">Keep this ticket for your visit.</p>
+<p class="gradient" style="padding:20px;background:linear-gradient(#fff,#eee);color:black">Read this notice on a gradient.</p>
 </td></tr></table></body></html>`;
 
 void mountPage({ render: ctx => <main className="min-h-screen p-3">

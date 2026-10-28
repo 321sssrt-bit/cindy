@@ -62,6 +62,8 @@ export function mailReadingThemeScript(dark: boolean, palette: MailReadingPalett
     var authored=nodes.map(function(el){var css=getComputedStyle(el);return {el:el,style:el.getAttribute('style'),background:css.backgroundColor,color:css.color,borders:['Top','Right','Bottom','Left'].map(function(side){return css['border'+side+'Color']})}});
     authored.forEach(function(item){
       var el=item.el;el.setAttribute(marker,JSON.stringify(item.style));
+      // CSS gradients must not remain bright behind the adapted light text.
+      el.style.setProperty('background-image','none','important');
       el.style.setProperty('background-color',recolor(item.background,'background',palette),'important');
       el.style.setProperty('color',recolor(item.color,'text',palette),'important');
       ['top','right','bottom','left'].forEach(function(side,i){el.style.setProperty('border-'+side+'-color',recolor(item.borders[i],'background',palette),'important')});

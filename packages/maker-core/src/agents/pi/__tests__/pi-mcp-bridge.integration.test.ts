@@ -1631,10 +1631,11 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
   // must bypass HTTP_PROXY. The previous real-Pi test covered only 127.0.0.1; an empty
   // inherited NO_PROXY plus http://[::1] is the minimal case that could leak credentials
   // after removing the bracketed token from Pi's automatic NO_PROXY additions.
-  it.each(['127.0.0.1', '::1'] as const)(
-    'direct remote HTTP on %s: keeps authenticated MCP traffic out of HTTP_PROXY',
-    { timeout: 90_000 },
-    async (loopbackHost) => {
+  for (const loopbackHost of ['127.0.0.1', '::1'] as const) {
+    it(
+      `direct remote HTTP on ${loopbackHost}: keeps authenticated MCP traffic out of HTTP_PROXY`,
+      { timeout: 90_000 },
+      async (context) => {
       echoCalls.length = 0;
       seenMcpUrls.length = 0;
       seenRemoteHeaders.length = 0;
@@ -1643,7 +1644,22 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
         ? createServer((req, res) => { mcpHttp.emit('request', req, res); })
         : undefined;
       if (ipv6Mcp) {
-        await new Promise<void>((resolve) => ipv6Mcp.listen(0, '::1', resolve));
+        try {
+          await new Promise<void>((resolve, reject) => {
+            ipv6Mcp.once('error', reject);
+            ipv6Mcp.listen(0, '::1', () => {
+              ipv6Mcp.off('error', reject);
+              resolve();
+            });
+          });
+        } catch (error) {
+          // IPv6 loopback is optional on CI hosts; other bind failures remain test failures.
+          if (['EAFNOSUPPORT', 'EADDRNOTAVAIL', 'EPROTONOSUPPORT'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+            context.skip();
+            return;
+          }
+          throw error;
+        }
         const address = ipv6Mcp.address();
         if (typeof address !== 'object' || !address) throw new Error('IPv6 MCP did not listen');
         mcpUrl = `http://[::1]:${address.port}/mcp`;
@@ -1701,7 +1717,8 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
         .join('');
       expect(finalText).toContain('ECHO[hello-pi]');
     },
-  );
+    );
+  }
 
   it(
     'persistent SSE: registers on the matching event without waiting for stream close, then uses the long tool timeout',

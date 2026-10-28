@@ -1099,6 +1099,26 @@ export async function performSessionAgentSwitch(
         });
       }
     };
+    const restoreNativeProbeSource = async (error: unknown) => {
+      // Cancel/selection changes still restore the source, but never restore old
+      // history after clear or write the previous owner's route into a new account.
+      const assertProbeOwner = () => {
+        if (deps.readOwnerGeneration?.() !== ownerGeneration
+          || (handoffGeneration !== undefined && deps.readPendingHandoffGeneration?.(sessionId) !== handoffGeneration)) {
+          throw error;
+        }
+      };
+      assertProbeOwner();
+      await closeFailedNativeSession();
+      assertProbeOwner();
+      await deps.applyAgentSwitchToDb(sessionId, {
+        agentKind: fromDbKind, model: row.model ?? model, providerId: row.providerId,
+        sdkSessionId: sourceNativeId, agentDeviceId: currentAgentDeviceId,
+      });
+      assertProbeOwner();
+      deps.setSessionProvider(sessionId, row.providerId);
+      assertTransferCurrent();
+    };
     if (relocating && !forcedRelocation && fromDbKind === toDbKind && deps.relocateNativeHistory) {
       // Close flushes the last native ID. Never snapshot the pre-close ID after a native fork/compact.
       const fresh = await deps.getSessionRow(sessionId);
@@ -1155,23 +1175,7 @@ export async function performSessionAgentSwitch(
           }
           nativeBootstrapReady = true;
         } catch (error) {
-          // Cancellation must not strand the task on a failed native copy. Do not
-          // restore stale history after clear or write into a different account.
-          if (deps.readOwnerGeneration?.() !== ownerGeneration
-            || (handoffGeneration !== undefined && deps.readPendingHandoffGeneration?.(sessionId) !== handoffGeneration)) {
-            throw error;
-          }
-          await closeFailedNativeSession();
-          if (deps.readOwnerGeneration?.() !== ownerGeneration
-            || (handoffGeneration !== undefined && deps.readPendingHandoffGeneration?.(sessionId) !== handoffGeneration)) {
-            throw error;
-          }
-          await deps.applyAgentSwitchToDb(sessionId, {
-            agentKind: fromDbKind, model: row.model ?? model, providerId: row.providerId,
-            sdkSessionId: sourceNativeId, agentDeviceId: currentAgentDeviceId,
-          });
-          deps.setSessionProvider(sessionId, row.providerId);
-          assertTransferCurrent();
+          await restoreNativeProbeSource(error);
           relocatedNativeId = null;
           handoff = buildFullHandoff();
           deps.log.warn('agent-switch: native quota relocation failed; restored source before summary confirmation', {
@@ -1189,18 +1193,25 @@ export async function performSessionAgentSwitch(
 
     if (relocating) assertTransferCurrent();
     // ---- commit point:此后切换生效 ----
-    await deps.applyAgentSwitchToDb(sessionId, {
-      agentKind: toDbKind,
-      model,
-      providerId: normalizedProviderId,
-      sdkSessionId: relocatedNativeId ?? parked?.sdkSessionId ?? null,
-      ...(typeof params.effort === 'string' && params.effort ? { effort: params.effort } : {}),
-      ...((typeof params.fastMode === 'boolean' || params.fastMode === 'ultrafast') ? { fastMode: params.fastMode } : {}),
-      // 组选回的当前位置在另一台电脑时也带上位置：提交按它判断窗口该查哪台的目录，不能拿本机目录。
-      ...(agentDeviceChanges || (orcaGroupReturnRebuild && targetAgentDeviceId)
-        ? { agentDeviceId: targetAgentDeviceId }
-        : {}),
-    });
+    try {
+      await deps.applyAgentSwitchToDb(sessionId, {
+        agentKind: toDbKind,
+        model,
+        providerId: normalizedProviderId,
+        sdkSessionId: relocatedNativeId ?? parked?.sdkSessionId ?? null,
+        ...(typeof params.effort === 'string' && params.effort ? { effort: params.effort } : {}),
+        ...((typeof params.fastMode === 'boolean' || params.fastMode === 'ultrafast') ? { fastMode: params.fastMode } : {}),
+        // 组选回的当前位置在另一台电脑时也带上位置：提交按它判断窗口该查哪台的目录，不能拿本机目录。
+        ...(agentDeviceChanges || (orcaGroupReturnRebuild && targetAgentDeviceId)
+          ? { agentDeviceId: targetAgentDeviceId }
+          : {}),
+      });
+    } catch (error) {
+      // A successful probe already persisted and opened the target. If the final
+      // settings write fails, the caller must see the original route, not a half switch.
+      if (nativeBootstrapReady) await restoreNativeProbeSource(error);
+      throw error;
+    }
     if (normalizedProviderId !== undefined) {
       deps.setSessionProvider(sessionId, normalizedProviderId);
     }

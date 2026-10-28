@@ -142,6 +142,47 @@ describe('same-harness native relocation', () => {
     expect(deps.confirmNativeHistoryFallback).not.toHaveBeenCalled();
   });
 
+  it.each(['closed', 'close-rejected', 'account-changed', 'history-cleared'] as const)('rolls back a successful quota probe when the final route write fails (%s)', async state => {
+    let row = makeRow({ workingDir: '/project', sdkSessionId: 'source-native', agentDeviceId: 'source' });
+    const original = { ...row };
+    let owner = 1;
+    let generation = 0;
+    let targetWrites = 0;
+    let live = true;
+    const { deps } = makeDeps({
+      readOwnerGeneration: () => owner,
+      readPendingHandoffGeneration: () => generation,
+      getSessionRow: vi.fn(async () => ({ ...row })),
+      getLiveSession: () => live ? { isTurnRunning: () => false, sdkSessionId: row.sdkSessionId ?? undefined } : undefined,
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      applyAgentSwitchToDb: vi.fn(async (_id, patch) => {
+        if (patch.sdkSessionId === 'transferred' && ++targetWrites === 2) throw new Error('route write failed');
+        row = { ...row, ...patch, providerId: patch.providerId ?? null };
+      }),
+      bootstrapSwitchedSession: vi.fn(async () => { live = true; }),
+      closeSession: vi.fn(async () => {
+        live = false;
+        if (targetWrites < 2) return;
+        if (state === 'account-changed') owner++;
+        if (state === 'history-cleared') generation++;
+        if (state !== 'closed') throw new Error('DEVICE_LINK_NOT_CONNECTED');
+      }),
+    });
+    await expect(performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini',
+      applyNow: true, providerGroupSwitchReason: 'quota-rebalance', effort: 'high', fastMode: true })).rejects.toThrow('route write failed');
+    expect(live).toBe(false);
+    expect(deps.insertBoundaryMessage).not.toHaveBeenCalled();
+    expect(deps.setPendingHandoff).not.toHaveBeenCalled();
+    expect(deps.confirmNativeHistoryFallback).not.toHaveBeenCalled();
+    if (state === 'account-changed' || state === 'history-cleared') {
+      expect(deps.applyAgentSwitchToDb).toHaveBeenCalledTimes(2);
+      expect(deps.setSessionProvider).toHaveBeenCalledTimes(1);
+      return;
+    }
+    expect(row).toEqual(original);
+    expect(deps.setSessionProvider).toHaveBeenLastCalledWith('s1', original.providerId);
+  });
+
   it.each([
     ['claude-code', 'cc', null, 'mini'], ['codex', 'codex', 'mini', null], ['pi', 'pi', 'mini', 'studio'],
   ] as const)('restores %s history from %s between computers before dispatch', async (kind, dbKind, from, to) => {

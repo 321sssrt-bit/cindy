@@ -180,7 +180,9 @@ describe('浏览器登录回调页 CTA 叠层 = 登录主按钮叠层', () => {
     it.each(CALLBACK_OVERLAYS)(`${rule}: %s 与 %s 同值`, (cssVar, loginId) => {
       const actual = vars[rule][cssVar];
       if (actual === undefined) throw new Error(`${rule} 规则缺少 ${cssVar}`);
-      expect(normalizeColor(actual)).toBe(normalizeColor(colorRegistry.resolveDefault(loginId, mode)));
+      const expected = colorRegistry.resolveDefault(loginId, mode);
+      if (expected === null) throw new Error(`${loginId} 缺少 ${mode} 默认值`);
+      expect(normalizeColor(actual)).toBe(normalizeColor(expected));
     });
   }
 });

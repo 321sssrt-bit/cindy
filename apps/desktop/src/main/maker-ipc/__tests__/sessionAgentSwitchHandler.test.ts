@@ -39,6 +39,7 @@ function makeDeps(overrides: Partial<MakerSessionAgentSwitchHandlerDeps> = {}): 
 } {
   const calls: string[] = [];
   const deps: MakerSessionAgentSwitchHandlerDeps = {
+    confirmNativeHistoryFallback: vi.fn(async () => true),
     getSessionRow: vi.fn(async () => makeRow()),
     getLiveSession: vi.fn(() => ({ isTurnRunning: () => false })),
     closeSession: vi.fn(async () => {
@@ -80,6 +81,159 @@ const validParams = {
   model: 'gpt-5.5',
   providerId: null,
 };
+
+describe('same-harness native relocation', () => {
+  // Quota balancing is now automatic only while native context survives. Exercise the
+  // real switch entry: refusal after a failed resume must restore the original route.
+  it.each(['missing', 'rejected', 'silent'] as const)('asks before summary fallback after %s native history and preserves the source on refusal', async failure => {
+    let row = makeRow({ workingDir: '/project', sdkSessionId: 'source-native', agentDeviceId: null });
+    const original = { ...row };
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => ({ ...row })),
+      relocateNativeHistory: vi.fn(async () => failure === 'missing' ? null : 'transferred'),
+      applyAgentSwitchToDb: vi.fn(async (_id, patch) => { row = { ...row, ...patch, providerId: patch.providerId ?? null }; }),
+      getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: failure === 'silent' ? 'fresh' : row.sdkSessionId ?? undefined }),
+      bootstrapSwitchedSession: vi.fn(async () => { if (failure === 'rejected') throw new Error('cannot resume'); }),
+      confirmNativeHistoryFallback: vi.fn(async () => {
+        expect(row).toMatchObject({ sdkSessionId: original.sdkSessionId, agentDeviceId: original.agentDeviceId, providerId: original.providerId });
+        return false;
+      }),
+    });
+    await expect(performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini',
+      applyNow: true, skipBootstrap: true, providerGroupSwitchReason: 'quota-rebalance' })).rejects.toThrow('NATIVE_HISTORY_FALLBACK_DECLINED');
+    expect(deps.confirmNativeHistoryFallback).toHaveBeenCalledOnce();
+    expect(deps.insertBoundaryMessage).not.toHaveBeenCalled();
+    expect(deps.setPendingHandoff).not.toHaveBeenCalled();
+    expect(row.sdkSessionId).toBe('source-native');
+  });
+
+  it.each([false, true])('publishes an automatic native switch without asking, or a confirmed summary (%s)', async resumeFails => {
+    let row = makeRow({ workingDir: '/project', sdkSessionId: 'source-native' });
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => ({ ...row })),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      applyAgentSwitchToDb: vi.fn(async (_id, patch) => { row = { ...row, ...patch, providerId: patch.providerId ?? null }; }),
+      getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: row.sdkSessionId ?? undefined }),
+      bootstrapSwitchedSession: vi.fn(async () => { if (resumeFails) throw new Error('cannot resume'); }),
+    });
+    await performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini',
+      applyNow: true, skipBootstrap: true, providerGroupSwitchReason: 'quota-rebalance' });
+    expect(deps.confirmNativeHistoryFallback).toHaveBeenCalledTimes(resumeFails ? 1 : 0);
+    expect(deps.bootstrapSwitchedSession).toHaveBeenCalledOnce();
+    expect(deps.insertBoundaryMessage).toHaveBeenCalledWith('s1', expect.objectContaining({ nativeHistory: resumeFails ? 'fallback' : 'restored' }));
+    expect(row.agentDeviceId).toBe('mini');
+    expect(row.sdkSessionId).toBe(resumeFails ? null : 'transferred');
+  });
+
+  it('restores the source on cancellation during the native probe without asking', async () => {
+    let row = makeRow({ workingDir: '/project', sdkSessionId: 'source-native' });
+    const controller = new AbortController();
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => ({ ...row })),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      applyAgentSwitchToDb: vi.fn(async (_id, patch) => { row = { ...row, ...patch, providerId: patch.providerId ?? null }; }),
+      bootstrapSwitchedSession: vi.fn(async () => { controller.abort(); }),
+    });
+    await expect(performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini',
+      applyNow: true, providerGroupSwitchReason: 'quota-rebalance', signal: controller.signal })).rejects.toThrow();
+    expect(row.sdkSessionId).toBe('source-native');
+    expect(row.agentDeviceId).toBeNull();
+    expect(deps.confirmNativeHistoryFallback).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['claude-code', 'cc', null, 'mini'], ['codex', 'codex', 'mini', null], ['pi', 'pi', 'mini', 'studio'],
+  ] as const)('restores %s history from %s between computers before dispatch', async (kind, dbKind, from, to) => {
+    let nativeId = 'original';
+    const row = makeRow({ agentKind: dbKind, agentDeviceId: from, workingDir: '/project', sdkSessionId: nativeId });
+    const relocateNativeHistory = vi.fn(async () => 'transferred');
+    const { deps, calls } = makeDeps({
+      getSessionRow: vi.fn(async () => row), relocateNativeHistory,
+      getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: nativeId }),
+      applyAgentSwitchToDb: vi.fn(async (_sessionId, patch) => { calls.push('db'); nativeId = patch.sdkSessionId!; }),
+    });
+    await performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: kind, agentDeviceId: to, applyNow: true, skipBootstrap: true });
+    expect(relocateNativeHistory).toHaveBeenCalledWith(expect.objectContaining({ fromDevice: from, toDevice: to, nativeId: 'original', workingDir: '/project' }));
+    expect(vi.mocked(deps.closeSession).mock.invocationCallOrder[0]).toBeLessThan(relocateNativeHistory.mock.invocationCallOrder[0]);
+    expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({ sdkSessionId: 'transferred' }));
+    expect(deps.bootstrapSwitchedSession).toHaveBeenCalledOnce();
+    expect(deps.insertBoundaryMessage).toHaveBeenCalledWith('s1', expect.objectContaining({ resumed: true, handoff: expect.not.stringContaining('你好') }));
+    expect(deps.applyResumeFallbackAtomically).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('falls back with visible handoff metadata when restore fails or silently starts fresh (%s)', async (silent) => {
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project' })),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      bootstrapSwitchedSession: silent ? vi.fn(async () => {}) : vi.fn().mockRejectedValueOnce(new Error('native format unavailable')).mockResolvedValue(undefined),
+    });
+    await performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true });
+    expect(deps.applyResumeFallbackAtomically).toHaveBeenCalledWith('s1', 'boundary-client-1', expect.objectContaining({ resumed: false, handoff: expect.stringContaining('你好') }));
+    expect(deps.bootstrapSwitchedSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not commit native history after clear or cancellation during transfer', async () => {
+    let generation = 0;
+    const { deps } = makeDeps({
+      readPendingHandoffGeneration: () => generation,
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project' })),
+      relocateNativeHistory: vi.fn(async input => { generation++; input.assertCurrent(); return 'transferred'; }),
+    });
+    await expect(performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true })).rejects.toThrow('history changed');
+    expect(deps.applyAgentSwitchToDb).not.toHaveBeenCalled();
+    expect(deps.setPendingHandoff).not.toHaveBeenCalled();
+  });
+
+  it('keeps context from a previous switch that has not reached the native session yet', async () => {
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project' })),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      peekPendingHandoff: vi.fn(async () => 'Important context waiting for the first native send'),
+      getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: 'transferred' }),
+    });
+    await performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true });
+    expect(deps.setPendingHandoff).toHaveBeenCalledWith('s1', expect.stringContaining('Important context waiting for the first native send'), undefined);
+    expect(deps.applyResumeFallbackAtomically).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an account switch during transfer as an ordinary fallback', async () => {
+    let owner = 1;
+    const { deps } = makeDeps({
+      readOwnerGeneration: () => owner,
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project' })),
+      relocateNativeHistory: vi.fn(async () => { owner++; throw new Error('owner changed'); }),
+    });
+    await expect(performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true })).rejects.toThrow('REMOTE_AGENT_ACCOUNT_CHANGED');
+    expect(deps.applyAgentSwitchToDb).not.toHaveBeenCalled();
+    expect(deps.setPendingHandoff).not.toHaveBeenCalled();
+  });
+
+  it('resumes native history on startup relocation and atomically falls back if opening it fails', async () => {
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project', agentDeviceId: 'target' })),
+      relocateNativeHistory: vi.fn(async () => 'restored-native'),
+    });
+    const result = await relocateForFreshStart(deps, { sessionId: 's1', agentDeviceId: 'target', providerId: null,
+      from: { agentDeviceId: 'source', providerId: null } });
+    expect(result.nativeId).toBe('restored-native');
+    expect(deps.relocateNativeHistory).toHaveBeenCalledWith(expect.objectContaining({ fromDevice: 'source', toDevice: 'target' }));
+    expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({ sdkSessionId: 'restored-native' }));
+    expect(deps.insertBoundaryMessage).toHaveBeenCalledWith('s1', expect.objectContaining({ nativeHistory: 'restored', resumed: true }));
+    await result.fallback!();
+    expect(deps.applyResumeFallbackAtomically).toHaveBeenCalledWith('s1', 'boundary-client-1', expect.objectContaining({
+      resumed: false, nativeHistory: 'fallback', handoff: expect.stringContaining('你好'),
+    }));
+    expect(deps.setPendingHandoff).toHaveBeenLastCalledWith('s1', expect.stringContaining('你好'), undefined);
+  });
+
+  it('keeps cross-harness switching on the existing handoff path', async () => {
+    const relocateNativeHistory = vi.fn();
+    const { deps } = makeDeps({ relocateNativeHistory, getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project' })) });
+    await performSessionAgentSwitch(deps, { ...validParams, agentDeviceId: 'mini', applyNow: true });
+    expect(relocateNativeHistory).not.toHaveBeenCalled();
+    expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({ sdkSessionId: null }));
+  });
+});
 
 const orcaAgents = [
   { kind: 'claude-code', dbKind: 'cc', model: 'claude-fable-5', providerId: 'anthropic' },

@@ -5487,10 +5487,10 @@ function MobileAgentSwitchCard({ data }: { data?: Record<string, unknown> }) {
               <Text style={styles.agentSwitchModel} numberOfLines={1}>{toModel}</Text>
             </>
           ) : null}
-          {resumed ? (
+          {resumed || data?.nativeHistory === 'fallback' ? (
             <>
               <Text style={styles.agentSwitchDot}>·</Text>
-              <Text style={styles.agentSwitchPillText} numberOfLines={1}>{t('message.renderer.sessionResumedPill')}</Text>
+              <Text style={styles.agentSwitchPillText} numberOfLines={1}>{t(data?.nativeHistory === 'fallback' ? 'message.renderer.sessionFallbackPill' : 'message.renderer.sessionResumedPill')}</Text>
             </>
           ) : null}
           {handoff ? (

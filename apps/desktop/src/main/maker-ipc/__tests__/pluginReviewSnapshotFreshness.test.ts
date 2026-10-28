@@ -80,7 +80,7 @@ function fixture() {
     getCurrentDbClientSnapshot:()=>control.accountChanged ? null : epoch,sessions,orcaWorkers,orcaTeams,eq,fastModeToStorage,
     createPluginTaskStore:()=>({get:async()=>db.prepare('SELECT id,target_id AS targetId,plugin_id AS pluginId,operation,payload,revision FROM plugin_task_requests').get()}),
     drainPersistQueue:async()=>mutate('drain'),pluginTaskServiceForCurrentOwner:()=>({get:async()=>{mutate('ownership');if(!control.ownershipValid)throw Error('ownership revoked');}}),
-    readPluginTaskConfig:()=>({permissionMode:control.permissionMode}),readPluginTaskPlanReceipt,
+    getPluginTaskDefaults:()=>({permissionMode:control.permissionMode}),readPluginTaskPlanReceipt,
     pluginTaskAuthorizationRevision:()=>control.approvalRevision,isPluginTaskAuthorized:()=>control.authorized,
   };
   new Function(...Object.keys(deps),js)(...Object.values(deps));

@@ -1231,7 +1231,7 @@ describe('retained tasks after explicit plugin uninstall', () => {
         maker:{getSession:()=>null},inputCoordinator:{getAcceptedInputProvenance:()=>active},
         createPluginTaskStore:()=>({get:async(id:string)=>id==='run'?{operation:'send',targetId:'lead',pluginId:'plugin',payload:'{"inputMessageId":"plugin-task:run"}'}:{operation:'create',pluginId:'plugin',payload:JSON.stringify({ownershipRevoked:state==='revoked'})}}),
         pluginTaskServiceForCurrentOwner:()=>({get:async()=>({status:'active',permissionMode:state==='ask'?'default':'auto',planModeEnabled:state==='plan'})}),
-        isPluginTaskAuthorized:()=>state!=='disabled',readPluginTaskConfig:()=>({permissionMode:'auto'})};
+        isPluginTaskAuthorized:()=>state!=='disabled',getPluginTaskDefaults:()=>({permissionMode:'auto'})};
       const override=new Function('captureTaskActionGuard', 'hasAcceptedUserTaskInput', ...Object.keys(bindings),js)(captureTaskActionGuard, hasAcceptedUserTaskInput, ...Object.values(bindings));
       const ordinary=state==='revoked'&&['human','idle'].includes(input);
       if(state==='healthy'||ordinary)await expect(override('lead')).resolves.toMatchObject({permissionMode:ordinary?undefined:'auto'});
@@ -1244,7 +1244,7 @@ describe('retained tasks after explicit plugin uninstall', () => {
         maker: {getSession:()=>null}, inputCoordinator: { getAcceptedInputProvenance: () => null },
         createPluginTaskStore: () => ({ get: async () => ({ operation: 'create', pluginId: 'plugin', payload: '{}' }) }),
         pluginTaskServiceForCurrentOwner: () => ({ get: async () => ({ status, permissionMode: 'auto', planModeEnabled }) }),
-        isPluginTaskAuthorized: () => true, readPluginTaskConfig: () => ({ permissionMode: 'auto' }),
+        isPluginTaskAuthorized: () => true, getPluginTaskDefaults: () => ({ permissionMode: 'auto' }),
       };
       const override = new Function('captureTaskActionGuard', 'hasAcceptedUserTaskInput', ...Object.keys(callbacks), js)(captureTaskActionGuard, hasAcceptedUserTaskInput, ...Object.values(callbacks));
       const { deps, service } = createDeps({ getWorkerPermissionModeOverride: override,
@@ -1267,7 +1267,7 @@ describe('retained tasks after explicit plugin uninstall', () => {
       maker: {getSession:()=>null}, inputCoordinator: { getAcceptedInputProvenance: () => null },
       createPluginTaskStore: () => ({ get: async () => ({ operation: 'create', pluginId: 'plugin', payload: JSON.stringify({ ownershipRevoked: true }) }) }),
       pluginTaskServiceForCurrentOwner: () => ({ get }), isPluginTaskAuthorized: () => false,
-      readPluginTaskConfig: () => ({ permissionMode: 'auto' }),
+      getPluginTaskDefaults: () => ({ permissionMode: 'auto' }),
     };
     const override = new Function('captureTaskActionGuard', 'hasAcceptedUserTaskInput', ...Object.keys(callbacks), js)(captureTaskActionGuard, hasAcceptedUserTaskInput, ...Object.values(callbacks));
     const { deps, service } = createDeps({

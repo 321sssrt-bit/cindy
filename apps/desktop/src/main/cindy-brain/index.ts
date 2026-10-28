@@ -2207,6 +2207,13 @@ export function pluginTargetAuthorizationRevision(id: string): string | null {
   return hasPluginTargetApproval(ghost) ? pluginTaskAuthorizationRevision(id) : null;
 }
 
+// Runtime defaults are separate from Host capability approval. Hidden settings
+// stay on disk for the settings UI, but must not participate in any operation.
+export function getPluginTaskDefaults(id: string) {
+  const ghost = findGhostForInstanceId(id);
+  return ghost && ghost.manifest.showTaskPreferences !== false ? readPluginTaskConfig(id) : {};
+}
+
 export function isPluginTaskAuthorized(id: string): boolean {
   const ghost = findGhostForInstanceId(id);
   return hasPluginTaskApproval(ghost);
@@ -5150,7 +5157,7 @@ configureProviderMediaRuntime({
 function getPluginOneshotModelSelection(
   ghostId: string,
 ): { providerId?: string; agentKind: AgentKind; model: string } | null {
-  const config = readPluginTaskConfig(ghostId);
+  const config = getPluginTaskDefaults(ghostId);
   if (!config.model) return null;
   if (!config.agentKind || config.agentKind === 'pi') {
     // 两种情况按目录解析一条快问快答可路由的 供应商×agent×模型:

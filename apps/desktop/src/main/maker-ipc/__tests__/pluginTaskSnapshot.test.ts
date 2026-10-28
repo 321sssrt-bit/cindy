@@ -122,7 +122,7 @@ it('freezes the directory returned by admission without mutating the caller plan
     PluginTaskError, withSendToSessionLock: async (_: string, fn: () => unknown) => fn(),
     getCurrentDbClientSnapshot: () => epoch,
     service: { get: async () => ({ revision: 1, workingDir: '/root' }), setTeamPlan: save },
-    readPluginTaskConfig: () => ({ workingDir: '/root' }), isPluginTaskAuthorized: () => true,
+    getPluginTaskDefaults: () => ({ workingDir: '/root' }), isPluginTaskAuthorized: () => true,
     isGhostPickedDir: () => false, resolvePluginWorkerDirectory: async () => '/root/original',
   });
   await run('plugin', { kind: 'setTeamPlan', taskId: 'task', plan });
@@ -143,7 +143,7 @@ it('retargeting a real symlink cannot change the stored plan directory', async (
       PluginTaskError, withSendToSessionLock: async (_: string, fn: () => unknown) => fn(),
       getCurrentDbClientSnapshot: () => epoch,
       service: { get: async () => ({ revision: 1, workingDir: root }), setTeamPlan: save },
-      readPluginTaskConfig: () => ({ workingDir: root }), isPluginTaskAuthorized: () => true,
+      getPluginTaskDefaults: () => ({ workingDir: root }), isPluginTaskAuthorized: () => true,
       isGhostPickedDir: () => false, resolvePluginWorkerDirectory,
     });
     await run('plugin', { kind: 'setTeamPlan', taskId: 'task', plan });
@@ -178,7 +178,7 @@ it.each(['provider', 'receipt', 'directory', 'creator'])('keeps default-route co
     });
     const api = compile(`${resolveSource}\nreturn {resolveRoute, create: ({${createSource}}).createSession};`, {
       PluginTaskError, snapshot: epoch, assertPlugin: vi.fn(),
-      readPluginTaskConfig: () => ({ ...cfg }), getPluginTaskSourceSessionId: () => undefined,
+      getPluginTaskDefaults: () => ({ ...cfg }), getPluginTaskSourceSessionId: () => undefined,
       resolveSessionExecution: createSessionExecutionResolver({
         captureOwner: () => () => {}, readCaller: async () => { throw Error('unexpected caller'); }, readDefault: () => undefined,
         availableAgents: () => ['claude-code', 'codex', 'pi'],
@@ -212,7 +212,7 @@ it('forwards the explicit route when revalidating creation', async () => {
   const create = vi.fn();
   const run = compile(`return ({${property}}).createSession;`, {
     PluginTaskError, snapshot: epoch, assertPlugin: vi.fn(),
-    readPluginTaskConfig: () => ({ model: 'different-default', permissionMode: 'plan' }),
+    getPluginTaskDefaults: () => ({ model: 'different-default', permissionMode: 'plan' }),
     resolveRoute, createPluginTaskSession: create, clampPluginTaskPermissionMode: (x: string) => x,
     getCurrentDbClientSnapshot: () => epoch, isPluginTaskAuthorized: () => true,
     notifyGhostSessionEvent: vi.fn(), broadcastSessionCreated: vi.fn(),

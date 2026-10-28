@@ -80,7 +80,7 @@ it.each([false,true])('production Auto context checks uninstall after its projec
     const deps={setAutoReviewContextResolver:(callback:typeof load)=>{load=callback;},createPluginTaskReviewResolver:(callback:typeof load)=>callback,
       getCurrentDbClientSnapshot:()=>epoch,sessions:{},orcaWorkers:{},orcaTeams:{},eq:()=>true,fastModeToStorage,
       createPluginTaskStore:()=>f.deps.store,drainPersistQueue:async()=>{},
-      pluginTaskServiceForCurrentOwner:()=>f.service,readPluginTaskConfig:()=>({permissionMode:'auto'}),
+      pluginTaskServiceForCurrentOwner:()=>f.service,getPluginTaskDefaults:()=>({permissionMode:'auto'}),
       readPluginTaskPlanReceipt,pluginTaskAuthorizationRevision:()=> 'new-install',isPluginTaskAuthorized:()=>true};
     const source=readFileSync(new URL('../register.ts',import.meta.url),'utf8');
     const start=source.indexOf('  setAutoReviewContextResolver(createPluginTaskReviewResolver(async sessionId => {');
@@ -222,7 +222,7 @@ function useProductionPermissionCreator(f: ReturnType<typeof fixture>, configure
     f.tasks.set(options.sessionId, { taskId: options.sessionId, title: options.title, status: 'active',
       resolvedConfig: f.route, revision: 1, permissionMode: options.permissionMode });
   });
-  const deps = { assertPlugin: () => {}, readPluginTaskConfig: () => ({ ...configured }),
+  const deps = { assertPlugin: () => {}, getPluginTaskDefaults: () => ({ ...configured }),
     resolveRoute: (...args: Parameters<typeof f.deps.resolveRoute>) => f.deps.resolveRoute(...args),
     PluginTaskError, isPluginTaskPermissionAllowed, createPluginTaskSession: persist,
     clampPluginTaskPermissionMode: (mode: unknown) => mode ?? 'ask', snapshot,
@@ -1420,7 +1420,7 @@ it.each([
   const preference = source.slice(preferenceStart, source.indexOf('      readPermissionMode:', preferenceStart));
   const resolveStart = source.indexOf('    const resolveRoute = async');
   const resolve = source.slice(resolveStart, source.indexOf('    const readExecution', resolveStart));
-  const deps = { readPluginTaskConfig: () => config, getSelectedNewMakerRoute: () => selected,
+  const deps = { getPluginTaskDefaults: () => config, getSelectedNewMakerRoute: () => selected,
     activeOwnerScopeKey: () => 'owner', assertPlugin: () => {}, getPluginTaskSourceSessionId: () => undefined,
     resolveSessionExecution: resolver, PluginTaskError, routeUnavailable: () => { throw Error('unavailable'); } };
   const js = ts.transpileModule(`${resolve}\nreturn {${preference} resolveRoute};`, {

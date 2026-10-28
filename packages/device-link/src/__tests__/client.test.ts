@@ -41,6 +41,8 @@ import { resolveRemoteInvokeTimeoutMs } from '../invokePolicy.js';
 import { SESSION_ACTIVITY_CHANNEL } from '../topics.js';
 import { resolveDesktopIceServers, REMOTE_DESKTOP_ICE_CONFIG_TIMEOUT_MS } from '../remoteDesktopIceConfig.js';
 import { REMOTE_DESKTOP_ICE_SERVERS } from '../remoteDesktopIce.js';
+import { nodeRelayAuthCrypto } from '../nodeRelayCrypto.js';
+import { createRelaySigningKey, issueRelayDeviceCert, RelayFrameAuthenticator } from '../selfHostedRelayAuth.js';
 import {
   DIRECT_PATH_HIGH_WATER_BYTES,
   type DeviceLinkDirectChannel,
@@ -105,6 +107,7 @@ function makeHarness(opts?: {
   peerFailurePolicy?: ConstructorParameters<typeof DeviceLinkClient>[0]['peerFailurePolicy'];
   peerResetReadRetry?: ConstructorParameters<typeof DeviceLinkClient>[0]['peerResetReadRetry'];
   invokeMetrics?: ConstructorParameters<typeof DeviceLinkClient>[0]['invokeMetrics'];
+  frameAuth?: ConstructorParameters<typeof DeviceLinkClient>[0]['frameAuth'];
 }): Harness {
   const sockets: FakeWs[] = [];
   const client = new DeviceLinkClient({
@@ -126,6 +129,7 @@ function makeHarness(opts?: {
     peerFailurePolicy: opts?.peerFailurePolicy,
     peerResetReadRetry: opts?.peerResetReadRetry,
     invokeMetrics: opts?.invokeMetrics,
+    frameAuth: opts?.frameAuth,
     timing: {
       reconnectBaseMs: 5,
       reconnectMaxMs: 40,
@@ -383,6 +387,58 @@ describe('outbound invoke admission', () => {
     } finally {
       h.client.stop(); await Promise.all(calls); vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * 自建中转的设备签名(docs/self-hosted-relay-plan.md §16):被控电脑收到的每条对端消息都必须带发送设备的
+ * 有效签名,中转(哪怕被人控制)伪造、篡改或重放的消息在分发前丢弃;本机发出的对端消息都带签名。
+ * 最小失败输入:未签名 / 他人密钥签名 / 签名后改内容 / 原样重放的同一条 push。
+ */
+describe('self-hosted relay device signatures', () => {
+  it('signs outbound peer frames and drops forged, tampered or replayed inbound frames', async () => {
+    const relayId = '0b7a4a52-8f6a-4d55-9a53-3f1f6f2c9e10';
+    const owner = createRelaySigningKey(nodeRelayAuthCrypto);
+    const selfKey = createRelaySigningKey(nodeRelayAuthCrypto);
+    const peerKey = createRelaySigningKey(nodeRelayAuthCrypto);
+    const certs = [
+      ['dev-self', selfKey.publicKey],
+      ['dev-b', peerKey.publicKey],
+    ].map(([deviceId, publicKey]) => issueRelayDeviceCert(nodeRelayAuthCrypto, owner.seed, {
+      relayId, deviceId, publicKey, role: 'member', issuedAt: 1,
+    }));
+    const authenticator = (deviceId: string, seed: string) => {
+      const auth = new RelayFrameAuthenticator({ crypto: nodeRelayAuthCrypto, relayId, deviceId, seed, ownerPublicKey: owner.publicKey });
+      auth.setCertificates(certs);
+      return auth;
+    };
+    const self = authenticator('dev-self', selfKey.seed);
+    const peer = authenticator('dev-b', peerKey.seed);
+    const h = makeHarness({
+      timing: { pingIntervalMs: 60_000 },
+      frameAuth: () => ({ sign: (frame) => self.sign(frame), verify: (frame) => self.verify(frame) === 'ok' }),
+    });
+    h.client.start(); await tick(); h.current().ack();
+    const received: unknown[] = [];
+    h.client.onFrame((frame) => { if (frame.kind === 'push' && frame.src === 'dev-b') received.push(frame.payload); });
+
+    void h.client.openLink('dev-b', { controllerName: 'Test', protocolVersion: 1, appVersion: '1' }).catch(() => undefined);
+    const linkOpen = h.current().sent.find((env) => env.kind === 'link-open')!;
+    // 中转覆写 src 后交给对端,对端用本机证书核对通过。
+    expect(peer.verify({ ...linkOpen, src: 'dev-self' })).toBe('ok');
+
+    const frame = (payload: unknown): Envelope => ({ v: PROTOCOL_VERSION, kind: 'push', src: 'dev-b', dst: 'dev-self', payload });
+    const signed = (env: Envelope) => ({ ...env, auth: peer.sign(env) }) as Envelope;
+    const genuine = signed(frame({ channel: 'evt', payload: { n: 1 } }));
+    const forger = authenticator('dev-b', createRelaySigningKey(nodeRelayAuthCrypto).seed);
+    h.current().push(frame({ channel: 'evt', payload: { n: 0 } }));
+    h.current().push({ ...frame({ channel: 'evt', payload: { n: 0 } }), auth: forger.sign(frame({})) } as Envelope);
+    h.current().push({ ...genuine, payload: { channel: 'evt', payload: { n: 2 } } });
+    h.current().push(genuine);
+    h.current().push(genuine);
+    await tick();
+    expect(received).toEqual([{ channel: 'evt', payload: { n: 1 } }]);
+    h.client.stop();
   });
 });
 

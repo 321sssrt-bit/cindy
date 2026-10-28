@@ -1,9 +1,43 @@
 import { expect, it, vi } from "vitest";
+import { nodeRelayAuthCrypto } from "../../packages/device-link/src/nodeRelayCrypto";
+import { RelayFrameAuthenticator } from "../../packages/device-link/src/selfHostedRelayAuth";
 import {
   createClient,
   createHost,
   createMobileRecovery,
 } from "./clientHarness";
+
+interface FrameAuthSpec {
+  relayId: string;
+  ownerPublicKey: string;
+  certs: unknown[];
+  host: { deviceId: string; seed: string };
+  controller: { deviceId: string; seed: string };
+}
+
+/**
+ * 自建中转的设备签名(可选,由 run-interop 提供测试密钥):主机像电脑一样核对全部对端帧,
+ * 控制端像手机一样只签名。任何绕过签名的发送路径都会让主机丢帧、恢复流程超时。
+ */
+function frameAuthFor(spec: FrameAuthSpec, role: "host" | "controller", rejected: string[]) {
+  const auth = new RelayFrameAuthenticator({
+    crypto: nodeRelayAuthCrypto,
+    relayId: spec.relayId,
+    deviceId: spec[role].deviceId,
+    seed: spec[role].seed,
+    ownerPublicKey: spec.ownerPublicKey,
+  });
+  auth.setCertificates(spec.certs);
+  return () => ({
+    sign: (frame: Parameters<RelayFrameAuthenticator["sign"]>[0]) => auth.sign(frame),
+    verify: (frame: Readonly<Record<string, unknown>>) => {
+      if (role === "controller") return true;
+      const verdict = auth.verify(frame);
+      if (verdict !== "ok") rejected.push(`${String(frame.kind)}:${verdict}`);
+      return verdict === "ok";
+    },
+  });
+}
 
 it("interoperates with an explicitly provisioned isolated relay and automatically reconnects", async () => {
   const url = process.env.CINDY_TEST_RELAY_URL;
@@ -31,6 +65,11 @@ it("interoperates with an explicitly provisioned isolated relay and automaticall
       "Test relay URL must be ws(s), without credentials, query or fragment.",
     );
   }
+  // 官方测试 relay 用账号 access token(Bearer);自建中转用加入时拿到的设备凭证(CindyRelay)。
+  const scheme = process.env.CINDY_TEST_AUTH_SCHEME ?? "Bearer";
+  if (scheme !== "Bearer" && scheme !== "CindyRelay") {
+    throw new Error("CINDY_TEST_AUTH_SCHEME must be Bearer or CindyRelay.");
+  }
   const timing = {
     requestTimeoutMs: 10_000,
     pingIntervalMs: 5_000,
@@ -38,13 +77,21 @@ it("interoperates with an explicitly provisioned isolated relay and automaticall
     reconnectBaseMs: 500,
     reconnectMaxMs: 2_000,
   };
+  const frameAuthSpec = process.env.CINDY_TEST_FRAME_AUTH
+    ? (JSON.parse(process.env.CINDY_TEST_FRAME_AUTH) as FrameAuthSpec)
+    : null;
+  const rejected: string[] = [];
   const host = createClient(url, "interop-host", true, {
     token: hostToken,
+    authorizationScheme: scheme,
     timing,
+    frameAuth: frameAuthSpec ? frameAuthFor(frameAuthSpec, "host", rejected) : undefined,
   });
   const controller = createClient(url, "interop-controller", false, {
     token: controllerToken,
+    authorizationScheme: scheme,
     timing,
+    frameAuth: frameAuthSpec ? frameAuthFor(frameAuthSpec, "controller", rejected) : undefined,
   });
   const data = createHost(host.client);
   let recovery: ReturnType<typeof createMobileRecovery> | undefined;
@@ -74,6 +121,7 @@ it("interoperates with an explicitly provisioned isolated relay and automaticall
       "interop-gap",
     ]);
     expect(controller.sockets.length).toBeGreaterThan(1);
+    expect(rejected).toEqual([]);
   } finally {
     recovery?.close();
     data.close();

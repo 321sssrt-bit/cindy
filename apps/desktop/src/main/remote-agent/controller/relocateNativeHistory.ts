@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { isProviderSharePeer } from '@cindy/device-link';
+import { isProviderShareAgentDeviceId } from '../../../shared/providerShare.js';
 import { getActiveAppSession } from '../../appSessionState';
 import { createNativeHistoryTransfer, transferNativeHistory, type NativeHistoryEndpoint } from '../nativeHistoryTransfer';
 import { nativeHistoryStorage } from '../nativeHistoryStorage';
@@ -13,7 +14,8 @@ export function createNativeHistoryRelocator(userDataDir: string, invoke: Device
     fromDevice: string | null; toDevice: string | null; assertCurrent(): void;
   }): Promise<string | null> => {
     // Sharing relays have different ownership and storage. They retain the existing handoff fallback.
-    if ([input.fromDevice, input.toDevice].some(device => device && isProviderSharePeer(device))) return null;
+    if ([input.fromDevice, input.toDevice].some(device =>
+      isProviderShareAgentDeviceId(device) || isProviderSharePeer(device))) return null;
     const owner = getActiveAppSession();
     const assertCurrent = () => {
       input.assertCurrent();

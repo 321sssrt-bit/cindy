@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
+import { providerShareHostPeer } from '@cindy/device-link';
 import { createNativeHistoryRelocator } from '../controller/relocateNativeHistory';
 
 const h = vi.hoisted(() => ({ generation: 1, caps: vi.fn(), remote: vi.fn(), transfer: vi.fn(), local: vi.fn() }));
@@ -12,6 +13,21 @@ vi.mock('../controller/runClient', () => ({
 beforeEach(() => { vi.resetAllMocks(); h.generation = 1; });
 const input = { sessionId: 'task', kind: 'codex' as const, nativeId: 'native', workingDir: '/project',
   fromDevice: null, toDevice: 'mini', assertCurrent: () => {} };
+
+it.each([
+  ['task source', 'share:untrusted', 'mini'],
+  ['task destination', null, 'share:untrusted'],
+  ['resolved source', providerShareHostPeer('untrusted', 'host'), 'mini'],
+  ['resolved destination', null, providerShareHostPeer('untrusted', 'host')],
+])('rejects a sharing %s before consulting its advertised capability', async (_label, fromDevice, toDevice) => {
+  h.caps.mockResolvedValue({ nativeHistoryTransfer: true });
+  h.transfer.mockResolvedValue('restored');
+  expect(await createNativeHistoryRelocator('/test-user-data', vi.fn())({ ...input, fromDevice, toDevice })).toBeNull();
+  expect(h.caps).not.toHaveBeenCalled();
+  expect(h.transfer).not.toHaveBeenCalled();
+  expect(h.remote).not.toHaveBeenCalled();
+  expect(h.local).not.toHaveBeenCalled();
+});
 
 it('leaves old peers on the existing handoff path without starting a snapshot', async () => {
   h.caps.mockResolvedValue({});

@@ -221,6 +221,9 @@ Chat Server 声明 `capabilities.groupSingleSpeaker: 1` 时，服务器群按下
   本地成员和分工步骤的计时器超时同样带上 `RUNTIME_TIMEOUT`，保留等待用户批准时暂停计时的规则。
   明确的额度耗尽优先于泛化 429，明确的暂时限流不会因 `usageLimit` 标记误报为额度耗尽。
   直接发送拒绝也在执行端分类本地 `message`，跨群仍只提交白名单错误类别。
+  远程任务名额不足在创建专线与发送失败时保留本地诊断并分类：`DEVICE_LIMIT` / `TOTAL_LIMIT`
+  分别投影为 `REMOTE_DEVICE_LIMIT` / `REMOTE_TOTAL_LIMIT`，双端提示释放闲置任务或由远程电脑主人提高上限；
+  不自动清理连接或调整上限，未带具体限额标记的 `REMOTE_AGENT_BUSY` 沿用未知错误回退。
   Chat Server 是执行状态的唯一事实来源：消息页只包含真实历史，另通过
   `/execution-failures?sourceIds=<已加载消息 ID>` 读取当前读者可见、源消息未删除的完整失败状态
   （执行 ID、epoch、源消息 ID、伙伴、计划和白名单错误类别）。每次最多查询 100 个源 ID，
@@ -240,7 +243,9 @@ Chat Server 声明 `capabilities.groupSingleSpeaker: 1` 时，服务器群按下
   Desktop 与 Mobile 仅在服务器盖章的 import／系统通知历史中恢复类别，也兼容此前已迁移的标记，
   不把普通用户发送的同名卡片或标记当成错误提示，标记不进入历史预览或模型正文。
   新服务器返回安全的 `failure_code`；旧服务器仍接受既有 `detail` 字符串，新客户端在当前执行端
-  缓存具体原因，其他设备或重启后降级为通用失败提示。实现与回归见
+  缓存具体原因；服务器把新类别归为 `RUNTIME_ERROR` 时也保留同一执行 ID 与 epoch 的本地具体原因，
+  服务器返回其他明确类别时以服务器为准。其他设备或重启后的具体原因依赖服务器白名单支持，
+  未支持时降级为通用失败提示。实现与回归见
   `maker-ipc/botGroupRuntimeFailure.ts`、`maker-ipc/__tests__/chatServer.test.ts`。
   手机回归见 `botGroupRemote.test.ts`、`chatServerClient.test.ts`、`BotGroupChatScreen.test.tsx`。
 - 应用退出或重启会结束进行中的一轮；重启后不自动续跑。

@@ -16,6 +16,12 @@ import { LocalAgentError, type LocalAgentOpen, type LocalAgentRuntime } from './
 import { LOCAL_AGENT_ROUTE } from './catalog.js';
 import { localAgentResumeId, readLocalAgentResumeId, type LocalAgentExecutionRoute, type LocalAgentRouteResolver } from './groupRoute.js';
 import type { LocalAgentLoadTracker } from './load.js';
+import {
+  localAgentVisibleSessionHost,
+  registerLocalAgentVisibleRuntime,
+} from './visibleSessions.js';
+import { withSendToSessionLock } from '../maker-ipc/sendToSessionLock.js';
+import { buildMessageSourceNote } from '@cindy/maker-shared/message-source';
 
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
@@ -215,13 +221,36 @@ export async function openLocalAgentRuntime(
   let instructions = input.instructions;
   // The effort last applied by send.effort survives an instructions rebuild.
   let effort = input.effort;
-  const sessionId = `local-agent-${randomUUID()}`;
-  let handle: Session;
+  const visibleHost = input.visibleSession
+    ? localAgentVisibleSessionHost(maker as Maker)
+    : undefined;
+  if (input.visibleSession && !visibleHost)
+    throw new LocalAgentError('SESSION_UNAVAILABLE', 'Cindy 任务入口尚未就绪。');
+  const sessionId = visibleHost ? randomUUID() : `local-agent-${randomUUID()}`;
+  const source = input.visibleSession
+    ? { pluginId: `local-app:${input.visibleSession.clientId}`, name: input.visibleSession.title }
+    : undefined;
+  const wireMessage = (message: UserMessage): UserMessage => {
+    if (!source) return message;
+    const note = buildMessageSourceNote({ kind: 'plugin', ...source })!;
+    return {
+      ...message,
+      content: [
+        ...(typeof message.content === 'string'
+          ? [{ type: 'text' as const, text: message.content }]
+          : message.content),
+        { type: 'text', text: note },
+      ],
+    };
+  };
+  // start assigns this under the send lock; close also handles failed startup.
+  let handle!: Session;
   let notifyLoad = () => {};
   let closed = false,
     busy = false,
     preparing = false,
     resumed = false;
+  let closing: Promise<void> | undefined;
   // Instructions are read when a Session starts; only that applied version is clean.
   let instructionsVersion = 0,
     appliedInstructions = 0;
@@ -246,7 +275,34 @@ export async function openLocalAgentRuntime(
     if (code) throw new LocalAgentError(code, localize(code, '远程供应商暂不可用，请在 Cindy 中检查连接或更新远端版本。'));
     throw error;
   };
-  const start = async (resume?: string, expected = epoch) => {
+  const locked = <T>(task: () => Promise<T>) =>
+    visibleHost ? withSendToSessionLock(sessionId, task) : task();
+  let unregisterVisibleRuntime: (() => void) | undefined;
+  const close = (sendLockHeld = false): Promise<void> => {
+    // Fence app calls immediately, even while waiting for a Cindy send/route lock.
+    closed = true;
+    ++epoch;
+    busy = false;
+    const finish = () => {
+      // Assign only after acquiring the lock. A normal close queued behind a
+      // takeover must not make that takeover await its own lock release.
+      if (closing) return closing;
+      closing = (async () => {
+        if (handle) {
+          if (visibleHost) await visibleHost.close(sessionId, handle);
+          else await handle.close({ reason: 'account-boundary' });
+        }
+        await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
+        unregisterVisibleRuntime?.();
+      })().catch((error) => {
+        closing = undefined;
+        throw error;
+      });
+      return closing;
+    };
+    return sendLockHeld ? finish() : locked(finish);
+  };
+  const startUnlocked = async (resume?: string, expected = epoch) => {
     assertCurrent(expected);
     const initialRoute: LocalAgentExecutionRoute = {
       providerId: input.model[LOCAL_AGENT_ROUTE]?.providerId ?? input.model.provider,
@@ -288,7 +344,17 @@ export async function openLocalAgentRuntime(
       },
     };
     resumed = Boolean(resume);
-    const next = await maker.startLocalAgentSession(input.model.engine, opts).catch(remoteFailure);
+    const next = visibleHost
+      ? await visibleHost.open({
+          ...opts,
+          agentDeviceId: route.agentDeviceId,
+          id: sessionId,
+          agentKind: input.model.engine,
+          title: input.visibleSession!.title,
+          workspaceKind: 'dialogue',
+        }).catch(remoteFailure)
+      : await maker.startLocalAgentSession(input.model.engine, opts).catch(remoteFailure);
+    handle = next;
     try {
       assertCurrent(expected);
     } catch (error) {
@@ -302,7 +368,6 @@ export async function openLocalAgentRuntime(
         'Cindy 原会话已不存在，请在调用应用中开始新的任务。未重放旧消息。',
       );
     }
-    handle = next;
     notifyLoad = trackLoad?.(sessionId, route, next) ?? (() => {});
     next.setInteractionListener(async (request) => {
       if (request.kind === 'permission') {
@@ -354,9 +419,13 @@ export async function openLocalAgentRuntime(
     });
     return next;
   };
+  const start = (resume?: string, expected = epoch) => locked(() => startUnlocked(resume, expected));
+  if (visibleHost) unregisterVisibleRuntime = registerLocalAgentVisibleRuntime(sessionId, close);
   try {
     handle = await start(resumeBinding.native);
   } catch (error) {
+    if (visibleHost && handle) await close();
+    else unregisterVisibleRuntime?.();
     await fs.rm(temporary, { recursive: true, force: true });
     throw error;
   }
@@ -426,6 +495,7 @@ export async function openLocalAgentRuntime(
     }
   };
   return {
+    ...(visibleHost ? { visibleSessionId: sessionId } : {}),
     get id() {
       return localAgentResumeId(handle.sdkSessionId, executionRoute);
     },
@@ -467,7 +537,16 @@ export async function openLocalAgentRuntime(
         try {
           assertCurrent(current);
           if (!busy) throw new LocalAgentError('NOT_RUNNING', '当前没有正在运行的回答。');
-          await handle.steer(content);
+          await handle.steer(wireMessage(content), visibleHost ? {
+            beforeProviderStart: () =>
+              visibleHost.persistInput(
+                sessionId,
+                content,
+                randomUUID(),
+                () => assertCurrent(current),
+                source!,
+              ),
+          } : undefined);
           turnInputs.push(content);
         } catch (error) {
           await discard(content);
@@ -505,7 +584,19 @@ export async function openLocalAgentRuntime(
         turnInputs.push(sending);
         void (async () => {
           try {
-            const result = await handle.send(sending);
+            const result = await handle.send(wireMessage(sending), visibleHost ? {
+              onAccepted: (signal) =>
+                visibleHost.persistInput(
+                  sessionId,
+                  sending,
+                  randomUUID(),
+                  () => {
+                    assertCurrent(current);
+                    signal?.throwIfAborted();
+                  },
+                  source!,
+                ),
+            } : undefined);
             if (!result.accepted) await discard(sending);
             assertSendDispatched(result, 'local-agent/send');
           } finally {
@@ -533,13 +624,6 @@ export async function openLocalAgentRuntime(
         throw error;
       }
     },
-    async close() {
-      closed = true;
-      ++epoch;
-      busy = false;
-      await handle.close({ reason: 'account-boundary' });
-      // The engine is confirmed closed; leftover input files must not report it as still running.
-      await fs.rm(temporary, { recursive: true, force: true }).catch(() => {});
-    },
+    close: () => close(),
   };
 }

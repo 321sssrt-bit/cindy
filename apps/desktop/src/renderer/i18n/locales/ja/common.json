@@ -11769,6 +11769,7 @@
       "submitFeedbackAria": "フィードバックを送信"
     },
     "pastedText": {
+      "pluginContextLabel": "補足資料",
       "chipLabel": "貼り付けたテキスト({{lines}} 行)",
       "previewTitle": "貼り付けたテキスト",
       "editTitle": "貼り付けたテキストを編集",

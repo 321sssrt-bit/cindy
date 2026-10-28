@@ -53,13 +53,77 @@ describe('plugin target queries and delivery', () => {
       { id: 'chosen', label: 'Chosen target', detail: '/workspace/example' },
     ]);
     const approvalRevision = vi.fn<PluginTargetAdapter['approvalRevision']>(() => 'approved-install');
-    slot.adapter = { store: () => store, approvalRevision, candidates, session: async () => 'chosen', send, create, withdraw };
+    const assertCreatePermission = vi.fn();
+    slot.adapter = { store: () => store, approvalRevision, candidates, session: async () => 'chosen', send, create, withdraw, assertCreatePermission };
     const guard = vi.fn();
     const call = (payload: unknown, plugin = 'plugin') => slot.handle(plugin, payload, guard);
     const request = { kind: 'send', target: { kind: 'task', id: 'chosen' },
       requestKey: 'send', text: 'context' };
-    return { slot, call, request, send, create, withdraw, candidates, guard, approvalRevision };
+    return { slot, call, request, send, create, withdraw, candidates, guard, approvalRevision, assertCreatePermission };
   }
+  // unit: a project is a new task, but task/bot sends must never change recipient
+  // permissions. Prior tests did not cover a permission choice or its receipt.
+  it('forwards project creation permission once and includes it in request identity', async () => {
+    const f = fixture();
+    const request = { ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode: 'bypassPermissions' };
+    await f.call(request);
+    await f.call(request);
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.create.mock.calls[0]?.[7]).toBe('bypassPermissions');
+    expect(f.send).toHaveBeenCalledOnce();
+    await expect(f.call({ ...request, permissionMode: 'auto' }))
+      .rejects.toMatchObject({ code: 'REQUEST_KEY_CONFLICT' });
+  });
+  it('rejects permission changes for existing targets and unsupported modes before delivery', async () => {
+    const f = fixture();
+    for (const kind of ['task', 'bot']) {
+      await expect(f.call({ ...f.request, target: { kind, id: 'chosen' }, permissionMode: 'ask' }))
+        .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    }
+    for (const permissionMode of ['acceptEdits', 'plan', null, 1]) {
+      await expect(f.call({ ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode }))
+        .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    }
+    expect(f.create).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(receipts.size).toBe(0);
+  });
+  it('does not consume the target request key when the creation permission is denied', async () => {
+    const f = fixture();
+    f.assertCreatePermission.mockImplementationOnce(() => { throw Object.assign(new Error('Not authorized'), { code: 'PERMISSION_DENIED' }); });
+    const request = { ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode: 'auto' };
+    await expect(f.call(request)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+    expect(receipts.size).toBe(0);
+    expect(f.create).not.toHaveBeenCalled();
+    await expect(f.call(request)).resolves.toMatchObject({ accepted: true });
+  });
+  // unit: actual target delivery must bind context to its receipt. Omitting the
+  // new parameter previously made changed context replay as the same message.
+  it('delivers independent context once and rejects changed context on receipt replay', async () => {
+    const f = fixture();
+    const request = { ...f.request, text: 'Look here', context: 'Window contents' };
+    await f.call(request);
+    await f.call(request);
+    expect(f.send).toHaveBeenCalledOnce();
+    expect(f.send.mock.calls[0]?.[3]).toBe('Look here');
+    expect(f.send.mock.calls[0]?.[8]).toEqual({ context: 'Window contents' });
+    await expect(f.call({ ...request, context: 'Another window' }))
+      .rejects.toMatchObject({ code: 'REQUEST_KEY_CONFLICT' });
+  });
+  it('opts new project tasks into automatic naming and never renames existing targets', async () => {
+    const f = fixture();
+    const schedule = vi.fn();
+    f.slot.adapter!.scheduleAutoTitle = schedule;
+    const request = { ...f.request, target: { kind: 'project', id: 'chosen' }, autoTitle: true };
+    await f.call(request);
+    await f.call(request);
+    expect(f.create.mock.calls[0]?.[6]).toBe(true);
+    expect(schedule).toHaveBeenCalledOnce();
+    for (const targetKind of ['task', 'bot']) {
+      await expect(f.call({ ...request, requestKey: targetKind, target: { kind: targetKind, id: 'chosen' } }))
+        .rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    }
+  });
   // Unit regression: execute the real public IPC callback with the real target slot.
   // Slot-only tests miss the outer error mapping; an invalid parent must not look retryable.
   it.each([

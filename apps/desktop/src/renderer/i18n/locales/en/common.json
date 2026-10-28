@@ -11804,6 +11804,7 @@
       "submitFeedbackAria": "Send feedback"
     },
     "pastedText": {
+      "pluginContextLabel": "Attached context",
       "chipLabel": "Pasted text ({{lines}} lines)",
       "previewTitle": "Pasted text",
       "editTitle": "Edit Pasted Text",

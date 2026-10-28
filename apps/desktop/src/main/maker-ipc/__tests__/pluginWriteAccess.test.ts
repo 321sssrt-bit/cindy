@@ -76,6 +76,23 @@ describe('shared-provider credential grants on permission changes', () => {
  });
 });
 describe('plugin write confirmation interleavings', () => {
+ // unit: adding full access must not make an older write-access request lower
+ // an already granted task or the user's independent plugin permission ceiling.
+ it('keeps full-access grants when an older client requests Auto', async () => {
+  const f=fixture();f.change({permissionMode:'bypassPermissions'});
+  f.service.get.mockResolvedValue({taskId:'task',revision:1,status:'active',permissionMode:'bypassPermissions'});
+  await expect(f.run('auto')).resolves.toMatchObject({granted:true});
+  expect(f.dialog.showMessageBox).not.toHaveBeenCalled();
+  expect(f.live.setPermissionMode).not.toHaveBeenCalled();
+  expect(f.write).not.toHaveBeenCalled();
+ });
+ it('grants Auto to a task without reducing the plugin full-access ceiling', async () => {
+  const f=fixture();f.change({permissionMode:'bypassPermissions'});
+  await expect(f.run('auto')).resolves.toMatchObject({granted:true});
+  expect(f.live.setPermissionMode).toHaveBeenCalledWith('auto');
+  expect(f.config().permissionMode).toBe('bypassPermissions');
+  expect(f.write).not.toHaveBeenCalled();
+ });
  it.each(['auto','acceptEdits'].flatMap(mode=>['before','dialog','lastRead'].map(point=>({mode,point}))))('rejects independent Plan Mode at $point for $mode without reporting a grant',async ({point,mode})=>{
   const f=fixture();f.change({permissionMode:mode});
   const planTask={taskId:'task',revision:1,status:'active',permissionMode:mode,planModeEnabled:true};

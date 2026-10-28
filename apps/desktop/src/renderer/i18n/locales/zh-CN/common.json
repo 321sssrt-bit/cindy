@@ -11769,6 +11769,7 @@
       "submitFeedbackAria": "发送反馈"
     },
     "pastedText": {
+      "pluginContextLabel": "附带资料",
       "chipLabel": "粘贴的文本({{lines}} 行)",
       "previewTitle": "粘贴的文本",
       "editTitle": "编辑粘贴的文本",

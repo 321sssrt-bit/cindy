@@ -51,6 +51,7 @@ import { listPluginTargetCandidates, resolvePluginTargetSession } from './plugin
 import { createPluginTargetStore } from './pluginTargetStore.js';
 import { collectPluginAttachmentPayloadTexts, withPluginMessageAttachments } from '../cindy-media/pluginMessageAttachments.js';
 import type { PluginTaskRoute, PluginTaskRequest } from '../../shared/pluginTasks.js';
+import { buildPluginMessage } from '../../shared/pluginMessage.js';
 import { createHash as pluginTaskConfigHash } from 'node:crypto';
 import { finishCompanionEnvironmentRemoval } from '../bot-import/runtime.js';
 import { setImportProbeConfirmation } from '../bot-import/probeAuthorization.js';
@@ -11956,6 +11957,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     targetSessionId?: string;
     message: string;
     persistedContent?: string;
+    pastedTextRanges?: AgentInputQueuedMessage['chatMessage']['pastedTextRanges'];
     /** Host-managed images; attachment callers always use the durable queue. */
     files?: AgentInputQueuedMessage['files'];
     clientId?: string;
@@ -12464,6 +12466,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           botTaskCoordination: params.botTaskCoordination,
           authorizationGuard: params.authorizationGuard,
           files: params.files,
+          pastedTextRanges: params.pastedTextRanges,
           inheritTargetPlanMode: params.inheritTargetPlanMode,
           taskActionDeliveryGuard: params.taskActionDeliveryGuard,
         });
@@ -13819,6 +13822,15 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // sendToSessionInternal 这一条主机通路，因此会话恢复、繁忙排队、消息落库与
   // 费用行为都和用户亲自在聊天框发送一致。runner 通过回调注入，避免
   // cindy-brain 反向依赖 maker-ipc 形成模块环。
+  const schedulePluginAutoTitle = (pluginId: string, taskId: string, text: string, placeholderText: string) => {
+    const snapshot = getCurrentDbClientSnapshot();
+    const revision = pluginTaskAuthorizationRevision(pluginId);
+    void maker.getSessionMeta(taskId).then(meta => {
+      if (!meta || !snapshot || snapshot !== getCurrentDbClientSnapshot()
+        || revision !== pluginTaskAuthorizationRevision(pluginId) || !isPluginTaskAuthorized(pluginId)) return;
+      scheduleSessionAutoTitle({ sessionId: taskId, text, placeholderText, agentKind: meta.agentKind, isUserText: true });
+    }).catch(() => log.warn('Plugin task automatic naming could not be scheduled'));
+  };
   setGhostAgentTurnRunner(async (request) => {
     const dispositionForWakeKind = (
       wakeKind: Extract<SendToSessionInternalResult, { ok: true }>['wakeKind'],
@@ -14023,9 +14035,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         assertCurrent();
         if (workers.length || reservations.length) throw new PluginTaskError('TASK_BUSY', 'Register the team plan before creating Workers');
       },
-      createSession: async (pluginId, taskId, title, route, isolatedWorkspace, requestedRoute, onPersistenceStarted, callId, hidden, targetContext) => {
+      createSession: async (pluginId, taskId, title, route, isolatedWorkspace, requestedRoute, onPersistenceStarted, callId, hidden, targetContext, permissionMode) => {
         assertPlugin(pluginId);
         const cfg = readPluginTaskConfig(pluginId);
+        const configuredPermission = clampPluginTaskPermissionMode(cfg.permissionMode);
+        if (permissionMode !== undefined && !isPluginTaskPermissionAllowed(permissionMode, configuredPermission))
+          throw new PluginTaskError('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
         const configurationIsCurrent = () => {
           targetContext?.assertCurrent();
           const current = readPluginTaskConfig(pluginId);
@@ -14056,7 +14071,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         await createPluginTaskSession({
           ghostId: pluginId, sessionId: taskId, title, ...route,
           onPersistenceStarted,
-          permissionMode: clampPluginTaskPermissionMode(cfg.permissionMode),
+          permissionMode: permissionMode ?? configuredPermission,
           ...(workingDir ? { workingDir } : {}),
           ...(hidden ? { hidden: true } : {}),
           shouldContinue: () => getCurrentDbClientSnapshot() === snapshot && isPluginTaskAuthorized(pluginId) && configurationIsCurrent()
@@ -14100,15 +14115,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const revision = Number.parseInt(pluginTaskConfigHash('sha256').update(JSON.stringify([resolvedConfig, row.permissionMode, row.planModeEnabled, row.workingDir, row.status, row.orcaRole])).digest('hex').slice(0, 12), 16);
         return { taskId, title: row.title, status: row.status, revision, resolvedConfig, workingDir: row.workingDir ?? undefined, permissionMode: row.permissionMode, planModeEnabled: !!row.planModeEnabled, hidden: row.hiddenAt != null };
       },
-      dispatch: async (pluginId, taskId, clientId, text, images = []) => {
+      scheduleAutoTitle: schedulePluginAutoTitle,
+      dispatch: async (pluginId, taskId, clientId, text, images = [], context) => {
         assertPlugin(pluginId);
         // 插件来源只用于标签与 `[消息来源]` 说明;不新增 origin 类型,也不是权限判据。
         const pluginName = sanitizeSourceName(getInstalledGhostName(pluginId));
+        const message = buildPluginMessage(text, context, t('newChat.pastedText.pluginContextLabel'));
         const validate = async () => { assertPlugin(pluginId); await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId); assertPlugin(pluginId); };
         return withPluginMessageAttachments(images, () => assertPlugin(pluginId), async files => {
           await validate();
           const outcome = await sendToSessionInternal({ targetSessionId: taskId, clientId,
-            message: text, autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, files,
+            message: message.text, pastedTextRanges: message.pastedTextRanges,
+            autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true, files,
             sourcePlugin: { pluginId, ...(pluginName ? { name: pluginName } : {}) },
             authorizationGuard: { validate, assertCurrent: () => assertPlugin(pluginId) }, onAccepted: validate });
           await awaitAgentInputQueueSnapshotPersistence(taskId);
@@ -14240,7 +14258,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const mode = request.mode ?? 'acceptEdits';
         const cfg = readPluginTaskConfig(pluginId);
         assertCallerCurrent();
-        if (isPluginTaskPermissionAllowed(task.permissionMode, cfg.permissionMode) && (mode === 'acceptEdits' ? task.permissionMode === 'acceptEdits' || task.permissionMode === 'auto' : task.permissionMode === 'auto')) return { granted: true, task };
+        if (isPluginTaskPermissionAllowed(task.permissionMode, cfg.permissionMode) && isPluginTaskPermissionAllowed(mode, task.permissionMode)) return { granted: true, task };
         if (pluginPermissionRequests.size) throw new PluginTaskError('TASK_BUSY', 'A permission request is already open');
         const identity = pluginWriteAccessIdentity(pluginId);
         const assertRequestCurrent = () => {
@@ -14315,7 +14333,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
               assertPlanInactive();
               const currentConfig = readPluginTaskConfig(pluginId);
               if (currentConfig.permissionMode !== cfg.permissionMode) throw new PluginTaskError('PERMISSION_DENIED', 'Permission settings changed');
-              if (mode === 'auto' || ['ask', 'plan'].includes(clampPluginTaskPermissionMode(currentConfig.permissionMode))) writePluginTaskConfig(pluginId, {...currentConfig, permissionMode: mode});
+              if (!isPluginTaskPermissionAllowed(mode, clampPluginTaskPermissionMode(currentConfig.permissionMode))) writePluginTaskConfig(pluginId, {...currentConfig, permissionMode: mode});
               broadcastSessionPatched(task.taskId, {permissionMode: mode});
               return { granted: true, task: updatedTask };
             } catch (error) {
@@ -14472,6 +14490,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   setPluginTargetAdapter({
     prepareInvocation: preparePluginInvocation,
     acceptInvocation: acceptPluginInvocation,
+    scheduleAutoTitle: schedulePluginAutoTitle,
     store: () => {
       const snapshot = getCurrentDbClientSnapshot();
       if (!snapshot) throw new Error('HOST_NOT_READY');
@@ -14482,19 +14501,25 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     approvalRevision: pluginTargetAuthorizationRevision,
     candidates: listPluginTargetCandidates,
     session: resolvePluginTargetSession,
-    create: async (pluginId, project, taskId, title, route, guard) => {
+    assertCreatePermission: (pluginId, permissionMode) => {
+      if (!isPluginTaskPermissionAllowed(permissionMode, clampPluginTaskPermissionMode(readPluginTaskConfig(pluginId).permissionMode)))
+        throw new PluginTaskError('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
+    },
+    create: async (pluginId, project, taskId, title, route, guard, autoTitle, permissionMode) => {
       guard();
       await pluginTaskServiceForCurrentOwner!().create(pluginId, {
-        requestKey: `target-project:${taskId}`, title, route,
+        requestKey: `target-project:${taskId}`, ...(autoTitle ? { autoTitle: true } : { title }), route,
+        ...(permissionMode !== undefined ? { permissionMode } : {}),
       }, { taskId, workingDir: project, assertCurrent: guard });
       guard();
     },
-    send: async (pluginId, taskId, clientId, text, guard, validateTarget, delivery, images = []) => {
+    send: async (pluginId, taskId, clientId, text, guard, validateTarget, delivery, images = [], options) => {
       guard();
       const snapshot = getCurrentDbClientSnapshot();
       const assertCurrent = () => { guard(); if (snapshot !== getCurrentDbClientSnapshot()) throw new Error('PERMISSION_DENIED'); };
       const name = sanitizeSourceName(getInstalledGhostName(pluginId));
       const sourcePlugin = { pluginId, ...(name ? { name } : {}) };
+      const message = buildPluginMessage(text, options?.context, t('newChat.pastedText.pluginContextLabel'));
       const validate = async () => { assertCurrent(); await validateTarget(); assertCurrent(); };
       await validate();
       return withPluginMessageAttachments(images, assertCurrent, async files => {
@@ -14509,7 +14534,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             await validate();
             if (!meta) throw new Error('TARGET_UNAVAILABLE');
             const item = await buildSessionControlInputItem({ targetSessionId: taskId, clientId,
-              message: text, persistedContent: text, meta, sourcePlugin, files,
+              message: message.text, persistedContent: message.text,
+              pastedTextRanges: message.pastedTextRanges, meta, sourcePlugin, files,
               inheritTargetPlanMode: true,
               autoReviewUserText: { kind: 'delegated-continuation' },
             });
@@ -14529,7 +14555,8 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
             throw new Error('DELIVERY_UNCERTAIN');
           }
         }
-        const result = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: text, files,
+        const result = await sendToSessionInternal({ targetSessionId: taskId, clientId, message: message.text,
+          pastedTextRanges: message.pastedTextRanges, files,
           autoReviewUserText: { kind: 'delegated-continuation' }, forceQueue: true,
           resumeWithStoredPermissionMode: true,
           inheritTargetPlanMode: true,
@@ -14826,6 +14853,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     inheritTargetPlanMode?: boolean;
     message: string;
     persistedContent: string;
+    pastedTextRanges?: AgentInputQueuedMessage['chatMessage']['pastedTextRanges'];
     files?: AgentInputQueuedMessage['files'];
     clientId: string;
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>;
@@ -14875,6 +14903,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     inheritTargetPlanMode?: boolean;
     message: string;
     persistedContent: string;
+    pastedTextRanges?: AgentInputQueuedMessage['chatMessage']['pastedTextRanges'];
     clientId: string;
     meta: NonNullable<Awaited<ReturnType<typeof maker.getSessionMeta>>>;
     files?: AgentInputQueuedMessage['files'];
@@ -14906,11 +14935,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     }
     const fileAttachments = params.files?.flatMap((file) =>
       file.category !== 'image' && file.path ? [{ name: file.name, path: file.path }] : []);
-    const persistedContent = params.files?.length
+    const persistedContent = params.files?.length || params.pastedTextRanges?.length
       ? JSON.stringify({
           text: params.persistedContent,
           images: imageAttachments.filter((image) => 'url' in image),
           files: fileAttachments,
+          ...(params.pastedTextRanges?.length ? { pastedTextRanges: params.pastedTextRanges } : {}),
         })
       : params.persistedContent;
     // 主机隐藏指令(任务回执等):落库行带 [UI_ACTION_TRIGGER] 前缀、发给模型的正文不带。
@@ -14945,6 +14975,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         createdAt: new Date().toISOString(),
         ...(imageAttachments.length ? { images: imageAttachments } : {}),
         ...(fileAttachments?.length ? { files: fileAttachments } : {}),
+        ...(params.pastedTextRanges?.length ? { pastedTextRanges: params.pastedTextRanges } : {}),
       },
       createOpts,
       ...(params.origin ? { origin: modelOnlyEnvelope && (params.origin.kind === 'session' || params.origin.kind === 'orca')

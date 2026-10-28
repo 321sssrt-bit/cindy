@@ -488,8 +488,13 @@ Library 请求同时绑定迁移代次和安装批准，根解析、排队及开
   保存、新建和插件派发前复用普通独立任务的模型／供应商／Agent 准入，不另建目录或选择器。
   连接状态不等于额度、网络及远端参数一定可用；执行失败如实返回，不静默换型号或账号。
 - 插件新建普通任务的权限仅来自用户的插件设置或既有宿主确认流程，默认普通任务的 `ask`，允许
-  用户显式选择 `acceptEdits`／`auto`，不新增 `bypassPermissions`；不继承发起任务的权限。
-  旧 errand 适配器保留历史缺省 `plan` 与原 Agent 行为；已有任务及显式历史设置不自动改权。
+  用户显式选择默认权限（`ask`）／自动审批（`auto`）／完全访问（`bypassPermissions`）；不继承发起任务的权限。
+  `tasks.create` 与 project 的 `targets.send` 可选 `permissionMode`，仅在当前用户插件权限上限内
+  选择本次新任务的 ask／auto／bypassPermissions；参数本身不授予权限、不写插件默认设置。
+  完全访问须来自用户在插件设置中的选择；旧 `requestWriteAccess` 仍只支持 acceptEdits／auto，
+  不增加完全访问确认弹窗，也不因复用该流程降低用户已授权的上限。
+  Main 在创建前及异步准备后复核；省略参数保持旧行为，已有任务／伙伴投递不接受权限覆盖。
+  旧 errand 适配器保留历史缺省 `plan` 与原 Agent 行为；历史 plan／acceptEdits 配置保留，但不列入新建接口和设置页的新选项。已有任务不自动改权。
   不把历史 `plan` 值宣称为跨 Agent 的只读保证，也不为它改造各 Agent 的权限引擎。
   旧存储文件名、键及 IPC 保持兼容，升级不丢配置、不重批权限。来源优先级、复用和恢复
   详见 [插件普通任务接口](plugin-task-api-implementation.md#模型配置与创建来源)。

@@ -100,7 +100,8 @@ const q = await cindy.agent.queryErrand({ jobId: r.jobId });
   或修复供应商连接。不静默换模型、不从报错猜凭证失效，也不把目录可用当作远端推理一定成功。
 - 权限独立来自用户插件设置；旧接口缺省保留历史 plan 值及原 Agent 行为，不将它宣称为
   跨 Agent 的只读保证。新插件应使用普通任务接口，其缺省为普通任务的 ask 权限。
-  用户可显式选择 ask / acceptEdits / auto；不继承调用任务的完全访问。工作目录由宿主分配。
+  用户可显式选择默认权限（ask）、自动审批（auto）或完全访问（bypassPermissions）；
+  不继承调用任务的权限。工作目录由宿主分配。
 - 目录有一个受控例外:run 请求可带 `workingDir`(绝对路径)**转述**一个目录,
   让 errand 会话建在项目里(Agent 能看到代码)。这不是授权——主机只认用户
   此前用 pick 能力(§4.14)在系统选目录窗口里**亲手选过**的目录(主机自己记的
@@ -213,7 +214,7 @@ const r = await cindy.agent.requestSchedule({
 
 - `list({targetKind:'project'|'task'|'bot'})`：返回 `{targets:[{kind,id,label,detail}]}`，只含本机可用目标的名称和目录/说明，不含消息历史。插件可自行搜索和展示列表，最近活动只用于排序。
 - `resolve({target:{kind,id}})`：复核已保存或本次选择的目标，返回最新 `{kind,id,label,detail}`。只查询，不创建任务、不打开 UI、不保存绑定；固定目标失效返回 TARGET_UNAVAILABLE，不自动替换。插件可将 `{kind,id}` 存入自己的配置。project 的 id 是 Cindy 已有项目目录，task/bot 的 id 是任务/伙伴标识。
-- `send({target:{kind,id},requestKey,text,title?,route?,delivery?,attachments?})`：直接指定目标，Host 当次复核。project 在目录中新建普通任务，可传统一模型目录的 route；task/bot 沿用接收方模型、权限、目录，不接受 route。`delivery` 为 `queue | steer`，缺省 queue；project 不接受 steer。steer 尝试同轮注入，不停止当前轮，空闲或插话暂不可用时入队。返回 `{taskId,accepted:true,delivery:"queue"|"steer"}` 表示实际接受路径，不表示执行完成。筛查拒绝返回 DELIVERY_REJECTED，不入队重试；ACK 未知返回 DELIVERY_UNCERTAIN，不得换键重发。不开放读取任意任务历史或改模。
+- `send({target:{kind,id},requestKey,text,context?,title?,autoTitle?,route?,permissionMode?,delivery?,attachments?})`：直接指定目标，Host 当次复核。project 在目录中新建普通任务，可传统一模型目录的 route 和已授权范围内的 permissionMode；task/bot 沿用接收方模型、权限、目录，不接受 route 或 permissionMode。`delivery` 为 `queue | steer`，缺省 queue；project 不接受 steer。steer 尝试同轮注入，不停止当前轮，空闲或插话暂不可用时入队。返回 `{taskId,accepted:true,delivery:"queue"|"steer"}` 表示实际接受路径，不表示执行完成。筛查拒绝返回 DELIVERY_REJECTED，不入队重试；ACK 未知返回 DELIVERY_UNCERTAIN，不得换键重发。不开放读取任意任务历史或改模。
 - 同一次 send 重试沿用相同 requestKey、target、内容和 delivery（缺省与 queue 等价）；同键参数变化返回 REQUEST_KEY_CONFLICT。Host 在执行前持久保留投递回执，重启后已接受的请求返回原结果，未确定结果的请求返回 DELIVERY_UNCERTAIN，不再次创建或投递。回执不保存正文或附件字节。不要通过更换 requestKey 绕过未知结果，应先让用户在 Cindy 检查。
 - `cancel({requestKey})`：使本次请求及迟到的发送失效，仅撤回本插件该请求尚未执行的输入；不会停止接收方其他输入，也不保证撤销已经开始的工作。新操作使用新的 requestKey。
 - `tasks.send` 和 `targets.send` 均支持可选 `attachments:[{base64,name?}]`：只接收插件提供的图片字节，不接受本机路径、URL、媒体 URI 或自报 MIME。Host 检测 PNG/JPEG/WebP，最多 4 张、合计 20 MiB。先检查 `tasks.capabilities().messageAttachments.kinds` 包含 image；旧客户端不支持时停止，不静默丢图或改投临时路径。截图进既有 cindy-media，作为消息附件展示并进入模型输入；不需要额外声明 media.deposit。附件内容及名称参与幂等签名，更换附件不能复用同键。
@@ -232,6 +233,50 @@ Host 只接受同账号、同安装/批准及运行代次、尚未过期且已�
 不要换键重发。关联不是插件生成的业务 ID，也不是设置计数增量的接口。
 
 上述统计不覆盖插件自绘界面或自带原生程序的纯本地行为，也不要求插件迁移交互或重新授权。
+
+### 正文、附带资料与自动标题（可选）
+
+先检查 `tasks.capabilities().messageContext === true`。`tasks.send` 和 `targets.send` 可另外传
+`context: string`，`text` 只放要在聊天中显示的指令。Host 保留完整资料并交给 Agent，
+界面复用已有长文本胶囊，默认显示「附带资料」，点击可查看原文。截图仍走 `attachments`，
+不要把截图路径或内部诊断重新拼进可见正文。context 是插件提供的参考资料，不是系统指令
+或新的真人授权；原有来源标签和权限边界保持。context 最多 32768 个 UTF-16 字符，
+text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768。
+省略或传空 context 保持旧请求行为。同键重试必须携带相同资料；资料改变会触发既有幂等冲突，
+不能换键绕过未知受理结果。回执仅保存摘要，资料随普通消息和队列保留，不另建资料存储。
+
+`tasks.capabilities().autoTitle === true` 时，可用 `tasks.create({requestKey, autoTitle:true, route?})`
+新建任务，省略 title；首次消息受理后，Host 复用普通任务自动命名。`targets.send` 仅在
+`target.kind === 'project'` 时可传 `autoTitle:true` 并省略 title。生成期间先显示用户指令的简短占位，
+随后结合指令和附带资料生成标题；不会覆盖人工重命名。autoTitle 与 title 互斥，task/bot
+目标不接受 autoTitle:true，也不更改已有目标标题。
+
+默认不传 autoTitle 的存量插件保持原有命名：tasks.create 仍须传 title；项目投递缺省采用
+项目名称。新模式参与幂等摘要；旧字段组合的摘要及重放行为保持，不需要重新批准或配置。
+旧 Host 未宣告支持时，应明确提示所需客户端能力，不能静默丢弃资料或假称已经自动命名。
+
+### 新建任务的权限选择（可选）
+
+先检查 `tasks.capabilities().createPermissionMode === true`。`tasks.create` 和 project 的
+`targets.send` 可传 `permissionMode: 'ask' | 'auto' | 'bypassPermissions'`，分别对应默认权限、自动审批、完全访问，仅决定这一个新任务的权限，
+不修改插件默认设置。省略时仍使用用户的插件任务设置，未设置则为 ask。
+例如，用户已将插件权限设为 auto，插件可为某次任务选择 ask：
+
+```js
+const task = await cindy.tasks.create({
+  requestKey: 'inspect-42', title: 'Inspect the selected item', permissionMode: 'ask',
+});
+```
+
+参数不是授权凭证。Host 在创建前及异步准备后按当前用户设置复核：ask 只允许 ask，
+auto 允许 ask/auto，bypassPermissions 允许上述三档；超出范围返回 PERMISSION_DENIED，
+不会静默降档或自动更改用户设置。完全访问须由用户在插件任务设置中选择；
+既有 `requestWriteAccess` 仍只支持 acceptEdits/auto，不能请求完全访问或降低用户已授权的上限。
+历史 plan/acceptEdits 设置原样保留，但不作为此新参数的可选值；历史 acceptEdits 上限只允许新参数选择 ask。
+不接受自报 confirmed；Plan Mode 不是此参数的权限档位。
+已有 task/bot 的投递不能携带 permissionMode，也不会改动接收方权限。
+权限选择参与幂等摘要，同键改变权限返回原有冲突错误；省略新字段的旧请求摘要及重放保持不变。
+旧 Host 未宣告支持时，不发送该参数，也不能悄悄忽略用户已经选择的权限。
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
 `models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`。
@@ -302,14 +347,14 @@ create/send 的 requestKey 持久去重；同键不同内容拒绝。删除后�
 沿用当前新任务选择。可显式传
 `{agentKind:'codex',providerId:'...',model:'...',effort:'high',fastMode:false}`；无推理档位模型用空 effort。
 先查 `capabilities().sourceCallContext`：支持时，Agent 在途调用可在 create 中转传 `callId`。
-宿主核对同插件本机调用后读取其模型；不能自报 sourceSessionId 或权限。面板直接创建省略 callId。
+宿主核对同插件本机调用后读取其模型；不能自报 sourceSessionId 或权限授权。面板直接创建省略 callId。
 新字段需该能力为 true 才发送，旧客户端不能假定支持；同 requestKey 的重放保留原创建结果。
 来源/模型/强度必须当前可用，派发前再次核对；失败引导改选或修复连接，不自动换模型或账号。
 已有普通任务保留自身配置，用户在任务内修复后继续使用原任务。
-工作目录由宿主分配，或沿用用户已在插件设置中选择的目录；不接受任意路径或权限覆盖。
-权限来自用户的插件任务设置，缺省使用普通任务的 ask 权限；工作区内行为及询问规则与所选
-Agent 的普通任务一致。允许用户显式选择 acceptEdits / auto，禁止 bypassPermissions，
-不继承发起任务的权限。既有任务与显式历史 plan 配置保留原行为，不自动提权；需要改变时由用户选择。
+工作目录由宿主分配，或沿用用户已在插件设置中选择的目录；不接受任意路径或超出已授权范围的权限。
+权限上限来自用户的插件任务设置；新建时可按上述参数选择更低档位，省略则沿用设置，未设置为 ask。工作区内行为及询问规则与所选
+Agent 的普通任务一致。用户可在插件设置中选择 ask / auto / bypassPermissions，
+不继承发起任务的权限。既有任务与显式历史 plan/acceptEdits 配置保留原行为，不自动提权；需要改变时由用户选择。
 create 可传 `isolatedWorkspace:true`，使用宿主为该任务生成的独立空目录，忽略插件的项目目录偏好。
 返回 workingDir 仅属于本插件创建的任务，可交给插件 Node 进程放入候选项目；不接受插件自报任意目录。
 任务视图同时返回 permissionMode；按实际权限展示，不将历史 plan 值视作跨 Agent 的只读保证，不能暗中升级权限。

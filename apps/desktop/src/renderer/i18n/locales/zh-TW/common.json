@@ -11769,6 +11769,7 @@
       "submitFeedbackAria": "傳送反饋"
     },
     "pastedText": {
+      "pluginContextLabel": "附帶資料",
       "chipLabel": "貼上的文字({{lines}} 行)",
       "previewTitle": "貼上的文字",
       "editTitle": "編輯貼上的文字",

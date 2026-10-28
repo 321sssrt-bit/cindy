@@ -76,6 +76,14 @@ describe('streaming answer documents', () => {
       expect(next.roots).toEqual(['answer']);
       expect(next.issues).toBeGreaterThan(0);
     }
+    const prefix = update + '{"seq":3' + String.fromCharCode(10);
+    const beforeRecovery = parser.update(prefix, true);
+    const later = line(operation === 'create' ? 2 : 3, { op: 'create', id: 'later', kind: 'text', props: { text: 'Later' } });
+    parser.update(prefix + later.slice(0, -8), true);
+    const recovered = parser.update(prefix + later, true);
+    expect(recovered.nodes.get('answer')?.props.text).toBe(expected);
+    expect(recovered.nodes.get('later')?.props.text).toBe('Later');
+    expect(recovered.issues).toBe(beforeRecovery.issues);
     expect(committed.nodes.get('answer')?.props.text).toBe(expected);
   });
   it('preserves committed content when an extended finalized tail exceeds the source limit', () => {

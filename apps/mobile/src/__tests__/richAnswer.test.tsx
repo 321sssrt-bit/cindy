@@ -93,4 +93,13 @@ it('keeps committed text visible while malformed suffixes grow without remountin
     expect(container.textContent).toContain('Readable findings');
     if (suffix) expect(container.textContent).toContain('message.richAnswer.incomplete');
   }
+  const prefix = full + '{"seq":2' + String.fromCharCode(10);
+  const later = JSON.stringify({ seq: 2, op: 'create', id: 'later', kind: 'markdown', props: { text: 'Later findings' } });
+  for (const tail of [later.slice(0, -6), later]) {
+    await act(async () => root.render(createElement(SessionQuickSendProvider, { value: null },
+      createElement(RichAnswer, { source: prefix + tail, stateKey: 'malformed-tail', complete: true, renderMarkdown: text => text }))));
+    expect(container.textContent).toContain('Readable findings');
+    expect(container.textContent).toContain('message.richAnswer.incomplete');
+  }
+  expect(container.textContent).toContain('Later findings');
 });

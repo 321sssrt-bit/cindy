@@ -139,26 +139,25 @@ export class RichAnswerStream {
   private roots: string[] = [];
   private revision = 0;
   private issues = 0;
-  private failedFinalLine = false;
+  private failedFinalLine: { offset: number; seq: number; issues: number } | null = null;
   private sourceTooLong = false;
   update(source: string, complete = false): RichDocument {
-    // Replay only a failed final line. Extending a committed operation with a
-    // malformed suffix must not discard the content it already made readable.
-    const extendsFinalLine = this.failedFinalLine
-      && source.length > this.source.length
-      && source.length <= MAX_SOURCE
-      && this.offset === this.source.length
-      && this.offset > 0
-      && !this.source.endsWith("\n");
-    if (!source.startsWith(this.source) || extendsFinalLine) {
+    if (!source.startsWith(this.source)) {
       this.source = "";
       this.offset = 0;
       this.seq = 0;
       this.nodes = new Map();
       this.roots = [];
       this.issues = 0;
-      this.failedFinalLine = false;
+      this.failedFinalLine = null;
       this.revision++;
+    } else if (this.failedFinalLine && source.length > this.source.length && source.length <= MAX_SOURCE) {
+      // Retry only the failed line. Earlier committed content can differ from
+      // reparsing its source after malformed suffixes were already consumed.
+      this.offset = this.failedFinalLine.offset;
+      this.seq = this.failedFinalLine.seq;
+      this.issues = this.failedFinalLine.issues;
+      this.failedFinalLine = null;
     }
     if (source.length > MAX_SOURCE) {
       this.sourceTooLong = true;
@@ -170,14 +169,15 @@ export class RichAnswerStream {
     let end: number;
     while ((end = source.indexOf("\n", this.offset)) !== -1) {
       this.line(source.slice(this.offset, end));
-      this.failedFinalLine = false;
+      this.failedFinalLine = null;
       this.offset = end + 1;
     }
     if (complete && this.offset < source.length) {
+      const checkpoint = { offset: this.offset, seq: this.seq, issues: this.issues };
       const failed = !this.line(source.slice(this.offset));
-      // A suffix parsed after an earlier committed tail is not a whole line:
-      // replaying it would erase that earlier operation on the next snapshot.
-      this.failedFinalLine = failed && (this.offset === 0 || source[this.offset - 1] === "\n");
+      // A suffix after a committed tail is not a whole line and must not be
+      // retried as one when later snapshots extend it.
+      this.failedFinalLine = failed && (this.offset === 0 || source[this.offset - 1] === "\n") ? checkpoint : null;
       this.offset = source.length;
     }
     return this.snapshot();

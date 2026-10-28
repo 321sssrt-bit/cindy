@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { nodeRelayAuthCrypto } from "../../packages/device-link/src/nodeRelayCrypto";
 import { RelayFrameAuthenticator } from "../../packages/device-link/src/selfHostedRelayAuth";
+import { PLUGIN_SYNC_CHANNEL } from "../../packages/device-link/src/pluginSyncProtocol";
 import {
   createClient,
   createHost,
@@ -29,6 +30,7 @@ function frameAuthFor(spec: FrameAuthSpec, role: "host" | "controller", rejected
   });
   auth.setCertificates(spec.certs);
   return () => ({
+    peerChallenge: { session: auth, state: (deviceId: string) => auth.peerChallenge(deviceId) },
     sign: (frame: Parameters<RelayFrameAuthenticator["sign"]>[0]) => auth.sign(frame),
     verify: (frame: Readonly<Record<string, unknown>>) => {
       const verdict = auth.verify(frame);
@@ -101,8 +103,26 @@ it("interoperates with an explicitly provisioned isolated relay and automaticall
     });
     const hostId = host.client.getSelfDeviceId();
     if (!hostId) throw new Error("Test relay did not assign host identity");
-    recovery = createMobileRecovery(controller.client, hostId);
     controller.client.start();
+    await vi.waitFor(() => expect(controller.client.getStatus()).toBe("online"), { timeout: 10_000 });
+    if (frameAuthSpec) {
+      // 首次认证以关闭远控的手机为目标；不能借用会被 relay 拦截的 link-open。
+      const received: unknown[] = [];
+      const off = controller.client.onFrame(frame => {
+        if (frame.kind === "push") received.push(frame.payload);
+      });
+      try {
+        host.client.sendPush(controller.client.getSelfDeviceId()!, PLUGIN_SYNC_CHANNEL, { version: 1, type: "snapshot" });
+        await vi.waitFor(() => expect(received).toEqual([
+          { channel: PLUGIN_SYNC_CHANNEL, payload: { version: 1, type: "snapshot" } },
+        ]), { timeout: 10_000 });
+        const listing = await controller.client.invoke(hostId, { channel: "local-db:sessions:list", args: [] });
+        expect(listing.ok).toBe(true);
+        expect(data.received.some(frame => frame.kind === "link-open")).toBe(false);
+      } finally { off(); }
+    }
+    recovery = createMobileRecovery(controller.client, hostId);
+    recovery.foreground();
     await vi.waitFor(
       () => expect(recovery!.state.completed).toBeGreaterThan(0),
       { timeout: 10_000 },

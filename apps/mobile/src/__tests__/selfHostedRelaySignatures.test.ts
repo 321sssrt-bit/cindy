@@ -21,6 +21,7 @@ import {
   DeviceLinkClient,
   issueRelayDeviceCert,
   PROTOCOL_VERSION,
+  RELAY_AUTH_CHANNEL,
   RelayFrameAuthenticator,
   verifyRelayPairProof,
   type Envelope,
@@ -45,7 +46,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it('phone (@noble) and computer (node:crypto) accept each other’s pairing proof, certificate and frame signatures', () => {
+it('phone (@noble) and computer (node:crypto) accept each other’s pairing proof, certificate and frame signatures', async () => {
   const relayId = 'relay-7f3c';
   const phoneId = 'phone-1';
   const computerId = 'computer-1';
@@ -82,15 +83,26 @@ it('phone (@noble) and computer (node:crypto) accept each other’s pairing proo
     credential: 'relay-credential',
     signing: { deviceId: phoneId, ownerPublicKey: owner.publicKey, seed: identity.seed },
   });
+  const computerKey = createRelaySigningKey(nodeRelayAuthCrypto);
+  const computerCert = issueRelayDeviceCert(nodeRelayAuthCrypto, owner.seed, {
+    relayId, deviceId: computerId, publicKey: computerKey.publicKey, role: 'member', issuedAt: 1,
+  });
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ certs: [computerCert] }), { status: 200 }));
   const phone = currentSelfHostedRelayFrameAuth()!;
   const computer = new RelayFrameAuthenticator({
     crypto: nodeRelayAuthCrypto,
     relayId,
     deviceId: computerId,
-    seed: createRelaySigningKey(nodeRelayAuthCrypto).seed,
+    seed: computerKey.seed,
     ownerPublicKey: owner.publicKey,
   });
   expect(computer.setCertificates([cert])).toEqual({ accepted: 1, rejected: 0 });
+  const challenge: Envelope = { v: PROTOCOL_VERSION, kind: 'push', id: 'auth-1', src: phoneId, dst: computerId,
+    payload: { channel: RELAY_AUTH_CHANNEL, payload: { type: 'request' } } };
+  expect(computer.verify({ ...challenge, auth: phone.sign(challenge) })).toBe('ok');
+  const response: Envelope = { ...challenge, src: computerId, dst: phoneId,
+    payload: { channel: RELAY_AUTH_CHANNEL, payload: { type: 'response' } } };
+  await vi.waitFor(() => expect(phone.verify({ ...response, auth: computer.sign(response) })).toBe(true));
 
   // 手机发出时没有 src,中转转发时填上。
   const invoke = (args: unknown[]): Envelope => ({
@@ -126,9 +138,18 @@ function incomingFixture() {
   const cert = (publicKey: string, signerSeed = owner.seed) => issueRelayDeviceCert(nodeRelayAuthCrypto, signerSeed, {
     relayId: route.relayId, deviceId: 'computer-1', publicKey, role: 'member', issuedAt: 1,
   });
-  const sender = (seed = peer.seed) => new RelayFrameAuthenticator({
-    crypto: nodeRelayAuthCrypto, relayId: route.relayId, deviceId: 'computer-1', seed, ownerPublicKey: owner.publicKey,
-  });
+  const sender = (seed = peer.seed) => {
+    const auth = new RelayFrameAuthenticator({
+      crypto: nodeRelayAuthCrypto, relayId: route.relayId, deviceId: 'computer-1', seed, ownerPublicKey: owner.publicKey,
+    });
+    auth.setCertificates([issueRelayDeviceCert(nodeRelayAuthCrypto, owner.seed, {
+      relayId: route.relayId, deviceId: 'phone-1', publicKey: phone.publicKey, role: 'member', issuedAt: 1,
+    })]);
+    const challenge: Envelope = { v: PROTOCOL_VERSION, kind: 'push', id: 'auth-1', src: 'phone-1', dst: 'computer-1',
+      payload: { channel: RELAY_AUTH_CHANNEL, payload: { type: 'request' } } };
+    auth.verify({ ...challenge, auth: currentSelfHostedRelayFrameAuth()!.sign(challenge) });
+    return auth;
+  };
   const signed = (auth: RelayFrameAuthenticator, payload: unknown): Envelope => {
     const frame = { v: PROTOCOL_VERSION, kind: 'push' as const, src: 'computer-1', dst: 'phone-1', payload };
     return { ...frame, auth: auth.sign(frame) } as Envelope;

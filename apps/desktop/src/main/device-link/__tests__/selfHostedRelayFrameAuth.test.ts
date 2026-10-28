@@ -8,7 +8,7 @@
  * - 单文件实测：1.04 秒（1 例，测试体 9ms，Windows）。
  */
 import { afterEach, expect, it, vi } from 'vitest';
-import { createRelaySigningKey, issueRelayDeviceCert, RelayFrameAuthenticator } from '@cindy/device-link';
+import { createRelaySigningKey, issueRelayDeviceCert, RELAY_AUTH_CHANNEL, RelayFrameAuthenticator, type Envelope } from '@cindy/device-link';
 import { nodeRelayAuthCrypto as crypto } from '@cindy/device-link/node-relay-crypto';
 import { setSelfHostedRelaySource } from '../selfHostedRelayRouting';
 
@@ -42,6 +42,12 @@ it('refreshes a rejoined device key with throttling while rejecting its first un
   const auth = currentRelayFrameAuth()!;
   await vi.advanceTimersByTimeAsync(0);
   const signer = new RelayFrameAuthenticator({ crypto, relayId, deviceId: 'peer', seed: peer.seed, ownerPublicKey: owner.publicKey });
+  signer.setCertificates([issueRelayDeviceCert(crypto, owner.seed, {
+    relayId, deviceId: 'self', publicKey: self.publicKey, role: 'member', issuedAt: 1,
+  })]);
+  const challenge: Envelope = { v: 1, kind: 'push', id: 'auth-1', src: 'self', dst: 'peer',
+    payload: { channel: RELAY_AUTH_CHANNEL, payload: { type: 'request' } } };
+  expect(signer.verify({ ...challenge, auth: auth.sign(challenge) })).toBe('ok');
   const frame = { kind: 'push', src: 'peer', dst: 'self', payload: { value: 1 } };
   const signed = () => ({ ...frame, auth: signer.sign(frame) });
   const pending = signed();

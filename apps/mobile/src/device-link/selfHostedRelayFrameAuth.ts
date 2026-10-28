@@ -99,6 +99,7 @@ export function currentSelfHostedRelayFrameAuth(): DeviceLinkFrameAuth | null {
       key, baseUrl: relay.baseUrl, credential: relay.credential, authenticator,
       refreshing: null, controller: null, lastRefreshAt: -Infinity,
       frameAuth: {
+        peerChallenge: { session: authenticator, state: deviceId => authenticator.peerChallenge(deviceId) },
         sign: frame => cached === target ? authenticator.sign(frame) : undefined,
         verify: frame => {
           if (cached !== target) return false;

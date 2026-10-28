@@ -90,6 +90,7 @@ function create(relay: ActiveSelfHostedRelay): Current {
     relay,
     authenticator,
     frameAuth: {
+      peerChallenge: { session: authenticator, state: deviceId => authenticator.peerChallenge(deviceId) },
       sign: (frame) => authenticator.sign(frame),
       verify: (frame) => {
         const verdict = authenticator.verify(frame);

@@ -5,7 +5,7 @@
  *   (中转 ID + 设备 ID + 设备公钥)。主人公钥随加入链接 / 二维码交给新设备,不经中转。
  * - 加入时新设备用链接里的一次性配对秘密(同样不经中转)对自己的公钥做 HMAC,主人电脑核对后
  *   才签发证书:中转换不掉新设备的公钥。
- * - 经中转转发的每条对端消息都带 `auth`:时间戳 + 本次启动标识 + 递增计数 + 签名,签名覆盖
+ * - 经中转转发的每条对端消息都带 `auth`:时间戳 + 双方启动标识 + 递增计数 + 签名,签名覆盖
  *   中转 ID、收发设备、类型、请求 ID 与完整内容。收到方核对证书、签名、时间与计数,任一不符即丢弃。
  *
  * 本模块不依赖任何加密库:Desktop 注入 node:crypto,Mobile 注入 @noble。方案见
@@ -17,12 +17,23 @@ export const RELAY_CERT_VERSION = 1;
 export const RELAY_FRAME_MAX_SKEW_MS = 10 * 60 * 1000;
 
 const CERT_CONTEXT = 'cindy-relay-cert/1';
-const FRAME_CONTEXT = 'cindy-relay-frame/1';
+const FRAME_CONTEXT = 'cindy-relay-frame/2';
 const PAIR_CONTEXT = 'cindy-relay-pair/1';
 const KEY_32_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/;
 const BOOT_PATTERN = /^[A-Za-z0-9_-]{16,32}$/;
 const MAX_ID_LENGTH = 256;
+/** 仅自建中转使用，客户端验签后直接消费，不进入业务分发或远控授权。 */
+export const RELAY_AUTH_CHANNEL = 'device-link:relay-auth';
+
+export function relayAuthHandshake(frame: RelaySignableFrame): 'request' | 'response' | null {
+  if (frame.kind !== 'push' || !isShortId(frame.id) || !frame.payload || typeof frame.payload !== 'object') return null;
+  const payload = frame.payload as Record<string, unknown>;
+  if (payload.channel !== RELAY_AUTH_CHANNEL || Object.keys(payload).length !== 2 ||
+    !payload.payload || typeof payload.payload !== 'object' || Array.isArray(payload.payload)) return null;
+  const body = payload.payload as Record<string, unknown>;
+  return Object.keys(body).length === 1 && (body.type === 'request' || body.type === 'response') ? body.type : null;
+}
 
 export interface RelayAuthCrypto {
   sha256(data: Uint8Array): Uint8Array;
@@ -55,6 +66,8 @@ export interface RelayFrameAuth {
   t: number;
   /** 本次启动的随机标识。 */
   b: string;
+  /** 接收端本次启动挑战；仅认证挑战请求允许为空。 */
+  r: string;
   /** 本次启动内严格递增的计数。 */
   c: number;
   /** 签名,base64url。 */
@@ -291,6 +304,7 @@ export type RelayFrameVerdict =
   | 'unsigned'
   | 'malformed'
   | 'wrong-target'
+  | 'wrong-session'
   | 'unknown-signer'
   | 'stale'
   | 'replayed'
@@ -327,6 +341,7 @@ export class RelayFrameAuthenticator {
   private counter = 0;
   private signers = new Map<string, { publicKey: Uint8Array; cert: RelayDeviceCert }>();
   private readonly windows = new Map<string, Map<string, BootWindow>>();
+  private readonly peerBoots = new Map<string, { boot: string; ready: boolean }>();
   private verifiedSinceSweep = 0;
 
   constructor(options: RelayFrameAuthenticatorOptions) {
@@ -356,6 +371,9 @@ export class RelayFrameAuthenticator {
       }
       next.set(cert.deviceId, { publicKey, cert });
     }
+    for (const [deviceId, previous] of this.signers) {
+      if (next.get(deviceId)?.cert.publicKey !== previous.cert.publicKey) this.peerBoots.delete(deviceId);
+    }
     this.signers = next;
     return { accepted: next.size, rejected };
   }
@@ -364,11 +382,17 @@ export class RelayFrameAuthenticator {
     return this.signers.has(deviceId);
   }
 
+  peerChallenge(deviceId: string): 'ready' | 'needed' | 'unknown' {
+    if (!this.signers.has(deviceId)) return 'unknown';
+    return this.peerBoots.get(deviceId)?.ready ? 'ready' : 'needed';
+  }
+
   sign(frame: RelaySignableFrame): RelayFrameAuth {
     const t = this.now();
     const c = ++this.counter;
-    const digest = this.digest(frame, this.deviceId, frame.dst ?? '', t, this.bootId, c);
-    return { t, b: this.bootId, c, s: encodeBase64Url(this.crypto.ed25519Sign(this.seed, digest)) };
+    const r = relayAuthHandshake(frame) === 'request' ? '' : this.peerBoots.get(frame.dst ?? '')?.boot ?? '';
+    const digest = this.digest(frame, this.deviceId, frame.dst ?? '', t, this.bootId, r, c);
+    return { t, b: this.bootId, r, c, s: encodeBase64Url(this.crypto.ed25519Sign(this.seed, digest)) };
   }
 
   /** 入参是刚解析出的 wire 帧(任意形状),字段类型在这里逐个核对。 */
@@ -386,6 +410,8 @@ export class RelayFrameAuthenticator {
       !Number.isSafeInteger(auth.t) ||
       typeof auth.b !== 'string' ||
       !BOOT_PATTERN.test(auth.b) ||
+      typeof auth.r !== 'string' ||
+      (auth.r !== '' && !BOOT_PATTERN.test(auth.r)) ||
       typeof auth.c !== 'number' ||
       !Number.isSafeInteger(auth.c) ||
       auth.c <= 0 ||
@@ -411,13 +437,21 @@ export class RelayFrameAuthenticator {
     try {
       valid = this.crypto.ed25519Verify(
         signer.publicKey,
-        this.digest({ kind, id, payload: frame.payload }, src, this.deviceId, auth.t, auth.b, auth.c),
+        this.digest({ kind, id, payload: frame.payload }, src, this.deviceId, auth.t, auth.b, auth.r, auth.c),
         signature,
       );
     } catch {
       valid = false;
     }
     if (!valid) return 'bad-signature';
+    const handshake = relayAuthHandshake({ kind, id: typeof id === 'string' ? id : undefined, payload: frame.payload });
+    // 只有已验签的专用认证请求可引导挑战；普通建链、查询、推送和写操作一律绑定接收端。
+    if (handshake !== 'request' && auth.r !== this.bootId) {
+      this.peerBoots.delete(src);
+      return 'wrong-session';
+    }
+    const previous = this.peerBoots.get(src);
+    this.peerBoots.set(src, { boot: auth.b, ready: handshake !== 'request' || (previous?.boot === auth.b && previous.ready) });
     const perSource = boots ?? new Map<string, BootWindow>();
     perSource.set(auth.b, { lastCounter: auth.c, lastSentAt: Math.max(window?.lastSentAt ?? 0, auth.t) });
     this.windows.set(src, perSource);
@@ -436,8 +470,8 @@ export class RelayFrameAuthenticator {
     }
   }
 
-  private digest(frame: RelaySignableFrame, src: string, dst: string, t: number, b: string, c: number): Uint8Array {
-    const header = JSON.stringify([FRAME_CONTEXT, this.relayId, src, dst, frame.kind, frame.id ?? null, t, b, c]);
+  private digest(frame: RelaySignableFrame, src: string, dst: string, t: number, b: string, r: string, c: number): Uint8Array {
+    const header = JSON.stringify([FRAME_CONTEXT, this.relayId, src, dst, frame.kind, frame.id ?? null, t, b, r, c]);
     const body = frame.payload === undefined ? '' : JSON.stringify(frame.payload);
     return this.crypto.sha256(encodeText(this.crypto, `${header}\n${body}`));
   }

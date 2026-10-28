@@ -7062,7 +7062,7 @@ export interface GhostAppContextResult {
   };
 }
 
-/** Read-only local agent routes. No credentials or provider configuration. */
+/** Read-only agent routes. No credentials or provider configuration. */
 export type GhostAgentModelsResult =
   | {
       ok: true;
@@ -7076,6 +7076,8 @@ export type GhostAgentModelsResult =
         efforts: string[];
         defaultEffort: string | null;
       }>;
+      agentDeviceId?: string;
+      locations?: Array<{ agentDeviceId: string; name: string }>;
     }
   | { ok: false; errorCode: 'PERMISSION_DENIED' | 'NOT_AVAILABLE'; message: string };
 

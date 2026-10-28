@@ -5,6 +5,7 @@ import {
   parseCssColor,
   type Rgb,
 } from '../../shared/theme-import/color';
+import { FULL_EXPORT_MIN_LOGIN_KEYS } from '../themes/loginLegacyDefaults';
 import { normalizeLocalThemeColors } from '../themes/local-themes-normalize';
 
 function rgb(value: string | undefined): Rgb {
@@ -175,46 +176,71 @@ describe('normalizeLocalThemeColors', () => {
     expect(out['switch-thumb-off']).toBe('#000000');
   });
 
-  describe('升级前导出的 login-* 默认值(2026-10-27 并入墨水口径)', () => {
-    it('丢弃等于本模式旧默认值的 override,让新默认值生效;用户改过的值与非登录色原样保留', () => {
+  describe('升级前导出的 login-* 默认值(历史快照迁移)', () => {
+    /** 完整导出会写入全部登录色;这里用不在对照表里的占位键凑够数量。 */
+    const filler = Object.fromEntries(
+      Array.from({ length: FULL_EXPORT_MIN_LOGIN_KEYS }, (_, i) => [`login-filler-${i}`, '#abcdef']),
+    );
+
+    it('丢弃等于本模式历史默认值的 override,让当前默认值生效;用户改过的值与非登录色原样保留', () => {
       const out = normalizeLocalThemeColors(
         {
+          ...filler,
           surface: '#111111',
-          'login-panel-bg': '#fbfbfb', // 旧亮色面板(大小写不敏感)
-          'login-primary-button-bg': '#2A2828', // 旧亮色主按钮
+          'login-panel-bg': '#fbfbfb', // 10-27 前的亮色面板(大小写不敏感)
+          'login-primary-button-bg': '#2A2828', // 10-27 前的亮色主按钮
           'login-disabled-button-bg': '#2A2828', // 旧禁用底,与旧主按钮同色
           'login-disabled-button-overlay': 'rgba(255, 255, 255, 0.7)',
           'login-control-bg': '#123456', // 用户自己改过
         },
         'light',
       );
-      expect(out).toEqual({ surface: '#111111', 'login-control-bg': '#123456' });
+      expect(out).toEqual({ ...filler, surface: '#111111', 'login-control-bg': '#123456' });
     });
 
-    it('更早一代(2026-10-23 前)的登录文字实色也迁移,否则旧文字会压在新面板上', () => {
+    it('覆盖更早几代:10-23 前的文字实色、10-01 前的画布底,否则旧值会压在新面板上', () => {
       expect(
         normalizeLocalThemeColors(
-          { 'login-secondary-text': '#6F6F6F', 'login-title-text': '#D4D4D4', 'login-panel-bg': '#312F2F' },
+          {
+            ...filler,
+            'login-secondary-text': '#6F6F6F',
+            'login-title-text': '#D4D4D4',
+            'login-bg-base': '#1F1F1E',
+            'login-panel-bg': '#312F2F',
+          },
           'dark',
         ),
-      ).toEqual({});
-      expect(normalizeLocalThemeColors({ 'login-title-text': '#252222' }, 'light')).toEqual({});
+      ).toEqual(filler);
+      expect(
+        normalizeLocalThemeColors({ ...filler, 'login-title-text': '#252222', 'login-bg-base': '#EDEDED' }, 'light'),
+      ).toEqual(filler);
     });
 
-    it('只比对本模式的旧值:深色主题里有意使用的历史亮色值不被丢弃,反之亦然', () => {
-      const darkWithLightValue = { 'login-panel-bg': '#FBFBFB' };
+    it('rgba 数字写法不同(0.1 与 0.10)也能识别', () => {
+      expect(
+        normalizeLocalThemeColors({ ...filler, 'login-overlay-button-pressed': 'rgba(0,0,0,0.5)' }, 'light'),
+      ).toEqual(filler);
+    });
+
+    it('只比对本模式的历史值:深色主题里有意使用的历史亮色值不被丢弃,反之亦然', () => {
+      const darkWithLightValue = { ...filler, 'login-panel-bg': '#FBFBFB' };
       expect(normalizeLocalThemeColors(darkWithLightValue, 'dark')).toBe(darkWithLightValue);
-      expect(normalizeLocalThemeColors({ 'login-panel-bg': '#312F2F' }, 'dark')).toEqual({});
-      const lightWithDarkValue = { 'login-panel-bg': '#312F2F' };
+      expect(normalizeLocalThemeColors({ ...filler, 'login-panel-bg': '#312F2F' }, 'dark')).toEqual(filler);
+      const lightWithDarkValue = { ...filler, 'login-panel-bg': '#312F2F' };
       expect(normalizeLocalThemeColors(lightWithDarkValue, 'light')).toBe(lightWithDarkValue);
     });
 
+    it('稀疏手写主题(没有完整导出的登录色)有意固定的值原样保留,哪怕恰好等于历史值', () => {
+      const sparse = { 'login-panel-bg': '#FBFBFB', 'login-secondary-text': '#6F6F6F' };
+      expect(normalizeLocalThemeColors(sparse, 'light')).toBe(sparse);
+    });
+
     it('没有传主题模式时不迁移;幂等,没有可迁移项时返回同一个对象', () => {
-      const legacy = { 'login-panel-bg': '#FBFBFB' };
+      const legacy = { ...filler, 'login-panel-bg': '#FBFBFB' };
       expect(normalizeLocalThemeColors(legacy)).toBe(legacy);
-      const colors = { surface: '#111111', 'login-control-bg': '#123456' };
+      const colors = { ...filler, surface: '#111111', 'login-control-bg': '#123456' };
       expect(normalizeLocalThemeColors(colors, 'light')).toBe(colors);
-      const once = normalizeLocalThemeColors({ 'login-panel-bg': '#FBFBFB', surface: '#111111' }, 'light');
+      const once = normalizeLocalThemeColors({ ...filler, 'login-panel-bg': '#FBFBFB' }, 'light');
       expect(normalizeLocalThemeColors(once, 'light')).toEqual(once);
     });
   });

@@ -2967,6 +2967,9 @@ function schemaHint(schema: Record<string, unknown>): string {
 }
 
 class CindyMcpGateway {
+  // Older Pi ignores execute-result isError but supports tool_result overrides.
+  // Weak identities keep the status private without retaining completed calls.
+  private readonly failedResults = new WeakMap<object, { content: object; details: unknown }>();
   private readonly tools = new Map<string, ConnectedMcpTool>();
   private readonly unavailableServers = new Map<string, string>();
   /** 已披露工具：键为 server + NUL + tool，值为该工具当前 schema 的指纹。 */
@@ -3441,11 +3444,14 @@ class CindyMcpGateway {
           ? '. Expected args schema: ' + schemaHint(resolved.tool.inputSchema) : ''),
       );
     }
-    return {
-      content: mcpContentToPi(result?.content, result?.structuredContent),
-      details: result?.structuredContent ?? {},
-      ...(result?.isError ? { isError: true } : {}),
-    };
+    const content = mcpContentToPi(result?.content, result?.structuredContent);
+    const details = result?.structuredContent ?? {};
+    if (result?.isError) {
+      const failure = { content, details };
+      this.failedResults.set(content, failure);
+      if (details !== null && typeof details === 'object') this.failedResults.set(details, failure);
+    }
+    return { content, details, ...(result?.isError ? { isError: true } : {}) };
   }
 
   private async executeCall(params: unknown, signal?: AbortSignal, toolCallId?: string): Promise<{
@@ -3533,6 +3539,16 @@ class CindyMcpGateway {
   }
 
   register(pi: any, options: { botMemoryFacade?: boolean } = {}): void {
+    pi.on?.('tool_result', (event: any) => {
+      const failure = this.failedResults.get(event.content) ?? this.failedResults.get(event.details);
+      if (failure) {
+        this.failedResults.delete(failure.content);
+        if (failure.details !== null && typeof failure.details === 'object') {
+          this.failedResults.delete(failure.details);
+        }
+        return { isError: true };
+      }
+    });
     // Host-owned Bot identity enables native shortcuts; execution uses the scoped helper entry.
     this.botHelperFacadeEnabled = options.botMemoryFacade === true;
     this.botMemoryFacadeEnabled = options.botMemoryFacade === true

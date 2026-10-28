@@ -28,11 +28,16 @@ function gatewayWithFetch(fetchImpl: typeof fetch) {
     type: 'object', properties: { ghost_id: { type: 'string' } }, required: ['ghost_id'],
   } }]);
   const registered: any[] = [];
-  gateway.register({ registerTool: (tool: unknown) => registered.push(tool) });
+  const resultHooks: Array<(event: unknown) => unknown> = [];
+  gateway.register({ registerTool: (tool: unknown) => registered.push(tool),
+    on: (event: string, handler: (event: unknown) => unknown) => {
+      if (event === 'tool_result') resultHooks.push(handler);
+    },
+  });
   registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', { server: 'cindy', tool: 'ghost_call' });
   const call = (signal?: AbortSignal) => registered.find(t => t.name === 'cindy_mcp_call_tool')
     .execute('call', { server: 'cindy', tool: 'ghost_call', args: { ghost_id: 'demo' } }, signal);
-  return { call, gateway, client, list: (params: unknown = {}) => registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', params) };
+  return { call, gateway, client, resultHook: (event: unknown) => resultHooks[0]?.(event), list: (params: unknown = {}) => registered.find(t => t.name === 'cindy_mcp_list_tools').execute('list', params) };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -89,6 +94,23 @@ describe('Pi MCP request lifecycle', () => {
     await expect(call()).resolves.toMatchObject({
       isError: true, content: [...content, { type: 'text', text: '{"field":"email"}' }],
     });
+  });
+
+  it('marks only the failed call through the pre-0.99 tool_result hook, even after content projection', async () => {
+    let calls = 0;
+    const { call, resultHook } = gatewayWithFetch(vi.fn(async () => Response.json({ result: {
+      content: [{ type: 'text', text: 'same content' }], isError: calls++ === 0,
+    } })));
+    const [failed, succeeded] = await Promise.all([call(), call()]);
+    // Old Pi ignores execute-result isError; earlier result hooks may copy content.
+    expect(resultHook({ content: [...failed.content], details: failed.details, isError: false }))
+      .toEqual({ isError: true });
+    // A native wrapper may handle the inner failure and return those same blocks.
+    expect(resultHook({ content: failed.content, details: failed.details, isError: false }))
+      .toBeUndefined();
+    expect(resultHook({ content: succeeded.content, details: succeeded.details, isError: false }))
+      .toBeUndefined();
+    expect(resultHook({ content: [], details: {}, isError: true })).toBeUndefined();
   });
 
   it('does not duplicate structured data already serialized in a text block', async () => {

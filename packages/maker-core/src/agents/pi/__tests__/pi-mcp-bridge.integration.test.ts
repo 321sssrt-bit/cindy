@@ -37,7 +37,7 @@ import type { Logger } from '../../../interfaces/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../../../..');
-const PI_BINARY = path.join(
+const PI_BINARY = process.env.CINDY_PI_MCP_TEST_BINARY || path.join(
   REPO_ROOT,
   'apps',
   'pi-bin',
@@ -1161,7 +1161,7 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
     'preserves MCP structured %s data in the real Pi model request',
     { timeout: 90_000 },
     async (scenario) => {
-      const { requests } = await runOneTurn('bypassPermissions',
+      const { requests, events } = await runOneTurn('bypassPermissions',
         async () => ({ kind: 'permission', behavior: 'allow' }), 'local-multi',
         'verify MCP structured result ' + (scenario === 'failure' ? 'structured failure'
           : scenario === 'rich-failure' ? 'rich failure' : 'success'));
@@ -1170,6 +1170,8 @@ describe.skipIf(!piAvailable)('PiAgent × cindy-bridge (real pi + MCP bridge + p
       const result = messages.flatMap(message => message.content).filter(block => block.type === 'tool_result').at(-1)!;
       expect(JSON.stringify(result.content)).toContain('MCP_STRUCTURED_MODEL_CANARY');
       expect(Boolean(result.is_error)).toBe(scenario !== 'success');
+      const toolResult = events.filter(event => event.type === 'tool_result_full').at(-1)!;
+      expect((toolResult.data as { isError: boolean }).isError).toBe(scenario !== 'success');
       if (scenario === 'rich-failure') {
         const blocks = result.content as Array<Record<string, unknown>>;
         expect(blocks.map(block => block.type)).toEqual(['text', 'image', 'text', 'text']);

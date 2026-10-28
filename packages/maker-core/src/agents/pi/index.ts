@@ -5788,7 +5788,7 @@ export class PiAgent extends BaseAgent {
           if (providerRequestObservedAt !== undefined) {
             const update = event.assistantMessageEvent as { type?: unknown } | undefined;
             if (!providerFirstOutputLogged && event.type === 'message_update' &&
-                ['text_delta', 'thinking_delta', 'toolcall_delta'].includes(String(update?.type))) {
+                ['text_delta', 'thinking_delta', 'toolcall_start', 'toolcall_delta'].includes(String(update?.type))) {
               providerFirstOutputLogged = true;
               this.deps.logger.debug('pi request stage', {
                 startupTraceId, requestSequence: providerRequestSequence, stage: 'first-output',

@@ -3403,7 +3403,11 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
         clock.mockReturnValue(5_010);
         knobs.onEvent?.({ type: 'auto_retry_start', attempt: 1 });
         notify(`${token}:{"wireEffort":"low"}`);
-        knobs.onEvent?.(delta);
+        // A zero-argument tool may never emit toolcall_delta. Its start is
+        // already observable output, and duplicate starts must log only once.
+        const toolStart = { type: 'message_update', assistantMessageEvent: { type: 'toolcall_start', contentIndex: 0 } };
+        knobs.onEvent?.(toolStart);
+        knobs.onEvent?.(toolStart);
         clock.mockReturnValue(5_025);
         knobs.onEvent?.({ type: 'agent_settled' });
         const retryStages = debug.mock.calls.filter(([message]) => message === 'pi request stage').slice(beforeRequest).map(([, fields]) => fields);
@@ -3411,6 +3415,7 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
           'provider-request-prepared', 'first-output', 'provider-request-prepared', 'first-output', 'agent-settled',
         ]);
         expect(retryStages.at(-1)).toMatchObject({ requestSequence: 4, elapsedMs: 15, turnElapsedMs: 25 });
+        expect(retryStages[3]).toMatchObject({ requestSequence: 4, elapsedMs: 0 });
       } finally {
         clock.mockRestore();
       }

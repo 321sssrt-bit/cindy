@@ -105,7 +105,7 @@ Cindy 以 `pi --mode rpc` spawn pi 二进制(JSONL/stdio),`translator.ts` 把 pi
 本机 Pi bridge 在原生 `before_provider_request` 处理后，通过既有单向通知发送白名单
 请求摘要。宿主以 `startupTraceId + requestSequence` 记录 debug 级 `pi request stage`：
 `provider-request-prepared`（本桥处理后的工具数、消息数、wire effort）、`first-output`
-（首个文本／推理／工具增量）、`agent-settled`（原生整轮终态，不能用 `agent_end` 替代）。
+（首个文本／推理增量或工具调用开始／增量）、`agent-settled`（原生整轮终态，不能用 `agent_end` 替代）。
 请求阶段时长用宿主单调时钟，`elapsedMs` 从最近一次请求摘要到达起算；终态另有
 `turnElapsedMs`，从本轮第一次请求摘要到达起算，包含重试／工具等后续处理。
 原生 `agent_start` 清空上一轮遗留计时，即使上一轮因中止／重试耗尽缺少终态，

@@ -2802,11 +2802,12 @@ export function createRemoteAgentHost(deps: RemoteAgentHostDeps) {
           failProviderNotAllowed();
         }
         // 供应商查询/组分配有 await；最终检查与登记间不能再等待，防止并发 open 超额。
-        if (providerId && deps.providerAccess && !deps.providerAccess.isAllowed(providerId, controller, payload.options.model)) {
-          reserved?.release();
-          failProviderNotAllowed();
-        }
         try {
+          // Admission may throw a specific pause error after the awaited group reservation.
+          // Nothing owns the reserved load until runs.set, so release it on either rejection path.
+          if (providerId && deps.providerAccess && !deps.providerAccess.isAllowed(providerId, controller, payload.options.model)) {
+            failProviderNotAllowed();
+          }
           assertRunCapacity(controller);
         } catch (error) {
           reserved?.release();

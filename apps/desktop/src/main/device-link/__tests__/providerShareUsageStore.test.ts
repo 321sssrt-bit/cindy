@@ -51,6 +51,32 @@ describe('provider share usage store', () => {
     expect(createProviderShareUsageStore(file).memberTokenSnapshot(new Set(['s']), 'p', 'alice').available).toBe(false);
   });
 
+  // Unit: production snapshot/flush/reload must stop pausing once missing data leaves the window.
+  // Regression #7666/r4398894972: the prior corrupt-file case only checked fail-closed, not recovery.
+  // Minimal input: one corruption marker, a complete new row, restart next day, then advance seven dates.
+  it.each(['corrupt-json', 'legacy-marker', 'dated-invalid-row'] as const)(
+    'recovers after incomplete data leaves seven local dates, including reloads (%s)', async (damage) => {
+      let now = new Date(2026, 9, 22, 12).getTime();
+      const file = path.join(dir, 'usage.json');
+      fs.writeFileSync(file, damage === 'corrupt-json' ? '{broken' : JSON.stringify({ version: 1,
+        rows: damage === 'dated-invalid-row' ? [{ day: '2026-10-21', inputTokens: -1 }] : [],
+        ...(damage === 'legacy-marker' ? { incomplete: true } : {}),
+      }));
+      let store = createProviderShareUsageStore(file, { now: () => now });
+      const snapshot = () => store.memberTokenSnapshot(new Set(['s']), 'p', 'alice');
+      expect(snapshot().available).toBe(false);
+      await store.flush();
+      now = new Date(2026, 9, 23, 12).getTime();
+      store = createProviderShareUsageStore(file, { now: () => now });
+      expect(snapshot().available).toBe(false);
+      store.record('s', 'alice', { kind: 'codex', providerId: 'p', memberKey: 'local', samples: [sample('model', 10, 5)] });
+      await store.flush();
+      now = new Date(2026, 9, damage === 'dated-invalid-row' ? 28 : 29, 12).getTime();
+      store = createProviderShareUsageStore(file, { now: () => now });
+      expect(snapshot()).toMatchObject({ available: true, models: [{ model: 'model', tokens: 15 }] });
+    },
+  );
+
   it('aggregates per member and model, filters by range and only returns requested shares', async () => {
     let now = new Date(2026, 9, 7, 12).getTime();
     const file = path.join(dir, 'usage.json');

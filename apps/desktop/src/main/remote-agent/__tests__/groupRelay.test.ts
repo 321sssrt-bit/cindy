@@ -710,6 +710,27 @@ describe('provider group relay: starting, load and cleanup', () => {
     await client.close('close', 'navigation');
   });
 
+  // Unit: Host.handle(open) must release a reserved group slot if final admission throws.
+  // Regression #7666/r4398894989: existing cleanup tests covered boolean denials, not budget exceptions.
+  // Minimal input: group plan reserves a slot, then isAllowed throws the stable pause error before runs.set.
+  it('releases reserved group load when final admission throws a member budget pause', async () => {
+    const load = { setRunning: vi.fn(), release: vi.fn() };
+    const paused = Object.assign(new Error('[REMOTE_AGENT_MEMBER_BUDGET_PAUSED] Model share reached'), {
+      code: 'REMOTE_AGENT_MEMBER_BUDGET_PAUSED',
+    });
+    const env = setup({ plans: [{ kind: 'local', load }], owner: { modelAccess: { isAllowed: () => { throw paused; } } } });
+    try {
+      await expect(env.owner.handle(GUEST_A, {
+        op: 'open', runId: runId(), agentKind: 'claude-code', payload: { json: openPayload(SESSION) },
+      })).rejects.toBe(paused);
+      expect(load.release).toHaveBeenCalledTimes(1);
+      expect(env.owner.runCount()).toBe(0);
+      expect(env.ownerStarted).toHaveLength(0);
+    } finally {
+      for (const host of [env.owner, ...Object.values(env.members)]) { await host.abortAll(); host.dispose(); }
+    }
+  });
+
   it('counts the load from the moment it picks, including tasks the group runs on this computer', async () => {
     const localLoad = { setRunning: vi.fn(), release: vi.fn() };
     const memberLoad = { setRunning: vi.fn(), release: vi.fn() };

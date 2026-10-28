@@ -25,6 +25,11 @@ export function updateMailCardDocument(doc: Document, srcDoc: string): void {
       for (const attr of (source as Element).attributes) {
         if (element.getAttribute(attr.name) !== attr.value) element.setAttribute(attr.name, attr.value);
       }
+      // Authored styles must not erase the transient host delivery feedback.
+      if (element.hasAttribute('data-ghost-submit') && element.getAttribute('aria-disabled') === 'true') {
+        (element as HTMLElement).style.opacity = '0.5';
+        (element as HTMLElement).style.pointerEvents = 'none';
+      }
     }
     const children = [...source.childNodes];
     children.forEach((child, index) => {

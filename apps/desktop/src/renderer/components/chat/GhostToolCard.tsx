@@ -254,16 +254,12 @@ function GhostCardCanvas({
   formState.current.values = mergeGhostCardFormValues(formState.current.values, formState.current.base, incoming);
   formState.current.base = incoming;
   useEffect(() => {
-    // Delivery acknowledgement is not send completion. Autosave echoes must
-    // not unlock a send while the provider is still preparing its countdown.
-    if (!mail || !['draft', 'syncing'].includes(mail.state)) {
+    // Mail's local lock covers delivery only. After acknowledgement the mail
+    // runtime owns cancellation, countdown and send deduplication; a draft echo
+    // cannot tell this view whether another editor cancelled preparation.
+    if (!mail) {
       formState.current.busy = false;
       setFormBusy(false);
-      if (mail) iframeRef.current?.contentDocument?.querySelectorAll<HTMLElement>('[data-ghost-submit]').forEach(el => {
-        el.removeAttribute('aria-disabled');
-        el.style.opacity = '';
-        el.style.pointerEvents = '';
-      });
     }
   }, [html, mail]);
   const [lightbox, setLightbox] = useState<{ src: string; galleryId: string } | null>(null);
@@ -442,10 +438,11 @@ function GhostCardCanvas({
 
   // 动作元素上锁(防连点):锁到意识 card-update 换新卡(新文档),或 INFLIGHT
   // 窗口自动解禁(意识没换卡也不卡死)。普通按钮点击与输入面板发送共用。
-  const lockActionEl = useCallback((el: HTMLElement) => {
+  const lockActionEl = useCallback((el: HTMLElement, untilDelivered = false) => {
     el.setAttribute('aria-disabled', 'true');
     el.style.opacity = '0.5';
     el.style.pointerEvents = 'none';
+    if (untilDelivered) return;
     window.setTimeout(() => {
       el.removeAttribute('aria-disabled');
       el.style.opacity = '';
@@ -552,7 +549,8 @@ function GhostCardCanvas({
           if (!readGhostCardForm(html) || formState.current.busy) return;
           formState.current.busy = true;
           setFormBusy(true);
-          lockActionEl(el);
+          const mailSubmit = !!readMailCard(html);
+          lockActionEl(el, mailSubmit);
           const unlock = () => {
             formState.current.busy = false;
             setFormBusy(false);
@@ -569,7 +567,7 @@ function GhostCardCanvas({
               ? mergeGhostCardFormValues(formState.current.values, formState.current.base, Object.fromEntries(latest.map(f => [f.name, f.value])))
               : formState.current.values;
             return window.electronAPI?.ghosts?.dispatchCardAction?.(callId, actionId, undefined, values) ?? { ok: false };
-          }).then(result => { if (!result.ok) unlock(); }).catch(unlock);
+          }).then(result => { if (mailSubmit || !result.ok) unlock(); }).catch(unlock);
           return;
         }
         // data-ghost-prompt 类动作:先弹宿主输入框收集文字,发送时才派发

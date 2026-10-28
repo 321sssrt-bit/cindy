@@ -34,22 +34,35 @@ it('keeps the send target and HTML preview alive across sync and send states', a
   fireEvent.load(frame);
   const srcDoc = frame.srcdoc;
   const body = screen.getByTitle('chat.ghostCall.mailPreview');
-  const send = frame.contentDocument!.querySelector('[data-ghost-submit]')!;
+  const send = frame.contentDocument!.querySelector<HTMLElement>('[data-ghost-submit]')!;
   fireEvent.pointerDown(send);
   view.rerender(<MailCardEditor {...props} html={renderMailCard({ ...mail, state: 'syncing', status: 'Syncing' })} />);
   expect(frame.contentDocument!.querySelector('[data-ghost-submit]')).toBe(send);
   fireEvent.click(send);
   await act(async () => {});
   expect(dispatch).toHaveBeenCalledTimes(1);
-  await act(async () => finish({ ok: true }));
   view.rerender(<MailCardEditor {...props} html={renderMailCard(mail)} />);
+  // A save echo must retain both visual feedback and the delivery lock.
+  expect(send.style.opacity).toBe('0.5');
+  expect(send.style.pointerEvents).toBe('none');
   fireEvent.click(send);
   await act(async () => {});
   expect(dispatch).toHaveBeenCalledTimes(1);
-  view.rerender(<MailCardEditor {...props} html={renderMailCard({ ...mail, state: 'error', status: 'Save failed' })} />);
+  await act(async () => finish({ ok: true }));
+  // Another view can cancel preparation by editing. The acked view must
+  // remain editable even if the provider only publishes syncing/draft again.
+  const changed = { ...mail, fields: mail.fields.map(f => f.name === 'subject' ? { ...f, value: 'Other view edit' } : f) };
+  view.rerender(<MailCardEditor {...props} html={renderMailCard({ ...changed, state: 'syncing' })} />);
+  expect((screen.getByLabelText('subject') as HTMLInputElement).disabled).toBe(false);
+  expect(send.getAttribute('aria-disabled')).toBeNull();
   fireEvent.click(send);
   await act(async () => {});
   expect(dispatch).toHaveBeenCalledTimes(2);
+  await act(async () => finish({ ok: false }));
+  view.rerender(<MailCardEditor {...props} html={renderMailCard({ ...mail, state: 'error', status: 'Save failed' })} />);
+  fireEvent.click(send);
+  await act(async () => {});
+  expect(dispatch).toHaveBeenCalledTimes(3);
   await act(async () => finish({ ok: true }));
   const countdown: MailCardData = { ...mail, state: 'sending', status: 'sending', pendingSend: {
     deadline: Date.now() + 10000, label: 'sending in {seconds}', cancelLabel: 'Cancel', sendNowLabel: 'Now',

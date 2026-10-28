@@ -140,7 +140,15 @@ export class RichAnswerStream {
   private revision = 0;
   private issues = 0;
   update(source: string, complete = false): RichDocument {
-    if (!source.startsWith(this.source)) {
+    // A terminal snapshot can precede the remaining text. If its unterminated
+    // last line was already consumed, replay the corrected snapshot rather than
+    // parsing just the suffix and retaining the earlier partial-line error.
+    const extendsFinalLine = source.length > this.source.length
+      && source.length <= MAX_SOURCE
+      && this.offset === this.source.length
+      && this.offset > 0
+      && !this.source.endsWith("\n");
+    if (!source.startsWith(this.source) || extendsFinalLine) {
       this.source = "";
       this.offset = 0;
       this.seq = 0;

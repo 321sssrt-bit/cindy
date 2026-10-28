@@ -171,7 +171,7 @@ describe('plugin team activation uses the native lifecycle compensation', () => 
       orcaLifecycleService: createOrcaLifecycleService(deps) };
     const run = new Function(...Object.keys(callbacks), wired)(...Object.values(callbacks));
     const operation = run('plugin', { kind: 'startTeam', taskId: 'task' });
-    if (change === 'healthy') {
+    if (change === 'healthy' || change === 'configuredPermission' || change === 'configuredDirectory') {
       await expect(operation).resolves.toMatchObject({ ok: true, teamId: 'team' });
       expect(teamActive).toBe(true); expect(role).toBe('lead'); expect(vendorActive).toBe(true);
       expect(epoch).toBe(originalEpoch);

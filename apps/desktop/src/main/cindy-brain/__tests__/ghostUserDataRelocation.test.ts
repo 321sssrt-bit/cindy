@@ -191,7 +191,7 @@ it('completes source replacement and another plugin uninstall without reversing 
   await seedSourceResources();
   const archive = '_ns__cindy-archive-00000000-0000-4000-8000-000000000002__helper';
   const service = createPluginTaskService({
-    store: tasks, assertCurrent: () => {}, assertAuthorized: vi.fn(), readPermissionMode: vi.fn(),
+    store: tasks, assertCurrent: () => {}, assertAuthorized: vi.fn(),
     readModelPreference: vi.fn(), resolveRoute: vi.fn(), createSession: vi.fn(), readSession: vi.fn(), readLiveSession: vi.fn(),
     dispatch: vi.fn(), inspect: vi.fn(), cancel: vi.fn(),
   });

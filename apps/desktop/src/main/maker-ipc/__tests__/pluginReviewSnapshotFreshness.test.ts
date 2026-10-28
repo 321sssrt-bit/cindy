@@ -158,7 +158,6 @@ const duringPathChanges = {
   ownership: ({control}: ReturnType<typeof fixture>) => {control.ownershipValid=false;},
   approval: ({control}: ReturnType<typeof fixture>) => {control.authorized=false;},
   approvalRemoved: ({control}: ReturnType<typeof fixture>) => {control.approvalRevision=null;},
-  configAsk: ({control}: ReturnType<typeof fixture>) => {control.permissionMode='default';},
   account: ({control}: ReturnType<typeof fixture>) => {control.accountChanged=true;},
   userInstruction: ({db}: ReturnType<typeof fixture>) => db.prepare('INSERT INTO messages VALUES (?,?,?,?,?,?,?,NULL)').run(
     'revoke','worker','revoke','user',JSON.stringify({text:'Do not run'}),1,JSON.stringify({delivery:'turn',autoReviewUserText:'Do not run'})),
@@ -194,6 +193,20 @@ it.each(['initial', 'after cached allow'].flatMap(phase => Object.keys(duringPat
     } finally {f.db.close();}
   },
 );
+// unit: preferences are not authorization; changing them must not invalidate a
+// still-approved task's review. Actual permission/approval revocation stays above.
+it('ignores card defaults in Auto authorization and its cache identity', async () => {
+  const f = fixture();
+  try {
+    setPlan(f.db);
+    const before = await f.resolve(request);
+    f.control.permissionMode = 'ask';
+    const after = await f.resolve(request);
+    expect(after.authorizationError).toBeUndefined();
+    expect(after.delegatedTask).toEqual(before.delegatedTask);
+    expect(after.delegatedTask).toBeDefined();
+  } finally { f.db.close(); }
+});
 it('allows a healthy alias through both preparations without changing its authorization revision', async()=>{
   const f=fixture();
   try {

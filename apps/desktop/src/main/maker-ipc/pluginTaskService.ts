@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Session } from '@cindy/maker-core';
 import type { PluginTaskPermissionMode, PluginTaskRoute, PluginTaskRun, PluginTaskView, PluginTeamPlan } from '../../shared/pluginTasks.js';
 import { isPluginTaskPermissionMode, isPluginTeamPlanWithinBudget, PLUGIN_TASK_RECEIPT_MAX_JSON_CHARS } from '../../shared/pluginTasks.js';
+import { GHOST_ERRAND_PERMISSION_MODES } from '../../shared/ghost.js';
 import type { PluginMessageAttachment } from '../../shared/pluginAttachments.js';
 import { withParsedPluginMessageAttachments, type PluginMessageImage } from '../cindy-media/pluginMessageAttachments.js';
 import { DEFAULT_DRAFT_SESSION_TITLE } from '@cindy/maker-shared/session-title';
@@ -111,11 +112,11 @@ export function isTeamPlanLabelLockedByReceipt(
 export function assertPluginTaskResult(result: { ok: boolean; errorCode?: string }, message: string): void {
   if (!result.ok) throw new PluginTaskError(result.errorCode || 'HOST_NOT_READY', message);
 }
-/** A live task cannot exercise more authority than the plugin's current setting. */
-export function isPluginTaskPermissionAllowed(taskMode: unknown, configuredMode: unknown, planModeEnabled = false): boolean {
+/** Compare a requested permission with a Session's current mode, never card defaults. */
+export function isPluginTaskPermissionAllowed(taskMode: unknown, currentMode: unknown, planModeEnabled = false): boolean {
   const rank = (mode: unknown) => mode === 'plan' ? 0 : mode === 'ask' ? 1 : mode === 'acceptEdits' ? 2 : mode === 'auto' ? 3 : mode === 'bypassPermissions' ? 4 : -1;
   const task = rank(taskMode);
-  return !planModeEnabled && task >= 0 && task <= Math.max(0, rank(configuredMode));
+  return !planModeEnabled && task >= 0 && task <= Math.max(0, rank(currentMode));
 }
 const fail = (code: string, message: string): never => {
   throw new PluginTaskError(code, message);
@@ -141,7 +142,6 @@ export interface PluginTaskServiceDeps {
   /** Bound to the captured account/database epoch and plugin availability. */
   assertCurrent(): void;
   assertAuthorized(pluginId: string): void;
-  readPermissionMode(pluginId: string): unknown;
   /** Include the inherited new-task selection when the resolver can use it. */
   readModelPreference(pluginId: string): Partial<PluginTaskRoute> & { inheritedDefault?: string };
   resolveRoute(pluginId: string, route?: PluginTaskRoute, callId?: string): Promise<PluginTaskRoute>;
@@ -243,13 +243,17 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
     assertCurrent();
     return assertCurrent;
   };
+  // Actual Session state is authoritative after creation. Defaults are not grants
+  // and cannot revoke or elevate an existing task. The runtime enforces its mode.
+  const isTaskRunnable = (view: PluginTaskView) => !view.planModeEnabled
+    && (GHOST_ERRAND_PERMISSION_MODES as readonly unknown[]).includes(view.permissionMode);
   const assertDispatch = async (pluginId: string, taskId: string, assertPlanCurrent = capturePlanGuard(taskId)) => {
     const view = await ownTask(pluginId, taskId);
     deps.assertAuthorized(pluginId);
     assertPlanCurrent();
     if (view.status !== 'active') return fail('TASK_BUSY', 'Archived tasks cannot accept input');
-    if (!isPluginTaskPermissionAllowed(view.permissionMode, deps.readPermissionMode(pluginId), view.planModeEnabled))
-      return fail('PERMISSION_DENIED', 'Task permission exceeds plugin dispatch policy');
+    if (!isTaskRunnable(view))
+      return fail('PERMISSION_DENIED', 'Task permission is unavailable or Plan Mode is active');
     return view;
   };
   const save = async (row: PluginTaskReceipt, payload: unknown) => {
@@ -359,12 +363,6 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
           return fail('INVALID_REQUEST', 'Supply a title or opt into automatic naming');
         if (request.permissionMode !== undefined && !isPluginTaskPermissionMode(request.permissionMode))
           return fail('INVALID_REQUEST', 'Unsupported task creation permission');
-        const assertRequestedPermission = () => {
-          if (request.permissionMode === undefined) return;
-          deps.assertAuthorized(pluginId);
-          if (!isPluginTaskPermissionAllowed(request.permissionMode, deps.readPermissionMode(pluginId)))
-            fail('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
-        };
         const title = request.autoTitle ? DEFAULT_DRAFT_SESSION_TITLE : request.title!;
         const hidden = request.hidden === true;
         if (hidden) assertHiddenTasksAllowed(pluginId);
@@ -382,11 +380,11 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
           // Do not recreate a deleted/ambiguous task on replay.
           return ownTask(pluginId, row.id);
         }
-        assertRequestedPermission();
+        deps.assertAuthorized(pluginId);
         const route = await deps.resolveRoute(pluginId, request.route, request.callId);
         deps.assertCurrent();
         targetContext?.assertCurrent();
-        assertRequestedPermission();
+        deps.assertAuthorized(pluginId);
         const taskId = targetContext?.taskId ?? id();
         row = newReceipt(
           pluginId,
@@ -401,7 +399,7 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
         let persistenceStarted = false;
         try {
           deps.assertCurrent();
-          const onPersistenceStarted = () => { assertRequestedPermission(); persistenceStarted = true; };
+          const onPersistenceStarted = () => { deps.assertAuthorized(pluginId); persistenceStarted = true; };
           // Omitted new fields keep the original creator call shape.
           if (request.permissionMode !== undefined) {
             targetContext?.assertCurrent();
@@ -529,7 +527,7 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
         if (previous)
           return { run: JSON.parse(previous.payload) as PluginTaskRun, dispatch: false as const };
         const assertPlanCurrent = capturePlanGuard(view.taskId);
-        if (!isPluginTaskPermissionAllowed(view.permissionMode, deps.readPermissionMode(pluginId), view.planModeEnabled)) return fail('PERMISSION_DENIED', 'Task permission exceeds plugin dispatch policy');
+        if (!isTaskRunnable(view)) return fail('PERMISSION_DENIED', 'Task permission is unavailable or Plan Mode is active');
         if (view.status !== 'active')
           return fail('TASK_BUSY', 'Archived tasks cannot accept input');
         if (view.revision !== request.expectedRevision)
@@ -668,7 +666,7 @@ export function createPluginTaskService(deps: PluginTaskServiceDeps) {
           const view = await ownTask(row.pluginId, taskId);
           assertPlanCurrent();
           if (view.status !== 'active') return fail('TASK_BUSY', 'Archived tasks cannot accept input');
-          if (!isPluginTaskPermissionAllowed(view.permissionMode, deps.readPermissionMode(row.pluginId), view.planModeEnabled)) return fail('PERMISSION_DENIED', 'Task permission exceeds plugin dispatch policy');
+          if (!isTaskRunnable(view)) return fail('PERMISSION_DENIED', 'Task permission is unavailable or Plan Mode is active');
           if (hash(view.resolvedConfig) !== hash(run.acceptedConfig))
             return fail('ROUTE_UNAVAILABLE', 'Accepted route changed before dispatch');
           await deps.resolveRoute(row.pluginId, run.acceptedConfig);

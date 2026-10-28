@@ -76,8 +76,23 @@ describe('shared-provider credential grants on permission changes', () => {
  });
 });
 describe('plugin write confirmation interleavings', () => {
+ // unit: native consent authorizes only the chosen Session. It must not rewrite
+ // plugin defaults and thereby affect unrelated future tasks.
+ it('keeps host confirmation independent of card defaults', async () => {
+  const f = fixture();
+  f.change({ permissionMode: 'ask', model: 'chosen' });
+  f.dialog.showMessageBox.mockImplementationOnce(async () => {
+   f.change({ permissionMode: 'bypassPermissions', model: 'changed' });
+   return { response: 0 };
+  });
+  await expect(f.run('auto')).resolves.toMatchObject({ granted: true });
+  expect(f.live.setPermissionMode).toHaveBeenCalledWith('auto');
+  expect(f.write).not.toHaveBeenCalled();
+  expect(f.config()).toEqual({ permissionMode: 'bypassPermissions', model: 'changed' });
+ });
+
  // unit: adding full access must not make an older write-access request lower
- // an already granted task or the user's independent plugin permission ceiling.
+ // an already granted task, nor overwrite unrelated defaults.
  it('keeps full-access grants when an older client requests Auto', async () => {
   const f=fixture();f.change({permissionMode:'bypassPermissions'});
   f.service.get.mockResolvedValue({taskId:'task',revision:1,status:'active',permissionMode:'bypassPermissions'});
@@ -86,7 +101,7 @@ describe('plugin write confirmation interleavings', () => {
   expect(f.live.setPermissionMode).not.toHaveBeenCalled();
   expect(f.write).not.toHaveBeenCalled();
  });
- it('grants Auto to a task without reducing the plugin full-access ceiling', async () => {
+ it('grants Auto to a task without changing plugin defaults', async () => {
   const f=fixture();f.change({permissionMode:'bypassPermissions'});
   await expect(f.run('auto')).resolves.toMatchObject({granted:true});
   expect(f.live.setPermissionMode).toHaveBeenCalledWith('auto');
@@ -181,18 +196,19 @@ describe('plugin write confirmation interleavings', () => {
   if (point === 'runtime') f.live.setPermissionMode.mockImplementationOnce(async () => { change(); });
   if (point === 'database') f.epoch.client.tx.mockImplementationOnce(async () => { change(); return { updated: true }; });
   if (point === 'lastRead') f.service.get.mockImplementationOnce(async () => ({ taskId: 'task', revision: 1, status: 'active', permissionMode: 'plan' })).mockImplementationOnce(async () => ({ taskId: 'task', revision: 1, status: 'active', permissionMode: 'plan' })).mockImplementationOnce(async () => { change(); return { taskId: 'task', revision: 1, status: 'active', permissionMode: 'plan' }; });
-  await f.run('auto'); expect(f.config()).toEqual({ permissionMode: 'auto', model: 'new', workingDir: '/chosen', fastMode: true });
+  await f.run('auto'); expect(f.config()).toEqual({ permissionMode: 'plan', model: 'new', workingDir: '/chosen', fastMode: true });
+  expect(f.write).not.toHaveBeenCalled();
  });
- it('does not overwrite a later permission change', async () => {
+ it('does not treat a later default change as a Session permission revocation', async () => {
   const f = fixture(); f.live.setPermissionMode.mockImplementationOnce(async () => { f.change({ permissionMode: 'acceptEdits', model: 'new' }); });
-  await expect(f.run('auto')).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+  await expect(f.run('auto')).resolves.toMatchObject({ granted: true });
   expect(f.write).not.toHaveBeenCalled(); expect(f.slots.size).toBe(0);
-  expect(f.live.setPermissionMode).toHaveBeenLastCalledWith('plan');
-  expect(f.epoch.client.tx).toHaveBeenLastCalledWith('bots.persistSessionPermission', {sessionId:'task', mode:'plan'});
+  expect(f.live.setPermissionMode).toHaveBeenLastCalledWith('auto');
+  expect(f.config()).toEqual({permissionMode:'acceptEdits',model:'new'});
  });
  it.each(['database', 'lastRead'] as const)('rolls back runtime and stored permission after late %s revocation', async point => {
   const f=fixture();
-  const revoke=()=>f.change({permissionMode:'acceptEdits',model:'new'});
+  const revoke=()=>{f.change({permissionMode:'acceptEdits',model:'new'});f.identity('revoked-install');};
   if(point==='database') f.epoch.client.tx.mockImplementationOnce(async()=>{revoke();return {updated:true};});
   else f.service.get.mockImplementationOnce(async()=>({taskId:'task',revision:1,status:'active',permissionMode:'plan'}))
    .mockImplementationOnce(async()=>({taskId:'task',revision:1,status:'active',permissionMode:'plan'}))
@@ -264,13 +280,13 @@ describe('first plugin write approval checks actual task history', () => {
  });
 
 
-it.each(['bypassPermissions', 'auto', 'acceptEdits'])('does not report %s as granted after plugin authority is lowered', async permissionMode => {
+it.each(['bypassPermissions', 'auto', 'acceptEdits'])('reuses the task %s permission regardless of lower card defaults', async permissionMode => {
  const f = fixture();
  f.service.get.mockImplementation(async () => ({taskId:'task',revision:1,status:'active',permissionMode}));
- f.dialog.showMessageBox.mockResolvedValue({response:1});
- await expect(f.run()).resolves.toMatchObject({granted:false});
- expect(f.dialog.showMessageBox).toHaveBeenCalledOnce();
+ await expect(f.run()).resolves.toMatchObject({granted:true});
+ expect(f.dialog.showMessageBox).not.toHaveBeenCalled();
  expect(f.live.setPermissionMode).not.toHaveBeenCalled();
+ expect(f.write).not.toHaveBeenCalled();
 });
 it.each(['acceptEdits', 'auto'])('reuses an effective %s grant without another confirmation',async permissionMode=>{
  const f=fixture();f.change({permissionMode});

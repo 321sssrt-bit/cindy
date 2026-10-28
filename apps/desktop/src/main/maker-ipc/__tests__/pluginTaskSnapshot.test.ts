@@ -10,6 +10,8 @@ import type { PluginTaskRoute } from '../../../shared/pluginTasks.js';
 import { resolvePluginWorkerDirectory } from '../pluginWorkerDirectory.js';
 
 import { createSessionExecutionResolver } from '../sessionExecutionSelection';
+import { createGhostProductionCallbacks } from '../../cindy-brain/__tests__/ghostProductionCallbacksFixture.js';
+import { clampPluginTaskPermissionMode } from '../../cindy-brain/pluginTaskPrefsStore.js';
 
 const source = readFileSync(new URL('../register.ts', import.meta.url), 'utf8');
 function compile(text: string, deps: Record<string, unknown>) {
@@ -201,6 +203,42 @@ it.each(['provider', 'receipt', 'directory', 'creator'])('keeps default-route co
     await expect(api.create('plugin', 'task', 'title', route, false)).rejects.toThrow();
     if (phase !== 'creator') expect(create).not.toHaveBeenCalled();
   }
+});
+
+// unit: exercise the production defaults reader and creator together. Hidden
+// legacy values must neither supply creation fields nor invalidate an await.
+const loadTaskDefaults = createGhostProductionCallbacks<{
+  getPluginTaskDefaults(id: string): Record<string, unknown>;
+}>({ functions: ['getPluginTaskDefaults'] });
+it.each([undefined, 'auto'] as const)('creates independently of hidden defaults with permission %s', async permissionMode => {
+  const start = source.indexOf('      createSession: async');
+  const property = source.slice(start, source.indexOf('      readSession:', start)).trim().replace(/,$/, '');
+  const epoch = {};
+  const stored = { model: 'old', permissionMode: 'bypassPermissions', workingDir: '/old' };
+  const read = vi.fn(() => stored);
+  const defaults = loadTaskDefaults({ readPluginTaskConfig: read,
+    findGhostForInstanceId: () => ({ manifest: { showTaskPreferences: false } }) });
+  const route: PluginTaskRoute = { agentKind: 'codex', providerId: 'mine', model: 'current', effort: 'high', fastMode: false };
+  let approved = true;
+  const create = vi.fn(async ({ shouldContinue }: { shouldContinue(): boolean }) => {
+    stored.model = 'changed'; stored.permissionMode = 'ask'; stored.workingDir = '/changed';
+    expect(shouldContinue()).toBe(true);
+    approved = false;
+    expect(shouldContinue()).toBe(false);
+  });
+  const directory = vi.fn();
+  const run = compile(`return ({${property}}).createSession;`, {
+    ...defaults, PluginTaskError, snapshot: epoch, assertPlugin: vi.fn(),
+    resolveRoute: async () => route, resolvePluginWorkerDirectory: directory,
+    createPluginTaskSession: create, clampPluginTaskPermissionMode,
+    getCurrentDbClientSnapshot: () => epoch, isPluginTaskAuthorized: () => approved,
+    notifyGhostSessionEvent: vi.fn(), broadcastSessionCreated: vi.fn(),
+  });
+  await run('plugin', 'task', 'title', route, false, undefined, undefined, undefined, false, undefined, permissionMode);
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({ ...route, permissionMode: permissionMode ?? 'ask' }));
+  expect(create.mock.calls[0]![0]).not.toHaveProperty('workingDir');
+  expect(directory).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
 });
 
 it('forwards the explicit route when revalidating creation', async () => {

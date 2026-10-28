@@ -24,6 +24,7 @@ import {
   createEmptyAssistantMessageRecoveryRule,
   createEmptyTextRecoveryRule,
   createEmptyThinkingRecoveryRule,
+  createAnthropicContextManagementRecoveryRule,
   createEncryptedContentRecoveryRule,
   createToolExchangeAdjacencyRecoveryRule,
   createToolUseProviderSpecificFieldsRecoveryRule,
@@ -1326,6 +1327,7 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
         // output_config.effort 重发一次。只在该文本命中时生效,官方 Claude / 订阅直连
         // 不会返回它;能力未声明的模型本就不该收到客户端偏好(#4860 出站不变量)。
         createAnthropicEffortCompatibilityRule(),
+        createAnthropicContextManagementRecoveryRule(),
       ],
       logger: log,
       // 请求体 dump 默认关(dev trace 级别 + agent 高并发会刷爆 main event loop

@@ -3313,11 +3313,13 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
     }
   });
 
-  it('correlates redacted MCP, spawn, RPC-ready, and first-model-request timings', async () => {
+  it('correlates redacted MCP, spawn, RPC-ready, and first-prompt-rpc timings', async () => {
     const info = vi.fn();
+    const debug = vi.fn();
     const timingLogger: Logger = {
       ...noopLogger,
       info,
+      debug,
       child: () => timingLogger,
     };
     const resolvePiManagedPackageResources = vi.fn<NonNullable<AgentDeps['resolvePiManagedPackageResources']>>(async () => ({
@@ -3345,7 +3347,7 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
         'mcp-ready',
         'pi-spawn',
         'rpc-ready',
-        'first-model-request',
+        'first-prompt-rpc',
       ]);
       for (const event of events) {
         expect(event).toMatchObject({
@@ -3359,6 +3361,34 @@ describe('PiAgent.startSession failure cleanup (mocked pi process)', () => {
       expect(serialized).not.toContain('timing-session-secret');
       expect(serialized).not.toContain('timing-prompt-secret');
       expect(serialized).not.toContain(cwd);
+      // The RPC receipt is not a model request. Only a native preparation hook
+      // may start request timings; test unknown metadata cannot leak into logs.
+      expect(debug.mock.calls.filter(([message]) => message === 'pi request stage')).toEqual([]);
+      const token = knobs.spawnedEnvs.at(-1)?.CINDY_PI_TURN_TOOL_POLICY;
+      const notify = (suffix: string) => knobs.onEvent?.({
+        type: 'extension_ui_request', method: 'notify',
+        message: `cindy:provider-request:${suffix}`,
+      });
+      notify('wrong-instance:{"wireEffort":"low"}');
+      notify(`${token}:invalid-json`);
+      expect(debug.mock.calls.filter(([message]) => message === 'pi request stage')).toEqual([]);
+      notify(`${token}:${JSON.stringify({ toolCount: 2, messageCount: 3, wireEffort: 'medium', secret: 'private-content' })}`);
+      const delta = { type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'private-output' } };
+      knobs.onEvent?.(delta);
+      knobs.onEvent?.(delta);
+      knobs.onEvent?.({ type: 'agent_end' });
+      let stages = debug.mock.calls.filter(([message]) => message === 'pi request stage').map(([, fields]) => fields);
+      expect(stages.map(row => row.stage)).toEqual(['provider-request-prepared', 'first-output']);
+      knobs.onEvent?.({ type: 'agent_settled' });
+      stages = debug.mock.calls.filter(([message]) => message === 'pi request stage').map(([, fields]) => fields);
+      expect(stages.map(row => row.stage)).toEqual(['provider-request-prepared', 'first-output', 'agent-settled']);
+      expect(stages[0]).toMatchObject({ toolCount: 2, messageCount: 3, wireEffort: 'medium', requestSequence: 1 });
+      expect(stages[2]).toMatchObject({ requestSequence: 1, elapsedMs: expect.any(Number), turnElapsedMs: expect.any(Number) });
+      notify(`${token}:${JSON.stringify({ toolCount: -1, messageCount: 'secret', wireEffort: 'private-effort' })}`);
+      const last = debug.mock.calls.filter(([message]) => message === 'pi request stage').at(-1)?.[1];
+      expect(last).toEqual({ startupTraceId: resolverOptions?.startupTraceId, requestSequence: 2,
+        stage: 'provider-request-prepared', wireEffort: null });
+      expect(JSON.stringify(debug.mock.calls.filter(([message]) => message === 'pi request stage'))).not.toContain('private');
     } finally {
       await handle.close();
     }

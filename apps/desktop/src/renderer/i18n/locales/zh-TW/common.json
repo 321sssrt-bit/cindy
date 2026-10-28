@@ -10724,7 +10724,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "貼上 App Secret"
+          "appSecretPlaceholder": "貼上 App Secret",
+          "description": "連線後，可以在{{service}}中給 {{name}} 傳訊息。",
+          "createPrompt": "還沒有{{service}}機器人？",
+          "createLink": "前往{{service}}開放平台建立",
+          "credentialsHint": "建立後，從「憑證與基礎資訊」複製 App ID 和 App Secret，回到這裡填寫。",
+          "stepsLabel": "查看設定步驟",
+          "stepCreate": "在開放平台建立企業自建應用程式並新增機器人功能。在「權限管理」確認已開通讀取單聊訊息（im:message.p2p_msg:readonly）和以應用程式身分傳送訊息（im:message:send_as_bot）權限；接收群組 @ 訊息還需 im:message.group_at_msg:readonly。",
+          "stepCredentials": "開啟應用程式的「憑證與基礎資訊」，複製 App ID 和 App Secret。",
+          "stepConnect": "將憑證填入下方，點擊「連線{{service}}」建立連線。回到開放平台「事件與回呼」，將訂閱方式設為使用長連線接收事件，並新增接收訊息（im.message.receive_v1）事件。在回呼設定中選擇使用長連線接收回呼，並新增卡片回傳互動（card.action.trigger），讓卡片按鈕可用。完成版本發布，如需審核則等待通過，再傳送訊息給機器人並點擊卡片按鈕驗證。",
+          "confirm": "連線{{service}}"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

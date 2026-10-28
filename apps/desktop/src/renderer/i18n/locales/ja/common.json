@@ -10724,7 +10724,16 @@
           "appIdLabel": "App ID",
           "appIdPlaceholder": "cli_xxxxxxxxxxxxxxxx",
           "appSecretLabel": "App Secret",
-          "appSecretPlaceholder": "App Secret を貼り付け"
+          "appSecretPlaceholder": "App Secret を貼り付け",
+          "description": "接続すると、{{service}} で {{name}} にメッセージを送れます。",
+          "createPrompt": "{{service}} ボットをお持ちでない場合",
+          "createLink": "{{service}} オープンプラットフォームで作成",
+          "credentialsHint": "作成後、アプリの「認証情報と基本情報」から App ID と App Secret をコピーし、ここに入力してください。",
+          "stepsLabel": "設定手順を見る",
+          "stepCreate": "オープンプラットフォームでカスタムアプリを作成し、ボット機能を追加します。「権限管理」で、個別メッセージの読み取り（im:message.p2p_msg:readonly）とアプリとしてのメッセージ送信（im:message:send_as_bot）が有効か確認します。グループ内の @メンションの受信には im:message.group_at_msg:readonly も必要です。",
+          "stepCredentials": "アプリの「認証情報と基本情報」を開き、App ID と App Secret をコピーします。",
+          "stepConnect": "下の欄に認証情報を入力し、「{{service}} に接続」をクリックして接続します。オープンプラットフォームの「イベントとコールバック」で長接続によるイベント受信を選び、メッセージ受信イベント（im.message.receive_v1）を追加します。コールバック設定でも長接続による受信を選び、カード操作のコールバック（card.action.trigger）を追加して、カードのボタンを使えるようにします。アプリのバージョンを公開し、審査が必要な場合は承認を待ってから、ボットにメッセージを送り、カードのボタンもクリックして動作を確認します。",
+          "confirm": "{{service}} に接続"
         },
         "wecom": {
           "botIdLabel": "Bot ID",

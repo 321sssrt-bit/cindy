@@ -1749,6 +1749,9 @@ export function MainLayout() {
                   sidebarVisible={!isSettingsRoute && !isSidebarCollapsed && !isRailMode}
                   showCollapsedActions={!isSettingsRoute && (isSidebarCollapsed || isRailMode)}
                   isSidebarRail={hasRailChromeActions && !rightSidebarOwnsRailChromeActions}
+                  // 展开态侧栏可拖到 180(比按钮簇右缘 202 窄):那一段的按钮悬在 header
+                  // 拖拽区上,由 ContentHeader 按侧栏宽补挖 no-drag。
+                  sidebarWidth={sidebarWidth}
                   // M2(2026-07-09 口径修订):mac 右上浮层随面板在场常驻(折叠
                   // toggle 永远钉窗口右上角),ContentHeader 右端占位不再分侧别。
                   rightSidebarAvailable={rightSidebarAvailable}

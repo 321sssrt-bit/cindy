@@ -27,7 +27,11 @@ import { createContext, useContext, type ReactNode } from 'react';
 import { useFeatureContentHeader } from '@/features/feature-context';
 import { useMacFullscreen } from '@/hooks/useMacFullscreen';
 import { cn } from '@/lib/utils';
-import { CHROME_ACTIONS_GEOMETRY } from './chromeActionsGeometry';
+import {
+  CHROME_ACTIONS_GEOMETRY,
+  CHROME_ACTIONS_MAC_RIGHT_EDGE,
+  chromeActionsHitHoleWidth,
+} from './chromeActionsGeometry';
 
 export const CONTENT_HEADER_HEIGHT_PX = 46;
 
@@ -75,6 +79,9 @@ interface ContentHeaderProps {
   showCollapsedActions: boolean;
   /** 左侧栏是否处于 rail 态（拖到最窄但仍保留图标列）。 */
   isSidebarRail: boolean;
+  /** 展开态侧栏宽度（窗口像素）。与按钮簇的几何一起决定本 header 要补挖多宽的
+   *  no-drag 区：侧栏窄于簇右缘时它的洞会被自身 overflow-hidden 裁掉。 */
+  sidebarWidth?: number;
   /** mac 右上固定唤起按钮是否在场。mac 据此在右端留按钮占位并决定是否留住空
    *  header；Windows 仅影响空 header 判定，
    *  占位恒为窗口控制按钮宽。 */
@@ -89,6 +96,7 @@ export function ContentHeader({
   sidebarVisible,
   showCollapsedActions,
   isSidebarRail,
+  sidebarWidth,
   rightSidebarAvailable,
   hidden,
   trailing,
@@ -104,7 +112,16 @@ export function ContentHeader({
   // main 的 drag header 左缘再挖一个洞，否则点击浮动的收放/菜单按钮会被 Electron
   // 当成窗口拖拽吞掉。完全收起态 main 从 x=0 开始，既有 spacer 已覆盖该位置；
   // 全屏态按钮回到 rail 内，也由 Sidebar 的既有洞覆盖。
-  const needsRailChromeActionsHitHole = isMac && !isFullscreen && isSidebarRail;
+  // 展开态同理但只挖溢出那一截：侧栏可拖到 180（useSidebarResize 的下限），比簇右缘
+  // 202 窄，超出侧栏右缘的按钮同样压在 header 拖拽区上。
+  const chromeActionsHitHole =
+    isMac && !isFullscreen && (isSidebarRail || sidebarVisible)
+      ? chromeActionsHitHoleWidth(
+          isSidebarRail
+            ? CHROME_ACTIONS_GEOMETRY.macTrafficLightLeft
+            : (sidebarWidth ?? CHROME_ACTIONS_MAC_RIGHT_EDGE),
+        )
+      : 0;
 
   // 设置页：Sidebar 隐藏且无折叠按钮占位 → header 退化为"隐形 chrome"
   // （仅拖拽区 + Windows 窗口控制），不画下边框。
@@ -148,14 +165,14 @@ export function ContentHeader({
       // 36px Tab 条那层(在面板身上,语义准)。
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      {needsRailChromeActionsHitHole && (
+      {chromeActionsHitHole > 0 && (
         <div
           aria-hidden
           data-testid="content-header-rail-chrome-actions-hit-hole"
           className="absolute left-0 top-0 h-full"
           style={
             {
-              width: CHROME_ACTIONS_GEOMETRY.clusterWidth,
+              width: chromeActionsHitHole,
               WebkitAppRegion: 'no-drag',
             } as React.CSSProperties
           }
@@ -215,6 +232,7 @@ export function ContentHeaderSlot({
   sidebarVisible,
   showCollapsedActions,
   isSidebarRail,
+  sidebarWidth,
   rightSidebarAvailable,
   trailing,
   children,
@@ -226,6 +244,7 @@ export function ContentHeaderSlot({
         sidebarVisible={sidebarVisible}
         showCollapsedActions={showCollapsedActions}
         isSidebarRail={isSidebarRail}
+        sidebarWidth={sidebarWidth}
         rightSidebarAvailable={rightSidebarAvailable}
         hidden={hidden}
         trailing={trailing}

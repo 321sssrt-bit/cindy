@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { subscribeRemoteSessionRemoval } from '@/features/device-link/remoteProjectsStore';
 import { useAppShortcut } from '@/hooks/useAppShortcut';
 import { sessionsStore } from '@/lib/sessionsStore';
 import {
@@ -59,9 +60,16 @@ export function useSessionBrowseHistory(
   useEffect(() => {
     // 任务被删除时(本窗口或其它窗口的广播都走 sessionsStore.patchLocal)立即摘掉,
     // 后退不会把用户送到一个已经打不开的任务上。
-    return sessionsStore.subscribePatches((id, patch) => {
+    const offLocal = sessionsStore.subscribePatches((id, patch) => {
       if (patch.status === 'deleted') history.forget(id);
     });
+    // 被控端的任务不经过本机 sessionsStore:它们的生命周期只走 remoteProjectsStore
+    // 的 applyPatch,删除得再单独订一份,否则远端删掉的任务会留在栈里当死目标。
+    const offRemote = subscribeRemoteSessionRemoval((id) => history.forget(id));
+    return () => {
+      offLocal();
+      offRemote();
+    };
   }, [history]);
 
   useEffect(() => {
@@ -108,13 +116,18 @@ export function useSessionBrowseHistory(
   const goBack = useCallback(() => go(-1), [go]);
   const goForward = useCallback(() => go(1), [go]);
 
-  // Windows / Linux 上 mod+[ 在终端里是 ESC(vim / readline):焦点在终端时让给 PTY,
-  // 不做窗口级导航。mac 的 ⌘[ 在终端无原生含义,同一道门一并让路无副作用。
-  const outsideTerminal = (event: KeyboardEvent) =>
-    !(event.target instanceof Element && event.target.closest('.xterm'));
+  // Windows / Linux 上 mod+[ 在终端里是 ESC(vim / readline)、在 CodeMirror 编辑器里是
+  // 缩减/增加缩进(defaultKeymap 的 Mod-[ / Mod-]):焦点落在这两类编辑器内时让给它们,
+  // 不做窗口级导航(navigation 会丢掉编辑器里刚改的内容)。mac 的 ⌘[ / ⌘] 在两者中无
+  // 原生含义,同一道门一并让路无副作用。
+  const outsideOwnedKeyTargets = (event: KeyboardEvent) =>
+    !(event.target instanceof Element && event.target.closest('.xterm, .cm-editor'));
 
-  useAppShortcut('session-history-back', (event) => outsideTerminal(event) && goBack());
-  useAppShortcut('session-history-forward', (event) => outsideTerminal(event) && goForward());
+  useAppShortcut('session-history-back', (event) => outsideOwnedKeyTargets(event) && goBack());
+  useAppShortcut(
+    'session-history-forward',
+    (event) => outsideOwnedKeyTargets(event) && goForward(),
+  );
 
   return {
     canBack: onStack ? index > 0 : index >= 0,

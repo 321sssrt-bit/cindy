@@ -5139,6 +5139,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "正在读取{{section}}…",
+        "retrying": "未能读取{{section}}，正在自动重试…",
+        "error": "未能读取{{section}}",
+        "retry": "重新读取设置",
+        "browserDetection": "浏览器检测结果"
+      },
       "title": "自动操作",
       "description": "让 Agent 使用电脑和已连接设备替你完成任务。浏览器自动化使用独立浏览器；Android 自动化使用 ADB；电脑自动化依赖本机 driver。",
       "codexRefreshDeferred": "设置已保存，但 Codex 正忙；重启应用后将对新的 Codex Agent 会话生效",

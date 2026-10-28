@@ -258,7 +258,7 @@ async function prepareHostData(dataDir: string, config: RelayConfig): Promise<st
 
 async function startHost(config: RelayConfig): Promise<void> {
   const assertOwner = captureOwner();
-  const key = `${config.host.port}:${config.host.listenAll}`;
+  const key = `${config.host.port}:${config.host.listenAll}:${config.host.externalUrl ?? ''}`;
   if (host && hostKey === key) return;
   await stopHost(false);
   assertOwner();
@@ -271,6 +271,7 @@ async function startHost(config: RelayConfig): Promise<void> {
       dataDir,
       host: config.host.listenAll ? '0.0.0.0' : '127.0.0.1',
       port: config.host.port,
+      publicUrl: config.host.externalUrl ?? undefined,
       // 只监听本机时,请求来自同机的前置代理,可以信任它给的外部地址。
       trustProxyHeaders: !config.host.listenAll,
       logger: {

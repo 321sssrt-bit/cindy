@@ -205,6 +205,27 @@ it('closes a local relay that finishes starting after its owner leaves', async (
   expect(h.write).not.toHaveBeenCalled();
 });
 
+// #7722 discussion_r4403720703：Runtime 到中转内核的公开配置合同必须传入媒体对外地址。
+// 经真实管理 IPC 启动并更改反向代理地址；配套内核媒体用例验证该选项生成可用签名 URL，tier: unit。
+it('applies the configured public media address and restarts when it changes', async () => {
+  const close = vi.fn(async () => {});
+  h.startServer.mockResolvedValue({ port: 47820, close });
+  h.config.get('account-a')!.host.relayId = 'existing-relay';
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ name: 'Home relay' }))));
+  try {
+    for (const externalUrl of ['https://relay.home.example', 'https://new-relay.home.example']) {
+      const result = await command({ type: 'enable-host', port: 47820, listenAll: true, externalUrl });
+      expect(result.error).toBeUndefined();
+      expect(result.state.host.running).toBe(true);
+      expect(h.startServer).toHaveBeenLastCalledWith(expect.objectContaining({
+        publicUrl: externalUrl, trustProxyHeaders: false,
+      }));
+    }
+    expect(h.startServer).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally { await command({ type: 'disable-host' }); }
+});
+
 it('does not remove another account’s deployment after a delayed uninstall', async () => {
   h.deploy.mockResolvedValueOnce({ relayVersion: '0.2.0' });
   await command(deployCommand);

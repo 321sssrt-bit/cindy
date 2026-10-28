@@ -63,7 +63,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function setup(): Promise<Harness> {
+async function setup(options: { publicUrl?: string } = {}): Promise<Harness> {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'cindy-relay-test-'));
   const owner = createDeviceCredential();
   const ownerKey = createRelaySigningKey(crypto);
@@ -86,7 +86,7 @@ async function setup(): Promise<Harness> {
     }),
   });
   const clock = { now: Date.UTC(2026, 9, 28) };
-  const start = () => startRelayServer({ dataDir, port: 0, now: () => clock.now });
+  const start = () => startRelayServer({ ...options, dataDir, port: 0, now: () => clock.now });
   const harness: Harness = {
     base: '',
     relayId,
@@ -560,37 +560,50 @@ describe('joining through the shared client helpers (Desktop / Mobile path)', ()
 });
 
 describe('media relay', () => {
-  it('stores uploads behind signed links and serves byte ranges', async () => {
-    const h = await setup();
+  // #7722：反向代理内部 Host 是回环地址，对外 HTTPS 地址必须用于上传和下载签名链接。
+  // 真实服务及媒体读写，代理仅将签名 URL 的路径/查询转发至回环端口，不信任客户端代理头。
+  it('uses the configured public address for signed uploads, downloads and byte ranges', async () => {
+    const publicUrl = 'https://relay.home.example/relay';
+    const h = await setup({ publicUrl });
+    const proxyFetch = (url: string | URL, init?: RequestInit) => {
+      const parsed = new URL(url);
+      return fetch(h.base + parsed.pathname.slice('/relay'.length) + parsed.search, init);
+    };
     const bytes = Buffer.from('hello self-hosted relay');
     const put = await api(h.base, 'POST', '/api/device-link/media/presign-put', {
       credential: h.ownerCredential,
       body: { size: bytes.length, ext: 'txt', contentType: 'text/plain' },
+      headers: { 'x-forwarded-proto': 'http', 'x-forwarded-host': 'untrusted.example' },
     });
     expect(put.status).toBe(200);
-    const uploaded = await fetch(put.json.putUrl, {
+    expect(put.json.putUrl.startsWith(publicUrl + '/api/device-link/relay/blob/')).toBe(true);
+    const uploaded = await proxyFetch(put.json.putUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/plain', 'x-oss-object-acl': 'private' },
       body: bytes,
     });
     expect(uploaded.status).toBe(200);
     // 签名地址只能上传一次。
-    expect((await fetch(put.json.putUrl, { method: 'PUT', body: bytes })).status).toBe(409);
+    expect((await proxyFetch(put.json.putUrl, { method: 'PUT', body: bytes })).status).toBe(409);
 
-    const get = await api(h.base, 'POST', '/api/device-link/media/presign-get', { credential: h.ownerCredential, body: { key: put.json.key } });
-    const full = await fetch(get.json.getUrl);
+    const get = await api(h.base, 'POST', '/api/device-link/media/presign-get', {
+      credential: h.ownerCredential, body: { key: put.json.key },
+      headers: { 'x-forwarded-proto': 'http', 'x-forwarded-host': 'untrusted.example' },
+    });
+    expect(get.json.getUrl.startsWith(publicUrl + '/api/device-link/relay/blob/')).toBe(true);
+    const full = await proxyFetch(get.json.getUrl);
     expect(full.headers.get('content-type')).toBe('text/plain');
     expect(await full.text()).toBe('hello self-hosted relay');
-    const ranged = await fetch(get.json.getUrl, { headers: { Range: 'bytes=6-9' } });
+    const ranged = await proxyFetch(get.json.getUrl, { headers: { Range: 'bytes=6-9' } });
     expect(ranged.status).toBe(206);
     expect(ranged.headers.get('content-range')).toBe(`bytes 6-9/${bytes.length}`);
     expect(await ranged.text()).toBe('self');
 
     const tampered = new URL(get.json.getUrl);
     tampered.searchParams.set('sig', '0'.repeat(64));
-    expect((await fetch(tampered)).status).toBe(403);
+    expect((await proxyFetch(tampered)).status).toBe(403);
     h.clock.now += 2 * HOUR;
-    expect((await fetch(get.json.getUrl)).status).toBe(403);
+    expect((await proxyFetch(get.json.getUrl)).status).toBe(403);
   });
 
   it('rejects uploads larger than the presigned size without keeping a partial object', async () => {

@@ -36,6 +36,18 @@ const { getProviderGroupDirectory, getProviderGroupOwnerScope, getProviderGroupR
 afterEach(() => { setProviderGroupClaudeUsageReader(null); setProviderGroupCodexUsageReader(null); io.group.mockReset(); vi.useRealTimers(); });
 
 describe('provider group runtime', () => {
+  // PR #7697: local group scheduling must count app bindings without sending
+  // them through a loopback remote lease. A remote group's binding is excluded.
+  it('counts local application bindings in the owning group only', () => {
+    owner = 'local-app-group-owner';
+    const load = getProviderGroupApplicationLoad();
+    const native = { isTurnRunning: () => true, onEvent: () => () => {}, onStatusChange: () => () => {} };
+    load.track('local-app', { providerId: 'member', groupAssigned: true,
+      groupBinding: { providerId: 'group', memberKey: 'device:member' } }, native);
+    load.track('other-group-app', { providerId: 'member', groupAssigned: true,
+      groupBinding: { providerId: 'group', memberKey: 'device:member', groupDeviceId: 'other' } }, native);
+    expect(getProviderGroupRouter().running('group', 'device:member')).toBe(1);
+  });
   it('follows login and account changes without re-registering IPC or accepting old application callbacks', () => {
     owner = 'signed-out-load';
     getProviderGroupApplicationLoad();

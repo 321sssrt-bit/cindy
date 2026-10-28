@@ -7,7 +7,9 @@ import { readDeviceLinkSettings } from '../device-link/settings-store.js';
 import { serverApiFetch } from '../serverApiClient.js';
 import type { DeviceLinkDeviceView } from '../../shared/deviceLinkIpc.js';
 import { t } from '../i18n.js';
-import { localAgentModels, type LocalAgentModel } from './catalog.js';
+import { LOCAL_AGENT_ROUTE, localAgentModels, type LocalAgentModel } from './catalog.js';
+import type { ProviderGroupConfig } from '../../shared/providerGroup.js';
+import { collectRemoteProviderGroups, remoteProviderEntryKey } from '../../shared/remoteProviderGroups.js';
 
 export interface RemoteCatalogSource { deviceId: string; label: string; providerId?: string }
 
@@ -24,6 +26,7 @@ async function bounded<T>(read: Promise<T>, fallback: T): Promise<T> {
 export async function readRemoteCatalog(
   sources: readonly RemoteCatalogSource[],
   invoke: typeof remoteBackgroundInvoke = remoteBackgroundInvoke,
+  localGroups: Readonly<Record<string, ProviderGroupConfig>> = {},
 ): Promise<LocalAgentModel[]> {
   const lists = await Promise.all(sources.map(async source => {
     try {
@@ -31,15 +34,23 @@ export async function readRemoteCatalog(
         bounded(readDeviceProviderViews(invoke, source.deviceId, { visibleOnly: true }), []),
         bounded(invoke(source.deviceId, 'maker:list-available-agents', []), { ok: false, error: { code: 'IPC_ERROR', message: 'Catalog unavailable' } }),
       ]);
-      if (!available.ok || !Array.isArray(available.result)) return [];
+      if (!available.ok || !Array.isArray(available.result)) return null;
       const engines = available.result.filter((kind): kind is AgentKind => kind === 'pi' || kind === 'codex' || kind === 'claude-code');
-      return localAgentModels(catalog.filter(provider => !source.providerId || provider.id === source.providerId), engines, source);
-    } catch { return []; }
+      const providers = catalog.filter(provider => !source.providerId || provider.id === source.providerId);
+      // Only a group with a usable application model may hide other sources.
+      const models = localAgentModels(providers, engines, source);
+      return { source, engines, providers: providers.filter(provider =>
+        models.some(model => model[LOCAL_AGENT_ROUTE]?.providerId === provider.id)), models };
+    } catch { return null; }
   }));
-  return lists.flat();
+  const catalogs = lists.filter(entry => entry !== null);
+  const { hidden } = collectRemoteProviderGroups(catalogs.map(({ source, providers }) =>
+    ({ deviceId: source.deviceId, providers })), localGroups);
+  return catalogs.flatMap(({ source, models }) => models.filter(model =>
+    !hidden.has(remoteProviderEntryKey(source.deviceId, model[LOCAL_AGENT_ROUTE]!.providerId))));
 }
 
-export async function remoteLocalAgentModels(isCurrent: () => boolean): Promise<LocalAgentModel[]> {
+export async function remoteLocalAgentModels(isCurrent: () => boolean, localGroups: Readonly<Record<string, ProviderGroupConfig>> = {}): Promise<LocalAgentModel[]> {
   const settings = readDeviceLinkSettings();
   const shares = getReceivedShares().filter(share => share.status === 'active');
   const directory = await bounded(serverApiFetch<{ devices: DeviceLinkDeviceView[] }>('/api/device-link/devices', { baseUrl: deviceLinkApiBase }), { devices: [] });
@@ -55,6 +66,6 @@ export async function remoteLocalAgentModels(isCurrent: () => boolean): Promise<
     sources.push({ deviceId: `share:${share.shareId}`, providerId: share.providerId,
       label: t('providerShare.received.fromOwner').replaceAll('{{name}}', () => share.owner.displayName) + (count > 1 ? ` (${count})` : '') });
   }
-  const models = await readRemoteCatalog(sources);
+  const models = await readRemoteCatalog(sources, remoteBackgroundInvoke, localGroups);
   return isCurrent() ? models : [];
 }

@@ -3,6 +3,7 @@ import type { AgentKind } from '@cindy/maker-core';
 import { isProviderShareAgentDeviceId } from '../../shared/providerShare.js';
 import type { ProviderGroupRemoteClient } from '../provider-group/remoteClient.js';
 import type { ProviderGroupBinding } from '../provider-group/bindings.js';
+import type { ProviderGroupRouter } from '../provider-group/router.js';
 
 export interface LocalAgentExecutionRoute {
   providerId: string;
@@ -38,7 +39,8 @@ export function readLocalAgentResumeId(value: string | undefined): { native?: st
   }
   const binding = route.groupBinding;
   if (binding !== undefined && (!binding ||
-    !['providerId', 'memberKey', 'groupDeviceId'].every((key) => typeof binding[key] === 'string' && binding[key]))) {
+    !['providerId', 'memberKey'].every((key) => typeof binding[key] === 'string' && binding[key]) ||
+    (binding.groupDeviceId !== undefined && (typeof binding.groupDeviceId !== 'string' || !binding.groupDeviceId)))) {
     throw new Error('Invalid application group load binding');
   }
   return { native: parsed.native, route: {
@@ -49,6 +51,7 @@ export function readLocalAgentResumeId(value: string | undefined): { native?: st
 
 export function createLocalAgentGroupRouteResolver(deps: {
   remote: Pick<ProviderGroupRemoteClient, 'pick'>;
+  local?: Pick<ProviderGroupRouter, 'pick'>;
   localDeviceId(): string | null;
   assertCurrent(): void;
 }): LocalAgentRouteResolver {
@@ -56,11 +59,12 @@ export function createLocalAgentGroupRouteResolver(deps: {
     deps.assertCurrent();
     // Shared providers are assigned by their owner; they cannot use the
     // same-account group management channel.
-    if (!route.agentDeviceId || isProviderShareAgentDeviceId(route.agentDeviceId)) return route;
+    if (route.agentDeviceId && isProviderShareAgentDeviceId(route.agentDeviceId)) return route;
     const self = deps.localDeviceId();
-    const pick = await deps.remote.pick(route.agentDeviceId, {
+    const pick = route.agentDeviceId ? await deps.remote.pick(route.agentDeviceId, {
       sessionId, providerId: route.providerId, agentKind, model, exclude: [],
-    });
+    }) : await deps.local?.pick({ providerId: route.providerId, agentKind, model,
+      localTask: true, reserveFor: sessionId }) ?? { kind: 'none' as const };
     deps.assertCurrent();
     if (pick.kind === 'none') return route; // No group, or an older peer.
     if (pick.kind === 'unavailable') {

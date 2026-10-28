@@ -132,6 +132,7 @@ function runtimeForActiveOwner(): OwnerRuntime {
     now: () => Date.now(),
   });
   const externalLoad = createProviderGroupExternalLoad({ now: () => Date.now() });
+  const applicationLoad = createLocalAgentLoadRegistry();
   const router = createProviderGroupRouter({
     directory,
     readCaps: async (member) => {
@@ -142,8 +143,10 @@ function runtimeForActiveOwner(): OwnerRuntime {
       return parseRemoteAgentCaps(reply.result);
     },
     readGroup: readProviderGroup,
-    listBindings: listProviderGroupBindings,
-    isTurnRunning: (sessionId) => isTurnRunning(sessionId),
+    listBindings: () => ({ ...listProviderGroupBindings(), ...Object.fromEntries(
+      Object.entries(applicationLoad.bindings()).filter(([, binding]) => !binding.groupDeviceId),
+    ) }),
+    isTurnRunning: (sessionId) => applicationLoad.isTurnRunning(sessionId) || isTurnRunning(sessionId),
     externalRunning: (providerId, memberKey) => externalLoad.running(providerId, memberKey),
     coolingStore: {
       read: readProviderGroupCooling,
@@ -155,7 +158,6 @@ function runtimeForActiveOwner(): OwnerRuntime {
     now: () => Date.now(),
     random: () => Math.random(),
   });
-  const applicationLoad = createLocalAgentLoadRegistry();
   applicationLoad.subscribe((id) => {
     if (activeOwnerScopeKey() === owner) applicationLoadListener?.(id);
   });

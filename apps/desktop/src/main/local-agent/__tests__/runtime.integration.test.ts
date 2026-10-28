@@ -113,6 +113,26 @@ async function inputFiles(directory: string) {
 const message = { parts: [{ type: 'text', text: 'hello' }], effort: 'high' };
 
 describe('local client runtime lifecycle', () => {
+  // PR #7697: local providers skipped their local group. Exercise open/resume
+  // through the runtime and its persisted native resume binding.
+  it('uses the local group strategy and retains its selected route on resume', async () => {
+    const pick = vi.fn(async () => ({ kind: 'member' as const, label: 'remote', resolved: [],
+      member: { key: 'device:remote:member', kind: 'device' as const, agentDeviceId: 'remote',
+        providerId: 'member', limit: 1, weight: 1, paused: false } }));
+    const remotePick = vi.fn();
+    const resolver = createLocalAgentGroupRouteResolver({ local: { pick }, remote: { pick: remotePick },
+      localDeviceId: () => 'self', assertCurrent: () => {} });
+    const f = await fixture({ resolveRoute: resolver });
+    expect(pick).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'provider', localTask: true,
+      reserveFor: expect.any(String), agentKind: 'pi', model: 'model' }));
+    expect(remotePick).not.toHaveBeenCalled();
+    expect(f.maker.startLocalAgentSession.mock.calls[0][1][LOCAL_AGENT_CLIENT]).toMatchObject({
+      agentDeviceId: 'remote', groupAssigned: true,
+    });
+    const reopened = await fixture({ resume: f.runtime.id, resolveRoute: resolver });
+    expect(pick).toHaveBeenCalledOnce();
+    expect(reopened.maker.startLocalAgentSession.mock.calls[0][1]).toMatchObject({ providerId: 'member', resumeSessionId: 'first' });
+  });
   it('registers resolved and resumed handles and reports a silent pending send before it settles', async () => {
     const changed = vi.fn();
     const trackLoad = vi.fn(() => changed);

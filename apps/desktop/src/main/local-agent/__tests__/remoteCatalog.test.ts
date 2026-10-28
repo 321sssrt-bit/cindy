@@ -9,6 +9,7 @@ vi.mock('../../serverApiClient.js', () => ({ serverApiFetch: mock.api }));
 vi.mock('../../i18n.js', () => ({ t: () => '来自 {{name}} 的分享' }));
 import { remoteLocalAgentModels } from '../remoteCatalog.js';
 import { LOCAL_AGENT_ROUTE } from '../catalog.js';
+import { normalizeProviderGroupConfig } from '../../../shared/providerGroup.js';
 
 const provider = { id: 'openai', name: 'OpenAI', source: 'user', connected: true, agents: ['pi', 'codex'],
   remoteInvocationEnabled: true, models: { pi: [{ id: 'm', name: 'M', efforts: [] }], codex: [{ id: 'm', name: 'M', efforts: [] }] } };
@@ -20,6 +21,24 @@ function setup() {
   mock.invoke.mockImplementation(async (_device, channel) => ({ ok: true, result: channel === 'maker:list-available-agents' ? ['pi'] : { providers: [provider, { ...provider, id: 'private', remoteInvocationEnabled: false }] } }));
 }
 describe('application remote catalog', () => {
+  // PR #7697: /models must use the same group projection as the model picker.
+  // One online group hides a device/share member; losing the owner exposes them.
+  it('collapses online group members and restores them when their group is unavailable', async () => {
+    setup();
+    mock.devices.push({ deviceId: 'member', name: 'member', online: true, remoteControlEnabled: true });
+    const group = { strategy: 'least', autoSwitch: true, members: [
+      { kind: 'local' }, { kind: 'device', agentDeviceId: 'member', providerId: 'openai' },
+      { kind: 'share', agentDeviceId: 'share:active', providerId: 'openai' },
+    ] };
+    const invoke = mock.invoke.getMockImplementation()!;
+    mock.invoke.mockImplementation((device, channel, ...args) => device === 'device' && channel !== 'maker:list-available-agents'
+      ? Promise.resolve({ ok: true, result: { providers: [{ ...provider, group }] } }) : invoke(device, channel, ...args));
+    expect((await remoteLocalAgentModels(() => true)).map(m => m[LOCAL_AGENT_ROUTE]?.deviceId)).toEqual(['device']);
+    mock.devices = mock.devices.filter(device => (device as { deviceId: string }).deviceId !== 'device');
+    expect((await remoteLocalAgentModels(() => true)).map(m => m[LOCAL_AGENT_ROUTE]?.deviceId)).toEqual(['member', 'share:active']);
+    const local = normalizeProviderGroupConfig(group, 'openai')!;
+    expect(await remoteLocalAgentModels(() => true, { openai: local })).toEqual([]);
+  });
   it('uses remote runtime availability and keeps device/share identities and source names', async () => {
     setup();
     const models = await remoteLocalAgentModels(() => true);

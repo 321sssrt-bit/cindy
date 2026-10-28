@@ -30,6 +30,7 @@ import { withCrossProcessLock } from '../device-link/crossProcessLock.js';
 import { openLocalAgentRuntime } from './runtime.js';
 import { localAgentMessage } from './messages.js';
 import { createLocalAgentGroupRouteResolver } from './groupRoute.js';
+import { listProviderGroups } from '../provider-group/store.js';
 
 import { confirmLocalAgent, cancelLocalAgentConfirmations } from './confirmation.js';
 
@@ -135,7 +136,7 @@ export function installLocalAgentHost(maker: Maker): void {
           allowSideEffects: false,
         }).listProviders({
           allowSideEffects: false,
-        }), remoteLocalAgentModels(() => scopeNow() === scope)]);
+        }), remoteLocalAgentModels(() => scopeNow() === scope, listProviderGroups())]);
         if (scopeNow() !== scope) throw new LocalAgentError('UNAUTHORIZED', 'Cindy 当前账号已更改，请重新连接。');
         return [...localAgentModels(providers, maker.listAvailableAgents()), ...remoteModels]
           .map((model, index) => ({ ...model, isDefault: index === 0 }));
@@ -158,7 +159,7 @@ export function installLocalAgentHost(maker: Maker): void {
       open: async (input, bridge) => {
         // Load group orchestration only when an application actually opens a
         // session; the HTTP discovery/startup path must stay lightweight.
-        const [{ getProviderGroupRemoteClient, getProviderGroupApplicationLoad }, { getSelfDeviceId }] = await Promise.all([
+        const [{ getProviderGroupRemoteClient, getProviderGroupApplicationLoad, getProviderGroupRouter }, { getSelfDeviceId }] = await Promise.all([
           import('../provider-group/runtime.js'), import('../device-link/index.js'),
         ]);
         const assertCurrent = () => {
@@ -168,6 +169,7 @@ export function installLocalAgentHost(maker: Maker): void {
         const load = getProviderGroupApplicationLoad();
         return openLocalAgentRuntime(maker, directory, input, bridge, localAgentMessage, createLocalAgentGroupRouteResolver({
           remote: getProviderGroupRemoteClient(),
+          local: getProviderGroupRouter(),
           localDeviceId: getSelfDeviceId,
           assertCurrent,
         }), load.track);

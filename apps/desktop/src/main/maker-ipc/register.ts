@@ -7,7 +7,7 @@ import { readWorkerProjectContext, createWorkerWorktree, rememberWorkerProject, 
 import type { WorkerWorktreeRequest } from '../../shared/orca-worker-project';
 import { captureAgentRequest as captureRequest, ownerChannelInputEvidence, type CapturedAgentRequest } from './forwardedRequest.js';
 import { readChannelToolScope } from '../im/shared/channelToolScope.js';
-import { verifiedOwnerRequestText, type AgentRequestReceipt } from '../../shared/forwardedRequest.js';
+import { FORWARDED_REQUEST_RECEIPT, verifiedOwnerRequestText, type AgentRequestReceipt } from '../../shared/forwardedRequest.js';
 import { configureBotTodoDispatch, settleBotTodoForSession } from './botTodoAccess.js';
 import { createBotTodoDispatch } from './botTodoDispatch.js';
 import {
@@ -4821,12 +4821,13 @@ export async function captureSessionAgentRequest(sessionId: string, supplement: 
   const active = agentInputCoordinatorHolder?.getAcceptedInputProvenance(sessionId) ?? null;
   const lane = readChannelToolScope({ sessionId, sessionInstanceId: getMakerIfReady()?.getSession(sessionId)?.instanceId });
   const principal = taskActionPrincipal(sessionId);
-  // Only a companion's task instructions forward the owner's words. Ordinary
-  // sessions (including scheduled runs and child results) keep their own body.
+  // Authorship follows the accepted request, not the sender's companion badge.
+  // Ordinary task handoffs must preserve it too; autonomous notifications stay plain.
   const [companion] = await getDbClient().drizzle.select({ role: botSessionLinks.role })
     .from(botSessionLinks).where(and(eq(botSessionLinks.sessionId, sessionId),
-      inArray(botSessionLinks.role, ['canonical', 'group', 'channel']), isNull(botSessionLinks.archivedAt))).limit(1);
-  const ownerVerified = !!companion && principal === 'owner';
+      inArray(botSessionLinks.role, ['canonical', 'group', 'channel', 'thread', 'routine']), isNull(botSessionLinks.archivedAt))).limit(1);
+  const ownerVerified = companion ? principal === 'owner'
+    : agentInputCoordinatorHolder?.isActiveInputOwnerContinuation(sessionId) === true;
   const evidence = active ?? (ownerVerified ? await ownerChannelInputEvidence(lane, async (clientId) => {
     const [row] = await getDbClient().drizzle.select({ content: messages.content }).from(messages)
       .where(and(eq(messages.sessionId, sessionId), eq(messages.clientId, clientId), eq(messages.role, 'user'),
@@ -4835,7 +4836,8 @@ export async function captureSessionAgentRequest(sessionId: string, supplement: 
     return row ? extractPlainText(row.content) : null;
   }) : null);
   const request = await captureRequest(sessionId, supplement, evidence,
-    () => listMessagesForAgentHandoff(sessionId, 1, undefined, 'user'), !!companion, ownerVerified);
+    () => listMessagesForAgentHandoff(sessionId, 1, undefined, 'user'),
+    !!companion || ownerVerified || active?.delegatedRequest?.ownerVerified === true, ownerVerified);
   if (!isDataOwnerBroadcastScopeCurrent(scope)) throw new Error('Data owner changed before request capture');
   return request;
 }
@@ -12279,42 +12281,56 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const clientId = createId();
         createdPreviewSessionId = session.id;
         createdPreviewClientId = clientId;
-        const sendResult = await sendUserMessageWithAwaitedGitBaseline(session, message, clientId, {
-          planMode: false,
-          beforeProviderStart: assertTaskActionCurrent,
-          onAccepted: async () => {
-            await assertTaskActionCurrent();
-            notifyAgentIslandUserPrompt(session, persistedContent ?? message, {
-              source: 'send_to_session:create:onPersisting',
-              clientId,
-            });
-            createdPreviewStarted = true;
-            await createDbMessage(session.id, {
-              clientId,
-              role: 'user',
-              content: persistedContent ?? message,
-              ...(inputAgentMeta ? { agentMeta: inputAgentMeta } : {}),
-            });
-            // F4: send_to_session 的 create 分支也建了一条用户可见新会话(有 title + 落了 user
-            // 消息),同属"新建会话需同步所有窗侧栏"的 purpose。广播跟 user row 持久化
-            // 保持同一个 accepted 边界,避免后续 handle.send 失败时侧栏漏刷新。
-            // (jump/resume 分支是既有 session 重建,不在此发,见 wakeKind:'resumed' 分支。)
-            broadcastSessionCreated(session.id);
-          },
-          onDispatching: () => dispatchAgentIslandUserPrompt(session.id),
-        }, directSource);
-        if (createdPreviewStarted) {
-          if (sendResult.accepted) {
-            commitAgentIslandUserPrompt(session.id, clientId);
-          } else {
-            rollbackAgentIslandUserPrompt(
-              session.id,
-              clientId,
-              'send_to_session:create:not-dispatched',
-            );
+        if (verifiedOwnerRequestText(params.autoReviewUserText) !== undefined) {
+          // New tasks need the same accepted-input provenance as busy and idle
+          // recipients, so further handoffs cannot lose the original request.
+          const meta = await maker.getSessionMeta(session.id);
+          const dbRow = await getSessionRowSnapshot(session.id);
+          if (!meta || !dbRow) throw new Error('Created session metadata unavailable');
+          await enqueueSendToSessionMessage({ targetSessionId: session.id, message,
+            persistedContent: persistedContent ?? message, clientId, meta, dbRow,
+            origin: queuedOrigin, sourcePlugin, autoReviewUserText: params.autoReviewUserText,
+            onAccepted: async () => { broadcastSessionCreated(session.id); },
+            taskActionDeliveryGuard: params.taskActionDeliveryGuard,
+          });
+        } else {
+          const sendResult = await sendUserMessageWithAwaitedGitBaseline(session, message, clientId, {
+            planMode: false,
+            beforeProviderStart: assertTaskActionCurrent,
+            onAccepted: async () => {
+              await assertTaskActionCurrent();
+              notifyAgentIslandUserPrompt(session, persistedContent ?? message, {
+                source: 'send_to_session:create:onPersisting',
+                clientId,
+              });
+              createdPreviewStarted = true;
+              await createDbMessage(session.id, {
+                clientId,
+                role: 'user',
+                content: persistedContent ?? message,
+                ...(inputAgentMeta ? { agentMeta: inputAgentMeta } : {}),
+              });
+              // F4: send_to_session 的 create 分支也建了一条用户可见新会话(有 title + 落了 user
+              // 消息),同属"新建会话需同步所有窗侧栏"的 purpose。广播跟 user row 持久化
+              // 保持同一个 accepted 边界,避免后续 handle.send 失败时侧栏漏刷新。
+              // (jump/resume 分支是既有 session 重建,不在此发,见 wakeKind:'resumed' 分支。)
+              broadcastSessionCreated(session.id);
+            },
+            onDispatching: () => dispatchAgentIslandUserPrompt(session.id),
+          }, directSource);
+          if (createdPreviewStarted) {
+            if (sendResult.accepted) {
+              commitAgentIslandUserPrompt(session.id, clientId);
+            } else {
+              rollbackAgentIslandUserPrompt(
+                session.id,
+                clientId,
+                'send_to_session:create:not-dispatched',
+              );
+            }
           }
+          assertDesktopSendDispatched(sendResult, 'send_to_session create');
         }
-        assertDesktopSendDispatched(sendResult, 'send_to_session create');
         log.info('sendToSession created new session', {
           dispatcherSessionId,
           newSessionId: session.id,
@@ -12420,7 +12436,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       // Pending selections also need the canonical send transaction: it consumes the intent,
       // then refreshes queued createOpts from DB before starting the target harness.
       // enqueue does not await dispatch, so the drain can acquire this lock after we return.
-      if (params.files?.length || params.forceQueue || explicitClientId?.startsWith('bot-dm:') || explicitClientId?.startsWith(BOT_GROUP_CLIENT_ID_PREFIX) || explicitClientId?.startsWith('bot-authorization-resume:') || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
+      if (params.files?.length || params.forceQueue || verifiedOwnerRequestText(params.autoReviewUserText) !== undefined || explicitClientId?.startsWith('bot-dm:') || explicitClientId?.startsWith(BOT_GROUP_CLIENT_ID_PREFIX) || explicitClientId?.startsWith('bot-authorization-resume:') || inputCoordinator.shouldQueueNewTurn(targetSessionId) || agentSwitchPending.get(targetSessionId)) {
         lockStage = 'enqueue-queued-message';
         const qClientId = explicitClientId ?? createId();
         await enqueueSendToSessionMessage({
@@ -12993,6 +13009,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
 
   botDirectMessageServiceHolder = createBotDirectMessageService({
+    captureRequest: captureSessionAgentRequest,
     transport: createBotMessageTransport({ selfDeviceId: getSelfDeviceId,
       listDevices: () => handleListDevices(deviceDirectoryDeps()), invoke: invokeBotPeer }),
     discardQueuedDelivery: async (sessionId, clientId, assertOwner) => {
@@ -18781,6 +18798,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
        */
       sourceDevice?: unknown;
       sourceOrigin?: unknown;
+      [FORWARDED_REQUEST_RECEIPT]?: AgentRequestReceipt;
       sourcePlugin?: unknown;
       sharedTaskAuthor?: unknown;
       expectedClearBoundaryMs?: number | null;
@@ -18872,6 +18890,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const steerSourceNote = shouldPrependMobileClientPromptNote(normalized, sess.agentKind)
       ? buildWireMessageSourceNote({
           origin: so.sourceOrigin,
+          autoReviewUserText: so[FORWARDED_REQUEST_RECEIPT],
           sourcePlugin: so.sourcePlugin,
           sharedTaskAuthor: so.sharedTaskAuthor,
         })

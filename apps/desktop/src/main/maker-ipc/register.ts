@@ -71,6 +71,7 @@ import { getHostSourceDevice, getSelfDeviceId, remoteBackgroundInvoke, remoteInv
 import { readDeviceProviderViews, readRemoteProviderRoute } from '../remote-agent/controller/deviceCatalog.js';
 import { checkDeviceRoute } from '../remote-agent/controller/deviceRouteCheck.js';
 import { cancelPendingRemoteStart } from '../remote-agent/controller/startRemote.js';
+import { createNativeHistoryRelocator } from '../remote-agent/controller/relocateNativeHistory.js';
 import { forgetCredentialGrants } from '../remote-agent/executor/credentialGrants.js';
 import { isProviderShareAgentDeviceId } from '../../shared/providerShare.js';
 import {
@@ -8946,7 +8947,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     return context;
   }
 
-  async function bootstrapSession(o: CreateOpts, assertAccess?: () => void): Promise<{
+  async function bootstrapSession(o: CreateOpts, assertAccess?: () => void, nativeHistoryResume = false): Promise<{
     session: Awaited<ReturnType<typeof maker.createSession>>;
     didInjectOrcaInstructions: boolean;
     didInjectProjectContext: boolean;
@@ -9070,10 +9071,35 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     if (!agentOnOtherDevice) await admitLocalRoute();
     assertAccess?.();
     let session: Awaited<ReturnType<typeof maker.createSession>> | undefined;
+    let nativeRelocation: Awaited<ReturnType<typeof relocateForFreshStart>> | undefined;
     while (!session) {
       try {
+        // Claude's ID is prefilled before the CLI accepts resume. Require its
+        // native initialization handshake for every transferred copy, including
+        // a copy chosen by the startup-failure loop. Fresh fallback removes it.
+        const vendorOptions = { ...o.vendorOptions };
+        delete vendorOptions._cindyRequireNativeResume;
+        if (nativeHistoryResume || nativeRelocation?.nativeId) vendorOptions._cindyRequireNativeResume = true;
+        o.vendorOptions = vendorOptions;
         session = await maker.createSession(o);
+        if (nativeRelocation?.nativeId && session.sdkSessionId !== nativeRelocation.nativeId) {
+          const opened = session;
+          session = undefined;
+          await withRehydrateCloseSuppressed(opened.id, () => maker.closeSession(opened.id, 'agent-switch'));
+          throw new Error('Native history resume did not restore the transferred session');
+        }
+        nativeRelocation = undefined;
       } catch (error) {
+        if (nativeRelocation?.fallback) {
+          const fallback = nativeRelocation.fallback;
+          nativeRelocation = undefined;
+          assertAccess?.();
+          await fallback();
+          o.resumeSessionId = undefined;
+          continue;
+        }
+        // 原生迁移由切换事务先处理恢复失败，避免嵌套换电脑覆盖它的边界与 SDK ID。
+        if (nativeHistoryResume) throw error;
         // 供应商组刚分配的电脑没能启动 Agent(连不上、登录失效等)：换组里下一台再试，
         // 每台最多一次；不该换或没有下一台时照常报错。
         const failedRoute = { agentDeviceId: o.agentDeviceId ?? null, providerId: o.providerId ?? null };
@@ -9091,20 +9117,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const guestRelocation = !next && o.id && o.resumeSessionId && isProviderShareAgentDeviceId(o.agentDeviceId)
           && providerGroupService?.claimGuestStartSwitch(o.id) === true;
         if (!next && !guestRelocation) throw error;
-        // 有原生会话要续接：会话在原来那台上，换过去先交接(全量交接 + 全新原生会话 + 分隔条)，这次发送带上交接，
-        // 不拿原来那台的会话 id 去别处打开(那边认不出，会悄悄开一个没有上下文的新会话)。
+        // 同 Harness 先搬原生记录；源端不可用或目标不支持时交接，绝不将旧电脑的 ID 直接用于目标端。
         if (o.id && o.resumeSessionId) {
           const target = next
             ? next.route
             : { agentDeviceId: o.agentDeviceId ?? null, providerId: o.providerId ?? null };
-          await relocateForFreshStart(agentSwitchDeps, {
+          nativeRelocation = await relocateForFreshStart(agentSwitchDeps, {
             sessionId: o.id,
             agentDeviceId: target.agentDeviceId,
             providerId: target.providerId,
             from: failedRoute,
+            assertCurrent: assertAccess,
             ...(guestRelocation ? { sharedRelocation: true } : {}),
           });
-          o.resumeSessionId = undefined;
+          o.resumeSessionId = nativeRelocation.nativeId ?? undefined;
           if (o.vendorOptions) {
             const fresh = { ...o.vendorOptions };
             for (const key of ['resumeSessionAt', 'forkSession', 'threadId', 'tailTurnsToDrop']) delete fresh[key];
@@ -11067,6 +11093,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
 
   const agentSwitchDeps: MakerSessionAgentSwitchHandlerDeps = {
+    readOwnerGeneration: () => getActiveAppSession().generation,
+    confirmNativeHistoryFallback: async (sessionId, targetDeviceId) => {
+      const label = describeAgentDevice(targetDeviceId) ?? t('sharedTask.otherDevice');
+      const result = await taskActionConfirmBridge.request(sessionId, {
+        title: t('providerGroup.rebalance.fallbackTitle').replace('{{label}}', () => label),
+        description: t('providerGroup.rebalance.fallbackDescription'),
+        action: { toolName: 'session_history_fallback', input: { computer: label }, confirmation: 'native_history_fallback' },
+      });
+      return result.confirmed;
+    },
+    peekPendingHandoff: sessionId => agentHandoffPending.peek(sessionId),
+    relocateNativeHistory: createNativeHistoryRelocator(app.getPath('userData'), remoteBackgroundInvoke),
     // 换到供应商组那一项时由组选一台能用的电脑(provider-groups.md §6)。
     resolveProviderGroupTarget: (sessionId, target) =>
       providerGroupService ? providerGroupService.resolveSwitchTarget(sessionId, target) : Promise.resolve(null),
@@ -11095,6 +11133,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           orcaRole: sessions.orcaRole,
           orcaRemoteLead: sessions.orcaRemoteLead,
           sdkSessionId: sessions.sdkSessionId,
+          workingDir: sessions.workingDir,
           source: sessions.source,
           agentDeviceId: sessions.agentDeviceId,
         })
@@ -11154,6 +11193,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       });
     },
     bootstrapSwitchedSession: async (sessionId, opts) => {
+      const ownerGeneration = getActiveAppSession().generation;
+      const assertOwner = () => {
+        if (getActiveAppSession().generation !== ownerGeneration) throw new Error('REMOTE_AGENT_ACCOUNT_CHANGED');
+      };
       // 切换已提交,从 DB 行(新引擎值)重建 live session。resumeSessionId 直接取
       // 行上的 sdk_session_id:切换事务在有停泊绑定时已把它落成停泊 id(Phase 2
       // 切回续接),否则为 null = 全新原生会话,上下文由交接注入承接——与
@@ -11207,8 +11250,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         const writableDirs = await readSessionWritableDirsFromDb(sessionId).catch(() => []);
         if (writableDirs.length > 0) co.writableDirs = writableDirs;
       }
+      assertOwner();
       await ensureRemoteReadyForSessionStart({ createOpts: co });
-      await bootstrapSession(co);
+      await bootstrapSession(co, assertOwner, opts?.nativeHistoryResume);
       broadcastSessionCreated(sessionId);
     },
     withCloseSuppressed: withRehydrateCloseSuppressed,

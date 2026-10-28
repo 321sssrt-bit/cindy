@@ -538,6 +538,11 @@ export interface AgentSwitchContent {
   handoff: string;
   /** Phase 2:true = 目标引擎续接(resume)了自己的停泊原生会话,交接为增量模式。 */
   resumed?: boolean;
+  /** Same-Harness cross-computer restoration result; omitted for legacy switches. */
+  nativeHistory?: 'restored' | 'fallback';
+  toAgentDeviceId?: string | null;
+  toAgentDeviceName?: string | null;
+  switchReason?: 'quota-rebalance';
 }
 
 export interface Message {

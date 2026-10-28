@@ -825,6 +825,8 @@
     },
     "rebalance": {
       "title": "Continue on {{label}}?",
+      "fallbackTitle": "Continue on {{label}} with a summary?",
+      "fallbackDescription": "The original conversation could not be fully restored. A summary may omit earlier details and tool results. Cancel to send on the original computer.",
       "description": "To use every account’s quota evenly, send this message from {{label}} ({{quota}}). The last few messages and a summary carry over; older details may be lost.",
       "quota": "{{left}}% left",
       "quotaReset": "{{left}}% left · {{reset}}",
@@ -12729,6 +12731,7 @@
         "toggleHint": "View handoff context",
         "handoffTitle": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
         "handoffTitleEnglishSource": "Handoff — the context summary sent to the new engine at switch time (not part of the chat transcript; shown only here)",
+        "fallbackBadge": "Continued from summary",
         "resumedBadge": "session resumed",
         "relocatedHere": "Agent now runs on this computer",
         "relocatedTo": "Agent now runs on {{device}}",

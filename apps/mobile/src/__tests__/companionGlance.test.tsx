@@ -13,13 +13,13 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { todoDateLabel, todoLocalDate, type TeammateTodo } from '@cindy/maker-shared/teammate-todo';
+import { todoDateLabel, todoDueSoon, todoLocalDate, type TeammateTodo } from '@cindy/maker-shared/teammate-todo';
 
 const h = vi.hoisted(() => ({ items: [] as unknown[], reads: [] as Array<Record<string, unknown>>,
-  sessions: [] as any[], queried: [] as any[], delegations: [] as any[], prs: new Map(), activity: new Map(), closed: null as (() => void) | null, openURL: vi.fn(),
+  liveQuery: false, sessions: [] as any[], queried: [] as any[], delegations: [] as any[], prs: new Map(), activity: new Map(), closed: null as (() => void) | null, openURL: vi.fn(),
 }));
 vi.mock('react-native', () => ({
-  AppState: { addEventListener: () => ({ remove: () => undefined }) },
+  AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
   Linking: { openURL: h.openURL },
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
   View: ({ children, testID, accessibilityLabel }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children),
@@ -46,8 +46,8 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (s: string) => s, 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: { getItem: async () => null, setItem: async () => undefined } }));
 vi.mock('@/auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u' }, accountGeneration: 1 }) }));
 // Stable like the real context: new functions per render would re-run the read effect forever.
-const link = vi.hoisted(() => ({ invoke: () => undefined, openLink: async () => undefined, onRemoteResourceChanged: () => () => undefined }));
-vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => link }));
+const link = vi.hoisted(() => ({ status: 'online', connectionEpoch: 1, getPresenceAvailability: () => true, invoke: vi.fn(), openLink: async () => undefined, onRemoteResourceChanged: () => () => undefined }));
+vi.mock('@/device-link/DeviceLinkContext', () => ({ useDeviceLink: () => link, subscribeRemoteBotChanges: () => () => undefined }));
 vi.mock('@/device-link/remoteResources', () => ({
   invokeRemoteResourceAction: vi.fn(),
   getRemoteResource: async (_invoke: unknown, _target: unknown, _ref: unknown, _locale: unknown, _primitives: unknown, query: string) => {
@@ -57,7 +57,13 @@ vi.mock('@/device-link/remoteResources', () => ({
     return { blocks: [{ primitive: 'teammate-todos', data: { items: matching.slice(q.offset, q.offset + q.limit), total: matching.length } }] };
   },
 }));
-vi.mock('@/session/useRemoteCompanionQuery', () => ({ useRemoteCompanionQuery: (device: string, channel: string) => ({ value: channel === 'local-db:sessions:list' ? h.queried : { ok: true, delegations: h.delegations } }) }));
+vi.mock('expo-router', async () => { const { useEffect } = await import('react'); return { useFocusEffect: (fn: () => void) => useEffect(fn, [fn]) }; });
+vi.mock('@/session/useRemoteCompanionQuery', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/session/useRemoteCompanionQuery')>();
+  return { useRemoteCompanionQuery: (...args: Parameters<typeof actual.useRemoteCompanionQuery>) => h.liveQuery
+    ? actual.useRemoteCompanionQuery(...args)
+    : { value: args[1] === 'local-db:sessions:list' ? h.queried : { ok: true, delegations: h.delegations } } };
+});
 vi.mock('@/session/readTeammateTasks', () => ({ readTeammateTasks: async ({ sessions }: any) => sessions }));
 
 const { useCompanionGlanceTodos } = await import('@/session/useCompanionGlanceTodos');
@@ -65,8 +71,8 @@ const { companionGlanceOutputs } = await import('@/session/companionProfileData'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root;
-beforeEach(() => { h.items = []; h.reads = []; h.sessions = []; h.queried = []; h.delegations = []; h.prs.clear(); h.activity.clear(); h.openURL.mockResolvedValue(undefined); root = createRoot(document.createElement('div')); });
-afterEach(() => act(() => root.unmount()));
+beforeEach(() => { h.liveQuery = false; h.items = []; h.reads = []; h.sessions = []; h.queried = []; h.delegations = []; h.prs.clear(); h.activity.clear(); h.openURL.mockResolvedValue(undefined); root = createRoot(document.createElement('div')); });
+afterEach(() => { act(() => root.unmount()); vi.useRealTimers(); });
 
 const todo = (id: string, status = 'open') => ({ id, status, title: id, revision: 1, sources: [], history: [] }) as unknown as TeammateTodo;
 
@@ -202,4 +208,50 @@ it('mixes PRs and files by time and expands all outputs together', async () => {
   expect(rows()).toEqual(['PR title 4', 'file-3.pdf', 'PR title 2', 'file-1.pdf']);
   await act(async () => more().click());
   expect(rows()).toHaveLength(3);
+});
+
+// Review regression: production query timer must replace the open sheet snapshot, including deletions.
+// Unit: real query + component, fake host; fake timers avoid wall-clock waits.
+it('refreshes tasks in an open sheet and stops querying after closing it', async () => {
+  vi.useFakeTimers(); h.liveQuery = true;
+  const host = document.createElement('div');
+  await act(async () => root.unmount()); root = createRoot(host);
+  const task = (id: string, title: string) => ({ id, title, status: 'active', taskTeammate: { id: 'cindy-default' } });
+  h.queried = [task('old', 'Original task')];
+  link.invoke.mockImplementation(async (_device, channel) => channel === 'local-db:sessions:list' ? h.queried : { ok: true, delegations: [] });
+  const render = (visible: boolean) => <CompanionGlanceSheet visible={visible} onClose={() => {}} name="Cindy" avatar={undefined} botId="cindy-default"
+    deviceId="pc" deviceName="PC" sessionId="chat" online cloudHome={false} onQuoteTodo={() => {}} onOpenTask={() => {}}
+    onOpenCindy={() => {}} onSwitchHome={() => {}}
+    todos={{ loaded: true, failed: false, todos: { open: [], done: [], openTotal: 0, doneTotal: 0, dailyCheck: false } } as any} />;
+  await act(async () => root.render(render(true)));
+  expect(host.textContent).toContain('Original task');
+  h.queried = [task('old', 'Renamed task'), task('new', 'New task')];
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(host.textContent).toContain('Renamed task');
+  expect(host.textContent).toContain('New task');
+  expect(host.textContent).not.toContain('Original task');
+  h.queried = [];
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(host.querySelector('[data-testid="companion.glance.task"]')).toBeNull();
+  await act(async () => root.render(render(false)));
+  const reads = link.invoke.mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  expect(link.invoke.mock.calls).toHaveLength(reads);
+});
+
+// The production demo must contain a due row so its existing actions remain reachable.
+it('keeps the demo todo visible and preserves its empty and restore states', async () => {
+  const { teammateVisualFixture } = await import('@/debug/teammateVisualFixture');
+  const { REMOTE_RESOURCE_GET_CHANNEL, REMOTE_RESOURCE_INVOKE_CHANNEL } = await import('@cindy/device-link');
+  const read = (view = 'open') => teammateVisualFixture(REMOTE_RESOURCE_GET_CHANNEL, [{ ref: { id: 'todos:cindy-default' }, query: JSON.stringify({ view }) }]) as any;
+  const data = () => read().blocks[0].data;
+  expect(data().items).toHaveLength(1);
+  expect(todoDueSoon(data().items[0])).toBe(true);
+  expect(data().dailyCheck).toBe(true);
+  expect(read('done').blocks[0].data.items).toHaveLength(0);
+  const update = (operation: string) => teammateVisualFixture(REMOTE_RESOURCE_INVOKE_CHANNEL, [{ resourceRef: { id: 'todos:cindy-default' }, actionId: 'todo-update', input: { operation } }]);
+  update('delete');
+  expect(data().items).toHaveLength(0);
+  update('restore');
+  expect(todoDueSoon(data().items[0])).toBe(true);
 });

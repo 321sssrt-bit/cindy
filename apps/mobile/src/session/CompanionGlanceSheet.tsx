@@ -384,7 +384,10 @@ function TaskReader({ deviceId, deviceName, receive }: {
 }) {
   const { invoke, connectionEpoch } = useDeviceLink();
   const { accountGeneration } = useAuth();
-  const { value, cause } = useRemoteCompanionQuery<RemoteSession[]>(deviceId, 'local-db:sessions:list', [200, 'all', { fresh: true }]);
+  const { value, cause } = useRemoteCompanionQuery<RemoteSession[]>(deviceId, 'local-db:sessions:list', [200, 'all', { fresh: true }], {
+    // Home may be filtered; keep this independent snapshot current while the sheet is open.
+    refreshIntervalMs: 30_000,
+  });
   useEffect(() => {
     if (isAccessRevokedRemoteError(cause)) { receive(deviceId, []); return; }
     if (!Array.isArray(value)) return;

@@ -45,7 +45,9 @@ const glanceTodo = {
   id: 'visual-glance-todo', revision: 1, key: 'visual-review', origin: 'assigned',
   title: '确认登录页的验收截图', progress: '', outcome: '', value: '', next: null,
   sources: [], associations: [], status: 'open', createdAt: new Date(FIXTURE_NOW).toISOString(),
-  updatedAt: new Date(FIXTURE_NOW).toISOString(), sourceDeadline: null, deadlineCandidate: null,
+  updatedAt: new Date(FIXTURE_NOW).toISOString(),
+  sourceDeadline: { kind: 'instant', date: new Date(FIXTURE_NOW + 60 * MINUTE).toISOString().slice(0, 10), timeZone: 'UTC', at: new Date(FIXTURE_NOW + 60 * MINUTE).toISOString() },
+  deadlineCandidate: null,
   suggestedDate: null, decision: null, history: [], action: null,
 };
 

@@ -1,30 +1,38 @@
-import { ActivityIndicator, Modal, ScrollView, StyleSheet } from 'react-native';
+import { useRef } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { ScreenStack, ScreenStackItem } from 'react-native-screens';
 import { spacing, useTheme } from '@/theme';
 import type { FormSheetProps } from './FormSheet';
 
-/** UIKit navigation in a page sheet; onClosed waits for native dismissal. */
+/** A single native stack owns presentation and touch handling. */
 export function FormSheet({
   visible, title, onClose, onClosed, onShow, preventDismiss = false,
   leadingAction, trailingAction, children, testID,
 }: FormSheetProps) {
   const { mode, colors } = useTheme();
+  const { width, height } = useWindowDimensions();
+  const presented = useRef(false);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const finishClose = () => {
+    if (!presented.current) return;
+    presented.current = false;
+    onClosed?.();
+  };
   return (
-    <Modal
-      visible={visible}
-      presentationStyle="pageSheet"
-      animationType="slide"
-      supportedOrientations={['portrait', 'portrait-upside-down', 'landscape-left', 'landscape-right']}
-      allowSwipeDismissal={!preventDismiss}
-      onRequestClose={onClose}
-      onDismiss={onClosed}
-      onShow={onShow}
-    >
-      <ScreenStack style={styles.fill} nativeContainerStyle={{ backgroundColor: colors.surface }}>
-        <ScreenStackItem
+    <ScreenStack style={[styles.anchor, visible && { width, height }]} pointerEvents="box-none"
+      onFinishTransitioning={() => { if (!visible) finishClose(); }}>
+      <ScreenStackItem screenId="form-sheet-anchor" activityState={2}
+        pointerEvents="none" style={StyleSheet.absoluteFill} headerConfig={{ hidden: true }} />
+      {visible ? <ScreenStackItem
+          stackPresentation="pageSheet"
+          gestureEnabled={!preventDismiss}
+          preventNativeDismiss={preventDismiss}
+          onAppear={() => { presented.current = true; onShow?.(); }}
+          onDismissed={() => { if (visibleRef.current) onClose(); finishClose(); }}
           screenId={testID ?? 'form-sheet'}
           activityState={2}
-          style={styles.fill}
+          style={[StyleSheet.absoluteFill, { backgroundColor: colors.surface }]}
           contentStyle={{ backgroundColor: colors.surface }}
           headerConfig={{
             title,
@@ -70,13 +78,13 @@ export function FormSheet({
           </ScrollView>
           {trailingAction.busy ? <ActivityIndicator style={styles.progress} color={colors.textSecondary}
             accessibilityLabel={trailingAction.accessibilityLabel ?? trailingAction.label} /> : null}
-        </ScreenStackItem>
-      </ScreenStack>
-    </Modal>
+        </ScreenStackItem> : null}
+    </ScreenStack>
   );
 }
 
 const styles = StyleSheet.create({
+  anchor: { position: 'absolute', width: 0, height: 0 },
   fill: { flex: 1 },
   progress: { paddingVertical: spacing.sm },
   content: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg },

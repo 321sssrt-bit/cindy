@@ -7,24 +7,29 @@ import { CompanionSheet } from '../session/CompanionSheet.ios';
 import { FormSheet } from '../session/FormSheet.ios';
 import { ScrollView as RNScrollView } from 'react-native';
 import { onGeometryChange, presentationDetents } from '@expo/ui/swift-ui/modifiers';
-const state = vi.hoisted(() => ({ width: 402, height: 874, sheet: null as any, formModal: null as any }));
+const state = vi.hoisted(() => ({ width: 402, height: 874, sheet: null as any, formScreen: null as any, formStack: null as any }));
 vi.mock('../session/ComposerSheet', async () => import('../session/ComposerSheet.ios'));
 vi.mock('react-native', () => ({
   View: ({ children, style }: any) => <div style={style}>{children}</div>,
   ScrollView: ({ children, maintainVisibleContentPosition }: any) => <section data-rn-scroll data-preserve-position={maintainVisibleContentPosition?.minIndexForVisible}>{children}</section>,
   useWindowDimensions: () => ({ width: state.width, height: state.height }),
-  Modal: (props: any) => { state.formModal = props; return props.children; },
+  Modal: () => { throw new Error('A native stack must own form presentation without a second Modal touch root'); },
   ActivityIndicator: () => <span role="progressbar" />,
   StyleSheet: { create: (styles: any) => styles },
 }));
 vi.mock('react-native-screens', () => ({
-  ScreenStack: ({ children }: any) => children,
-  ScreenStackItem: ({ headerConfig, children }: any) => <div>
-    <nav>{[...headerConfig.headerLeftBarButtonItems, ...headerConfig.headerRightBarButtonItems].map((item: any) =>
-      <button key={item.identifier} data-testid={item.identifier} aria-label={item.accessibilityLabel}
-        data-system-image={item.icon?.name} disabled={item.disabled} onClick={item.onPress}>{item.title}</button>)}</nav>
-    {children}
-  </div>,
+  ScreenStack: (props: any) => { state.formStack = props; return props.children; },
+  ScreenStackItem: (props: any) => {
+    const { headerConfig, children } = props;
+    if (headerConfig.hidden) return null;
+    state.formScreen = props;
+    return <div>
+      <nav>{[...headerConfig.headerLeftBarButtonItems, ...headerConfig.headerRightBarButtonItems].map((item: any) =>
+        <button key={item.identifier} data-testid={item.identifier} aria-label={item.accessibilityLabel}
+          data-system-image={item.icon?.name} disabled={item.disabled} onClick={item.onPress}>{item.title}</button>)}</nav>
+      {children}
+    </div>;
+  },
 }));
 vi.mock('../session/CompanionNativeContent.ios', () => ({
   CompanionNativeContent: ({ children }: any) => <div data-rn-size="content">{children}</div>,
@@ -119,15 +124,14 @@ it('selects a supported native detent when opening and rotating a menu', () => {
   } finally { act(() => root.unmount()); }
 });
 
-// #7658: cover the native form's callback boundary, not its pixel appearance.
-// Existing SwiftUI tests do not exercise UIBarButtonItems or Modal.onDismiss.
-// Unit input: a long form, then a pending submit. Native rendering needs iOS acceptance.
+// #7658: native appearance/dismissal events guard focus and opening the created group.
+// RN Modal + ScreenStack swallowed row touches on-device; this mock rejects that nesting.
 it('keeps native form actions outside the roster and waits for completed dismissal', () => {
   const container = document.createElement('div');
   const root = createRoot(container);
   const close = vi.fn(); const create = vi.fn();
   const closed = vi.fn(); const shown = vi.fn();
-  const render = (busy = false) => act(() => root.render(<FormSheet visible title="New group" onClose={close}
+  const render = (busy = false, visible = true) => act(() => root.render(<FormSheet visible={visible} title="New group" onClose={close}
     onClosed={closed} onShow={shown} preventDismiss={busy}
     leadingAction={{ label: 'Close', disabled: busy, onPress: close, testID: 'close' }}
     trailingAction={{ label: 'Create', busy, onPress: create, testID: 'create' }}>
@@ -146,18 +150,36 @@ it('keeps native form actions outside the roster and waits for completed dismiss
     expect(close).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledOnce();
     expect(closed).not.toHaveBeenCalled();
-    act(() => state.formModal.onShow());
+    act(() => state.formScreen.onAppear());
     expect(shown).toHaveBeenCalledOnce();
     render(true);
-    expect(state.formModal.allowSwipeDismissal).toBe(false);
+    expect(state.formScreen.gestureEnabled).toBe(false);
+    expect(state.formScreen.preventNativeDismiss).toBe(true);
     act(() => (container.querySelector('[data-testid=close]') as HTMLButtonElement).click());
     act(() => (container.querySelector('[data-testid=create]') as HTMLButtonElement).click());
     expect(close).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledOnce();
     expect(container.querySelector('[role=progressbar]')).not.toBeNull();
     expect(viewport.querySelector('[role=progressbar]')).toBeNull();
-    act(() => state.formModal.onDismiss());
+    const dismissed = state.formScreen.onDismissed;
+    render(false, false);
+    expect(closed).not.toHaveBeenCalled();
+    act(() => state.formStack.onFinishTransitioning());
     expect(closed).toHaveBeenCalledOnce();
+    act(() => state.formStack.onFinishTransitioning());
+    expect(closed).toHaveBeenCalledOnce();
+    act(() => dismissed());
+    expect(close).toHaveBeenCalledOnce();
+    expect(closed).toHaveBeenCalledOnce();
+    render();
+    act(() => state.formScreen.onAppear());
+    expect(shown).toHaveBeenCalledTimes(2);
+    act(() => state.formScreen.onDismissed());
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(closed).toHaveBeenCalledTimes(2);
+    render(false, false);
+    act(() => state.formStack.onFinishTransitioning());
+    expect(closed).toHaveBeenCalledTimes(2);
   } finally { act(() => root.unmount()); }
 });
 

@@ -1,5 +1,6 @@
 /** Bot API incoming RichMessage uses blocks, unlike outgoing markdown/html.
- * Keep this projection aligned with telegram-hook-server/telegram/messageText.ts.
+ * Keep visible text aligned with telegram-hook-server/telegram/messageText.ts;
+ * media-only labels are a personal-bot extension, not attachment delivery.
  * Only visible content is read; media IDs, callback data and metadata stay out.
  */
 export interface TelegramTextContent {
@@ -15,6 +16,14 @@ const MAX_COLUMNS = 20;
 // of their own; budget work independently of the visible output length.
 const MAX_DEPTH = 64;
 const MAX_NODES = 32_768 * MAX_DEPTH;
+const RICH_MEDIA_LABELS = new Map([
+  ['document', '文件'],
+  ['photo', '图片'],
+  ['audio', '音频'],
+  ['video', '视频'],
+  ['animation', '动画'],
+  ['voice_note', '语音消息'],
+]);
 
 export function telegramMessageText(message: TelegramTextContent): string {
   if (message.text?.trim()) return message.text;
@@ -100,7 +109,21 @@ export function telegramMessageText(message: TelegramTextContent): string {
       const text = visit(item[key], depth + 1, separator);
       if (text) parts.push(text);
     }
-    return parts.join('\n');
+    const text = parts.join('\n');
+    if (text.trim()) return text;
+    const label = typeof item.type === 'string' ? RICH_MEDIA_LABELS.get(item.type) : undefined;
+    if (label) {
+      // Only the visible filename is allowed out of the media object. Never
+      // recurse into it: file IDs, thumbnails, MIME and other metadata stay out.
+      const media = item[item.type as string];
+      const name =
+        media && typeof media === 'object' && 'file_name' in media ? media.file_name : undefined;
+      return visit(
+        `[${label}${typeof name === 'string' && name.trim() ? `: ${name}` : ''}]`,
+        depth + 1,
+      );
+    }
+    return text;
   }
   const text = visit(message.rich_message?.blocks, 0, '\n').slice(0, MAX_TEXT);
   return text.trim() ? text : '';

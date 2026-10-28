@@ -254,6 +254,67 @@ describe('replyContextOf', () => {
     expect(replyContextOf(m)?.text).toBe(expected);
   });
 
+  // Media-only blocks used to disappear even though their type/name is visible.
+  // Exercise the same unit entry points as text, including nested containers;
+  // these markers describe references and do not assert attachment delivery.
+  it('keeps rich media labels and filenames in references and nested history', () => {
+    const rich = msg({
+      text: undefined,
+      rich_message: {
+        blocks: [
+          {
+            type: 'document',
+            document: { file_name: 'report.pdf', file_id: 'hidden-id', mime_type: 'hidden-mime' },
+          },
+        ],
+      },
+    });
+    const reply = msg({ reply_to_message: rich });
+    expect(replyContextOf(reply)).toMatchObject({ messageId: '1', text: '[文件: report.pdf]' });
+    expect(groupWindowEntryOf(rich).text).toBe('[文件: report.pdf]');
+
+    rich.rich_message = {
+      blocks: [
+        {
+          type: 'details',
+          summary: '附件',
+          blocks: [
+            {
+              type: 'collage',
+              blocks: [
+                { type: 'photo', photo: [{ file_id: 'hidden-id' }], caption: { text: '  ' } },
+                {
+                  type: 'audio',
+                  audio: {
+                    file_name: 'song.mp3',
+                    file_id: 'hidden-id',
+                    performer: 'hidden-performer',
+                  },
+                },
+              ],
+            },
+            {
+              type: 'slideshow',
+              blocks: [
+                { type: 'video', video: { file_name: 'clip.mp4', file_id: 'hidden-id' } },
+                { type: 'animation', animation: { file_name: 'loop.gif', file_id: 'hidden-id' } },
+              ],
+            },
+            { type: 'voice_note', voice_note: { file_id: 'hidden-id' } },
+            { type: 'document', document: { file_id: 'hidden-id' } },
+            { type: 'unknown', document: { file_name: 'hidden-name' } },
+          ],
+        },
+      ],
+    };
+    const expected =
+      '附件\n[图片]\n[音频: song.mp3]\n[视频: clip.mp4]\n[动画: loop.gif]\n[语音消息]\n[文件]';
+    expect(replyContextOf(reply)?.text).toBe(expected);
+    expect(groupWindowEntryOf(rich).text).toBe(expected);
+    rich.has_protected_content = true;
+    expect(replyContextOf(reply)).toBeNull();
+  });
+
   it('uses an explicit quote and still respects protection of the original', () => {
     const m = msg({
       quote: { text: '选中的片段' },

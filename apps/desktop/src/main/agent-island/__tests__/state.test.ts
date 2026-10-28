@@ -1156,6 +1156,35 @@ describe('Agent Island display state', () => {
     expect(completed?.activityLines.at(-1)?.text).toBe('文档 测试已通过');
   });
 
+  // #7566 review, unit: whitespace-only deltas commit rich lines without a
+  // final-text repair. Exercise create, patch, closing fence and both terminals.
+  it.each([
+    { newline: '\n', terminal: 'done' },
+    { newline: '\r\n', terminal: 'status' },
+  ])('commits rich lines across standalone newlines (%j)', ({ newline, terminal }) => {
+    const state = createAgentIslandState();
+    const meta = { sessionId: 'rich-lines' };
+    applyAgentIslandEvent(state, meta, statusEvent(true, 'Generating...'), 1_000);
+    const create = JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'a', kind: 'text', props: { text: '初步结果' } });
+    const patch = JSON.stringify({ seq: 2, op: 'patch', id: 'a', props: { text: '检查完成' } });
+    const send = (delta: string) => applyAgentIslandEvent(state, meta, textDeltaEvent(delta), 1_100);
+    send('```cindy-ui' + newline + create.slice(0, 40));
+    send(create.slice(40));
+    send(newline);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('初步结果');
+    send(patch.slice(0, 20));
+    send(patch.slice(20));
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.activityLines.at(-1)?.text).toBe('初步结果');
+    send(newline);
+    expect(buildAgentIslandDisplayState(state, 1_200).sessions[0]?.messagePreview?.text).toBe('检查完成');
+    send('```');
+    send(newline + '后续说明');
+    applyAgentIslandEvent(state, meta, terminal === 'done' ? doneEvent() : statusEvent(false, 'Done'), 1_300);
+    const completed = buildAgentIslandDisplayState(state, 1_400).sessions[0];
+    expect(completed).toMatchObject({ phase: 'completed', compactDetail: '检查完成 后续说明' });
+    expect(completed?.activityLines.at(-1)?.text).toBe('检查完成 后续说明');
+  });
+
   // Review regression: a removed/emptied rich node must retract this message's
   // streamed line from both the activity log and active/queued preview (unit tier).
   it.each([

@@ -154,6 +154,21 @@ describe('Agent Island activity text stream', () => {
       .toBe(example + ' 继续说明');
   });
 
+  // #7566 review, unit: extracted code/Markdown is display content, not a
+  // second protocol document. Existing quoted-fence cases had no outer rich node.
+  it.each(['code', 'markdown'] as const)('does not execute a rich %s example during projection', kind => {
+    const example = JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'inner',
+      kind: 'text', props: { text: '不应执行' } });
+    const source = '```cindy-ui\n' + JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'example', kind,
+      props: { language: 'cindy-ui', text: kind === 'code' ? example : '```cindy-ui\n' + example + '\n```' } }) + '\n```';
+    for (const input of [source, JSON.stringify({ content: source })]) {
+      expect(normalizeActivityText(input)).toBe(example);
+      expect(normalizeRemoteActivityText(input)).toBe(example);
+      const stream = createActivityTextStreamState();
+      expect(appendActivityTextStream(stream, input)).toBe(example);
+    }
+  });
+
   // Deterministic work assertion plus visible result; no wall-clock timing.
   it.each(['', '{"content":"'])('does not parse an unchanged formatted streaming prefix again (%s)', prefix => {
     const parse = vi.spyOn(previewText, 'streamingMarkdownPreviewText');

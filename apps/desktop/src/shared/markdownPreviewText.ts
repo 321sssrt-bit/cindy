@@ -13,10 +13,18 @@ export function markdownPreviewText(
   markdown: string,
   options: { includeImageAlt?: boolean; imageFallback?: string } = {},
 ): string {
+  return markdownTextPreview(richAnswerText(markdown), options);
+}
+
+/** Project already-extracted Markdown; fenced examples are literal code. */
+export function markdownTextPreview(
+  markdown: string,
+  options: { includeImageAlt?: boolean; imageFallback?: string } = {},
+): string {
   return projectMarkdownPreview(markdown, options).text;
 }
 
-/** Streaming only: let the Markdown parser recognize an unfinished destination.
+/** Streaming already-extracted Markdown: recognize an unfinished destination.
  * Synthetic closers never enter the source or final projection, and code nodes
  * remain code. The flag lets a stream skip parsing ordinary URL characters. */
 export function streamingMarkdownPreviewText(markdown: string): { text: string; pendingLink: boolean } {
@@ -30,7 +38,7 @@ function projectMarkdownPreview(
 ): { text: string; pendingLink: boolean } {
   // Marked's link regex can backtrack for minutes on short bracketed code spans.
   // These previews run on Main after DB replies, so use the existing remark parser.
-  const source = richAnswerText(markdown);
+  const source = markdown;
   let root = previewParser.parse(source);
   let pendingLink = false;
   if (streaming && source.includes('](')) {

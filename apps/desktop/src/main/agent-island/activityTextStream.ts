@@ -1,5 +1,5 @@
 import { richAnswerText, splitRichAnswer } from '@cindy/maker-shared/rich-answer';
-import { markdownPreviewText, streamingMarkdownPreviewText } from '../../shared/markdownPreviewText.js';
+import { markdownTextPreview, streamingMarkdownPreviewText } from '../../shared/markdownPreviewText.js';
 
 export const AGENT_ISLAND_ACTIVITY_TEXT_MAX_LENGTH = 280;
 // Match the rich-answer parser's source ceiling, separately from visible text.
@@ -61,10 +61,12 @@ export function appendActivityTextStream(
   metrics?: ActivityTextStreamMetrics,
 ): string {
   const previousPreview = state.rawPreview;
+  const previousNewline = state.rawPreviewHasPendingNewline;
   appendRawPreview(state, chunk, metrics);
   const destinationOnly = state.rawPreviewPendingLink && !/[\s\\()[\]<>`"']/.test(chunk);
-  const uncommittedRich = state.rawPreviewPendingRich && !/[\r\n]/.test(chunk);
-  const previewChanged = state.rawPreview !== previousPreview && !destinationOnly && !uncommittedRich;
+  const richLineBoundary = state.rawPreviewPendingRich && /[\r\n]/.test(chunk);
+  const uncommittedRich = state.rawPreviewPendingRich && !richLineBoundary && !previousNewline;
+  const previewChanged = (state.rawPreview !== previousPreview || richLineBoundary) && !destinationOnly && !uncommittedRich;
 
   if (state.mode === 'plain') {
     return rawPreviewText(state, previewChanged);
@@ -273,7 +275,9 @@ function rawPreviewText(state: ActivityTextStreamState, changed = true): string 
   if (!changed) return state.displayText;
   // A fence header may itself arrive in several deltas. Do not leave that
   // temporary header as the last visible activity when the rich block is empty.
-  let source = state.rawPreview;
+  // A standalone newline commits an operation even before another non-space
+  // character flushes the accumulator's pending whitespace.
+  let source = state.rawPreview + (state.rawPreviewHasPendingNewline ? '\n' : '');
   const tail = source.match(/(^|\n)(`+|~+)([^\n]*)$/);
   if (tail && 'cindy-ui'.startsWith(tail[3].trim())) {
     const start = tail.index! + tail[1].length;
@@ -302,7 +306,7 @@ function rawPreviewText(state: ActivityTextStreamState, changed = true): string 
 function normalizePlainActivityText(text: string): string {
   // Keep the hot path for plain bounded streaming prefixes cheap; formatted
   // answers use the same projection as notifications and the session list.
-  const plain = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(text) ? markdownPreviewText(text) : text;
+  const plain = /[*_`~<>!#|&\n\r]|\](?:\(|\[)|^\s*(?:[-+] |\d+[.)] )/.test(text) ? markdownTextPreview(text) : text;
   return boundActivityText(plain);
 }
 

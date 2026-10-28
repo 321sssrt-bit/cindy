@@ -413,6 +413,14 @@ describe('inline draft ids and text-only props', () => {
     expect(doc.issues).toBe(0);
     expect(doc.nodes.get('tabs')?.children[0]).toBe('second');
   });
+
+  it('keeps a string props on the kinds that render text from it', () => {
+    const doc = new RichAnswerStream().update(
+      line(1, { op: 'create', id: 'm', kind: 'math', props: 'E = mc^2' }),
+    );
+    expect(doc.issues).toBe(0);
+    expect(doc.nodes.get('m')?.props.text).toBe('E = mc^2');
+  });
   it('drops a string props on a kind that never reads text', () => {
     const doc = new RichAnswerStream().update(
       line(1, { op: 'create', id: 'd', kind: 'details', props: 'plain string' }),

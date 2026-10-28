@@ -67,7 +67,7 @@ const CONTAINER_KINDS = [
 ];
 
 /** Kinds that render `props.text`; only these can carry a bare string. */
-const TEXT_PROP_KINDS: RichAnswerKind[] = ["text", "markdown", "heading", "code"];
+const TEXT_PROP_KINDS: RichAnswerKind[] = ["text", "markdown", "heading", "code", "math", "diagram"];
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const value = (v: unknown): v is RichValue =>

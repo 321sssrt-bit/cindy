@@ -1087,6 +1087,18 @@ export async function performSessionAgentSwitch(
         throw new Error('Session history changed during agent relocation');
       }
     };
+    const closeFailedNativeSession = async () => {
+      if (!deps.getLiveSession(sessionId)) return;
+      try {
+        await deps.closeSession(sessionId);
+      } catch (error) {
+        // The failed target is only cleanup. Its link cannot veto source rollback
+        // or the atomic removal of an unusable native ID and restored boundary.
+        deps.log.warn('agent-switch: failed native session cleanup failed; continuing fallback', {
+          sessionId, error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
     if (relocating && !forcedRelocation && fromDbKind === toDbKind && deps.relocateNativeHistory) {
       // Close flushes the last native ID. Never snapshot the pre-close ID after a native fork/compact.
       const fresh = await deps.getSessionRow(sessionId);
@@ -1149,7 +1161,7 @@ export async function performSessionAgentSwitch(
             || (handoffGeneration !== undefined && deps.readPendingHandoffGeneration?.(sessionId) !== handoffGeneration)) {
             throw error;
           }
-          if (deps.getLiveSession(sessionId)) await deps.closeSession(sessionId);
+          await closeFailedNativeSession();
           if (deps.readOwnerGeneration?.() !== ownerGeneration
             || (handoffGeneration !== undefined && deps.readPendingHandoffGeneration?.(sessionId) !== handoffGeneration)) {
             throw error;
@@ -1262,7 +1274,10 @@ export async function performSessionAgentSwitch(
       } catch (err) {
         if (relocating) assertTransferCurrent();
         if (relocatedNativeId || parked) {
-          if (relocatedNativeId && deps.getLiveSession(sessionId)) await deps.closeSession(sessionId);
+          if (relocatedNativeId) {
+            await closeFailedNativeSession();
+            assertTransferCurrent();
+          }
           // ---- resume 回落:清停泊 id → 换全量交接 → 全新原生会话重试 ----
           // 停泊原生会话可能已失效(transcript 被清理、CLI 升级不兼容等),这些
           // 只有 spawn 时才暴露。回落是确定性代码路径,不留半 resume 状态。

@@ -13,6 +13,7 @@ Pi 只改写副本首行的 session ID 与 cwd，使其指向接收端工作目�
 `_cindyRequireNativeResume`：适配器等待 CLI 的初始化握手并拒绝静默新建，恢复失败交回宿主切换事务。
 该标记覆盖手动、配额均衡与启动失败换电脑；普通 Claude 无效会话自愈保持原语义。启动迁移无法保存原子回退所需的边界时，先还原源位置与 ID，再返回失败，不打开副本。
 这些命令不加入只读／断链自动重放名单。恢复失败回落已有的原子 resume fallback，不把切账号或清空历史当普通失败。
+失败目标的关闭仅作尽力清理，断链错误不能阻止配额探测还原源路由或手动切换提交原子摘要回退；清理等待后仍须复核账号与历史代次，取消与改选继续阻止迟到提交。
 边界消息增加可选 `nativeHistory: restored | fallback`，桌面与手机在 fallback 时显示「已用摘要接续」；旧客户端忽略新增字段，
 仍能读取原有 handoff/resumed。无服务端、数据库 schema、环境变量或 Mobile 原生配置变化。
 回归：`relocateNativeHistory.test.ts`、`nativeHistoryTransfer.test.ts`、`nativeHistoryStorage.test.ts`、`sessionAgentSwitchHandler.test.ts`、device-link `remoteAgent.test.ts`。

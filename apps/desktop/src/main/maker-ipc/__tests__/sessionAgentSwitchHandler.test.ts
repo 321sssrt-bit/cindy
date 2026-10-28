@@ -91,6 +91,7 @@ describe('same-harness native relocation', () => {
     const { deps } = makeDeps({
       getSessionRow: vi.fn(async () => ({ ...row })),
       relocateNativeHistory: vi.fn(async () => failure === 'missing' ? null : 'transferred'),
+      closeSession: vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error('DEVICE_LINK_NOT_CONNECTED')),
       applyAgentSwitchToDb: vi.fn(async (_id, patch) => { row = { ...row, ...patch, providerId: patch.providerId ?? null }; }),
       getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: failure === 'silent' ? 'fresh' : row.sdkSessionId ?? undefined }),
       bootstrapSwitchedSession: vi.fn(async () => { if (failure === 'rejected') throw new Error('cannot resume'); }),
@@ -169,6 +170,41 @@ describe('same-harness native relocation', () => {
     });
     await performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true });
     expect(deps.applyResumeFallbackAtomically).toHaveBeenCalledWith('s1', 'boundary-client-1', expect.objectContaining({ resumed: false, handoff: expect.stringContaining('你好') }));
+    expect(deps.bootstrapSwitchedSession).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['current', 'account-changed', 'history-cleared'] as const)('settles native resume fallback despite failed target cleanup (%s)', async state => {
+    let owner = 1;
+    let generation = 0;
+    let row = makeRow({ workingDir: '/project', sdkSessionId: 'source-native' });
+    let boundary: unknown;
+    const { deps } = makeDeps({
+      readOwnerGeneration: () => owner,
+      readPendingHandoffGeneration: () => generation,
+      getSessionRow: vi.fn(async () => ({ ...row })),
+      getLiveSession: () => ({ isTurnRunning: () => false, sdkSessionId: row.sdkSessionId ?? undefined }),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      applyAgentSwitchToDb: vi.fn(async (_id, patch) => { row = { ...row, ...patch, providerId: patch.providerId ?? null }; }),
+      insertBoundaryMessage: vi.fn(async (_id, content) => { boundary = content; return 'boundary-client-1'; }),
+      applyResumeFallbackAtomically: vi.fn(async (_id, _clientId, content) => { row.sdkSessionId = null; boundary = content; }),
+      closeSession: vi.fn().mockResolvedValueOnce(undefined).mockImplementation(async () => {
+        if (state === 'account-changed') owner++;
+        if (state === 'history-cleared') generation++;
+        throw new Error('DEVICE_LINK_NOT_CONNECTED');
+      }),
+      bootstrapSwitchedSession: vi.fn().mockRejectedValueOnce(new Error('cannot resume')).mockResolvedValue(undefined),
+    });
+    const switching = performSessionAgentSwitch(deps, { ...validParams, targetAgentKind: 'claude-code', agentDeviceId: 'mini', applyNow: true });
+    if (state !== 'current') {
+      await expect(switching).rejects.toThrow(state === 'account-changed' ? 'REMOTE_AGENT_ACCOUNT_CHANGED' : 'history changed');
+      expect(deps.applyResumeFallbackAtomically).not.toHaveBeenCalled();
+      expect(deps.bootstrapSwitchedSession).toHaveBeenCalledOnce();
+      return;
+    }
+    await expect(switching).resolves.toMatchObject({ switched: true, engineReady: true });
+    expect(row.sdkSessionId).toBeNull();
+    expect(boundary).toMatchObject({ resumed: false, nativeHistory: 'fallback', handoff: expect.stringContaining('你好') });
+    expect(deps.setPendingHandoff).toHaveBeenLastCalledWith('s1', expect.stringContaining('你好'), 0);
     expect(deps.bootstrapSwitchedSession).toHaveBeenCalledTimes(2);
   });
 

@@ -36,12 +36,12 @@ import sliderCss from '@/components/ui/slider.css?inline';
  * 历史卡片纯静态(净化器已剥 CSS 动画之外的一切动源,iframe 无脚本)。
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ChevronDown, Copy, FolderOpen, Ghost, Loader2 } from 'lucide-react';
 
 import { ImageLightbox } from './ImageLightbox';
-import { mailCardFooterHtml } from './mailCardFooter';
+import { mailCardFooterHtml, updateMailCardDocument } from './mailCardFooter';
 import { ModelLightbox } from './ModelLightbox';
 import { GhostCardLinkConfirm, GhostCardPromptPanel } from './GhostCardHostPrompts';
 import { toast } from '@/lib/toast';
@@ -239,7 +239,7 @@ function GhostCardCanvas({
     return () => { window.clearInterval(timer); animation?.cancel(); };
   }, [mail]);
   const changeAction = readGhostCardFormChange(html);
-  const formKey = changeAction ?? JSON.stringify(formFields);
+  const formKey = mail ? `mail:change:${mail.key}` : changeAction ?? JSON.stringify(formFields);
   const formRetired = !!mail?.supersededBy || ['sent', 'deleted'].includes(mail?.state ?? '');
   useEffect(() => () => {
     if (sessionId) releaseGhostCardFormDelivery(sessionId, `${callId}:${editorId}`);
@@ -253,7 +253,19 @@ function GhostCardCanvas({
   }
   formState.current.values = mergeGhostCardFormValues(formState.current.values, formState.current.base, incoming);
   formState.current.base = incoming;
-  useEffect(() => { formState.current.busy = false; setFormBusy(false); }, [html]);
+  useEffect(() => {
+    // Delivery acknowledgement is not send completion. Autosave echoes must
+    // not unlock a send while the provider is still preparing its countdown.
+    if (!mail || !['draft', 'syncing'].includes(mail.state)) {
+      formState.current.busy = false;
+      setFormBusy(false);
+      if (mail) iframeRef.current?.contentDocument?.querySelectorAll<HTMLElement>('[data-ghost-submit]').forEach(el => {
+        el.removeAttribute('aria-disabled');
+        el.style.opacity = '';
+        el.style.pointerEvents = '';
+      });
+    }
+  }, [html, mail]);
   const [lightbox, setLightbox] = useState<{ src: string; galleryId: string } | null>(null);
   // data-ghost-model 声明的 3D 预览:点击开应用内 3D 查看器(GLB 已在媒体
   // 总仓,blob 来源直读,预览图作 poster)。
@@ -541,6 +553,13 @@ function GhostCardCanvas({
           formState.current.busy = true;
           setFormBusy(true);
           lockActionEl(el);
+          const unlock = () => {
+            formState.current.busy = false;
+            setFormBusy(false);
+            el.removeAttribute('aria-disabled');
+            el.style.opacity = '';
+            el.style.pointerEvents = '';
+          };
           void formDelivery.current.then(async ok => {
             if (!ok || (sessionId && await pendingGhostCardFormDelivery(sessionId) === false)) return { ok: false };
             // A second view may have delivered edits since this iframe bound its listener.
@@ -550,9 +569,7 @@ function GhostCardCanvas({
               ? mergeGhostCardFormValues(formState.current.values, formState.current.base, Object.fromEntries(latest.map(f => [f.name, f.value])))
               : formState.current.values;
             return window.electronAPI?.ghosts?.dispatchCardAction?.(callId, actionId, undefined, values) ?? { ok: false };
-          }).then(result => {
-            if (!result.ok) { formState.current.busy = false; setFormBusy(false); }
-          }).catch(() => {});
+          }).then(result => { if (!result.ok) unlock(); }).catch(unlock);
           return;
         }
         // data-ghost-prompt 类动作:先弹宿主输入框收集文字,发送时才派发
@@ -612,6 +629,17 @@ function GhostCardCanvas({
     });
     measureHeight();
   }, [measureHeight, callId, lockActionEl, bindAudioSlot, allowExternalLinks, html, sessionId]);
+
+  const cardSrcDoc = buildCardSrcDoc(renderedCardHtml, themeVars);
+  const initialMailDocument = useRef(cardSrcDoc);
+  const refreshMailDocument = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (mail && doc?.body && doc.head) updateMailCardDocument(doc, cardSrcDoc);
+    attachClickBridge();
+  }, [mail, cardSrcDoc, attachClickBridge]);
+  useLayoutEffect(() => {
+    if (mail) refreshMailDocument();
+  }, [mail, refreshMailDocument]);
 
   useEffect(() => {
     // srcDoc 更新后 load 事件可能在 effect 前已触发(同进程同步解析),补挂一次。
@@ -721,8 +749,8 @@ function GhostCardCanvas({
         <iframe
           ref={iframeRef}
           sandbox="allow-same-origin"
-          srcDoc={buildCardSrcDoc(renderedCardHtml, themeVars)}
-          onLoad={attachClickBridge}
+          srcDoc={mail ? initialMailDocument.current : cardSrcDoc}
+          onLoad={refreshMailDocument}
           title={ariaTitle}
           className="block w-full border-0"
           style={{

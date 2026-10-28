@@ -48,11 +48,12 @@ import { buildVisionBridgeProxyTransform } from '../vision-bridge/vision-bridge-
 
 import { CLAUDE_PROVIDER_AUTH_PLACEHOLDER_KEY, anthropicCatalogModelIds, isAnthropicWireModel } from './claude-gateway-config.js';
 import { getActiveCatalog } from './active-catalog.js';
-import { providerModelRecord } from '@cindy/model-providers';
+import { providerModelRecord, modelWithInterface } from '@cindy/model-providers';
 import { outboundFetch } from './outbound-fetch.js';
 import { invocationModelRecord, requiresNativeProviderAuth } from './pi-provider-transport.js';
 import { createClaudeProviderBridge } from './claude-provider-bridge.js';
 import { isOpenAiSubscriptionProviderId } from './codex-account-auth.js';
+import { createPiWebSocketRequestPreparer, resolvePiWebSocketUpstream, piWebSocketTransforms } from './pi-subscription-websocket.js';
 import { isClaudeSubscriptionProviderId, isXaiSubscriptionProviderId } from './subscription-account-auth.js';
 import {
   getPiNativeSubscriptionHandler,
@@ -93,6 +94,7 @@ import {
 import {
   buildRouteDecision,
   providerRoutingForModel,
+  sessionProviderRoutingForModel,
   gatewayDefaultRouteDecision,
   getUserProviderIdForSession,
   inferProviderIdForModel,
@@ -151,8 +153,9 @@ let _readGatewayKey: () => string | null = () => null;
 function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, wireModel: string, sessionId?: string): RoutingDecision {
   if (route.localHandler) return route;
   const provider = getActiveCatalog().providers.find(p => p.id === providerId);
-  const model = provider?.models['claude-code']?.find(m => m.id === wireModel);
-  const routing = provider ? providerRoutingForModel(provider, 'claude-code', wireModel) : null;
+  const catalogModel = provider?.models['claude-code']?.find(m => m.id === wireModel);
+  const routing = provider ? (sessionId ? sessionProviderRoutingForModel(sessionId, provider, 'claude-code', wireModel) : providerRoutingForModel(provider, 'claude-code', wireModel)) : null;
+  const model = catalogModel && modelWithInterface(catalogModel, routing?.modelInterface);
   // Adapter identity belongs to the declared route. An OAuth account can select
   // another host without becoming a different provider (e.g. Copilot Business).
   const nativeRow = model && routing && model.api ? invocationModelRecord(model, routing.upstream) : undefined;
@@ -179,6 +182,7 @@ function attachClaudeProviderBridge(route: RoutingDecision, providerId: string, 
       fetchImpl: outboundFetch,
     });
     return { ...route, localHandler: args => handler.handle({ ...args,
+      ...(routing.modelInterface && isPlainObject(args.parsedBody) ? { parsedBody: { ...args.parsedBody, model: routing.modelInterface.wireModelId } } : {}),
       prefs: { reasoningEffort: (sessionId ? getSessionEffort(sessionId) : null) ?? model.defaultEffort ?? undefined,
         fast: sessionId ? getSessionFastMode(sessionId) : false },
     }) };
@@ -1160,6 +1164,9 @@ export async function ensureAnthropicCompatProxyReady(): Promise<void> {
       // 函数形态:model-access 凭据同步可能在 proxy 启动(splash)后才把 endpoint
       // 换成下发值;每请求现取才能保证与当前 key 同租户(proxy 内部按值 memoize)。
       upstream: () => claudeUpstreamEndpoint(),
+      resolveWebSocketUpstream: resolvePiWebSocketUpstream,
+      prepareWebSocketRequest: createPiWebSocketRequestPreparer(),
+      webSocketTransforms: piWebSocketTransforms,
       oversizedRequestRecovery: createAttachmentRecovery(headers => {
         const piSessionId = headerValue(headers, 'x-cindy-pi-session-id');
         if (piSessionId) {

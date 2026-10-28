@@ -15,6 +15,7 @@
     "ko": "locales/ko.json"
   },
   "version": "1.0.0",
+  "releaseNotes": "新增图片编辑工具。", // 可选；更新说明要求见 §7.3
   "minCindyVersion": "1.2.3", // 示例；v3 必填:本插件实际依赖的首个 Cindy 正式版本(SemVer)
   "entry": "main.js",          // 电子脑入口(kind 字段已无需填写:插件只有芯片一种形态,缺省即 chip;写了也只认 "chip")
   "launch": "on-demand",       // 可选:电子脑启动模式。on-demand(缺省)=被需要才拉起;resident=唤醒即常驻(详情页会如实标注"常驻运行",绝大多数插件不需要,仅订阅型/需秒响应的场景用)
@@ -163,6 +164,9 @@ v3 直接用顶层字段声明插件贡献项与自主 Host 能力，不再有 `
 邮件插件声明 `mail: true`，调用 Cindy 内置 `cindyMail.register(adapter)`
 （version 1），不生成卡片 HTML、不打包公共流程；纯邮件插件不需要 `card`。
 阅读邮件可声明 `mailReader:{tool,hosts}`，工具接收 `{url}` 并返回 MailMessage，默认只读。
+可选 `participantPhotos:[{email,url}]` 最多 64 项，按小写邮箱精确匹配；照片 URL 仅 HTTPS，
+无凭据、自定义端口。缺照片/权限时省略，不阻断阅读；旧宿主忽略。桌面回退公开头像、
+企业图标和首字；头像不证明身份。正文外图仍需单独点击显示。
 `mail` 只能省略或写字面量 `true`；声明 `mailReader` 时必须同时有 `mail: true`，
 且 `tool` 必须指向本清单 `tools` 中的工具。协议校验与桌面安装校验都会拒绝不完整组合。
 支持打开即已读时增加 `mailReader.markRead:true`，读取工具接受可选 `markRead:true`；

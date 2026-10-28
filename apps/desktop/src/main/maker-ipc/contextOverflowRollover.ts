@@ -315,7 +315,8 @@ export function withReplaySourceNotes(
 ): OverflowReplayWireMessage {
   if (!agentMeta) return wire;
   const sourceNote = buildWireMessageSourceNote(
-    { origin: agentMeta.origin, sourcePlugin: agentMeta.sourcePlugin, sharedTaskAuthor: agentMeta.sharedTaskAuthor },
+    { origin: agentMeta.origin, sourcePlugin: agentMeta.sourcePlugin, sharedTaskAuthor: agentMeta.sharedTaskAuthor,
+      autoReviewUserText: agentMeta.autoReviewUserText },
     {
       visibleText: typeof wire === 'string' ? wire : extractPlainText(wire.content),
       autoResume: agentMeta.autoResume === true,
@@ -531,7 +532,7 @@ export type ContextRebuildReason =
 export function isBotChatContext(row: { source?: string | null; botRole?: string | null }): boolean {
   return (
     row.source === 'bot' &&
-    (row.botRole === 'canonical' || row.botRole === 'thread' || row.botRole === 'channel' || row.botRole === 'group')
+    (row.botRole === 'canonical' || row.botRole === 'thread' || row.botRole === 'routine' || row.botRole === 'channel' || row.botRole === 'group')
   );
 }
 

@@ -1,3 +1,4 @@
+import { matchesTaskCreators, useTaskCreatorIndex, useTaskCreatorOptions } from '@/features/bots/botFollowScopes';
 import { shouldShowOpenPathError } from '../../../shared/openPathResult';
 import { ErrorNotice } from '@/components/ui/error-notice';
 /**
@@ -50,6 +51,7 @@ import { CINDY_MAKE_ENABLED, isCindyMakeSource } from '@cindy/maker-shared/cindy
 
 import { cn } from '@/lib/utils';
 import { provisionalDraftTaskId, subscribeProvisionalDraftTask } from './provisionalDraftTask';
+import { useProvisionalDraftProjectTaskId } from './hooks/useProvisionalDraftProjectTaskId';
 import { toast } from '@/lib/toast';
 import { isDataOwnerPushCurrent } from '@/contexts/dataOwnerGeneration';
 import { useCCSessions } from '@/hooks/useCCSessions';
@@ -156,6 +158,7 @@ import {
   projectIdentityKeyForSession,
   pinnedSessionIdsInDisplayOrder,
   persistentProjectMatchesVendor,
+  withProjectSessions,
   type PersistentLocalProject,
   type ProjectNode,
 } from './lib/projectGrouping';
@@ -441,7 +444,8 @@ export function CCAgentSidebarUpper() {
   // F-PJ-10：filter.status 决定后端 fetch 时是否带 ?status=archived|all
   const hiddenProjects = useHiddenProjects();
   const { hiddenProjectKeys, initialSnapshot: sidebarSettingsSnapshot } = hiddenProjects;
-  const filter = useSidebarFilter(hiddenProjectKeys, sidebarSettingsSnapshot);
+  const creatorOptions = useTaskCreatorOptions();
+  const filter = useSidebarFilter(hiddenProjectKeys, sidebarSettingsSnapshot, creatorOptions);
   const includeArchived = filter.status;
   const sessionsHook = useCCSessions({ includeArchived });
   const { sessions: allSessionsForAttentionRaw } = useCCSessions({ includeArchived: 'all' });
@@ -463,6 +467,10 @@ export function CCAgentSidebarUpper() {
   );
   const remoteDevices = useRemoteDevices();
   const selectedMachineId = useEffectiveSelectedMachineId();
+  const projectAliasMembers = useMemo(
+    () => [...allSessionsForAttention, ...remoteProjectSessions],
+    [allSessionsForAttention, remoteProjectSessions],
+  );
   const searchProjectSessions = useMemo(
     () =>
       selectVisibleSessions(
@@ -491,6 +499,8 @@ export function CCAgentSidebarUpper() {
     false,
     searchPersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   const restorableSelectionProjectKeys = useMemo(
     () => new Set(searchProjectGroups.projects.map((project) => project.projectKey)),
@@ -983,8 +993,8 @@ function ExpandedView({
     };
   }, []);
 
-  const handleScheduleAction = useCallback(
-    async (group: AutomationSessionGroup, action: AutomationScheduleAction) => {
+  const handleAutomationScheduleAction = useCallback(
+    async (group: AutomationSessionGroup, action: Exclude<AutomationScheduleAction, 'archive-all'>) => {
       // 远程分组的操作发到任务所属电脑执行；本机分组仍走本机 IPC。
       const deviceId = group.deviceLinkDeviceId;
       const invokeSchedule = <T,>(channel: string, localCall: () => Promise<T>, id: string) =>
@@ -1551,6 +1561,10 @@ function ExpandedView({
     },
     [filter.status, effectiveIncludeArchived],
   );
+  const projectAliasMembers = useMemo(
+    () => [...allSessionsForAttention, ...remoteProjectSessions],
+    [allSessionsForAttention, remoteProjectSessions],
+  );
   const scopedSidebarSessions = useMemo(
     () =>
       selectVisibleSessions(sessions, remoteProjectSessions, selectedMachineId)
@@ -1569,18 +1583,20 @@ function ExpandedView({
     [scopedSidebarSessions, hiddenProjectKeys, localPlatform],
   );
 
+  const taskCreatorIndex = useTaskCreatorIndex();
   const activityFilteredSessions = useMemo(() => {
     const cutoff = cutoffForLastActivity(filter.lastActivity);
-    if (cutoff === null) return sidebarSessions;
-    return sidebarSessions.filter((s) => sessionActivityMs(s) >= cutoff);
-  }, [sidebarSessions, filter.lastActivity]);
+    if (cutoff === null && filter.creators === 'all') return sidebarSessions;
+    return sidebarSessions.filter((s) => (cutoff === null || sessionActivityMs(s) >= cutoff)
+      && matchesTaskCreators(s, filter.creators, taskCreatorIndex));
+  }, [sidebarSessions, filter.lastActivity, filter.creators, taskCreatorIndex]);
   const activityFilteredPersistentLocalProjects = useMemo(
     () =>
       filterPersistentLocalProjectsByLastActivity(
-        visiblePersistentLocalProjects,
+        filter.creators === 'all' ? visiblePersistentLocalProjects : [],
         cutoffForLastActivity(filter.lastActivity),
       ),
-    [filter.lastActivity, visiblePersistentLocalProjects],
+    [filter.lastActivity, filter.creators, visiblePersistentLocalProjects],
   );
 
   /* ---- Grouping & collapse ---- */
@@ -1590,6 +1606,8 @@ function ExpandedView({
     false,
     visiblePersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   // Project pinning is independent from conversation pinning. This catalogue
   // keeps pinned conversations inside their project solely for project identity
@@ -1600,6 +1618,8 @@ function ExpandedView({
     true,
     visiblePersistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   const groups = useProjectGroups(
     activityFilteredSessions,
@@ -1611,6 +1631,7 @@ function ExpandedView({
       activityFilteredPersistentLocalProjects === visiblePersistentLocalProjects
       ? allGroups
       : undefined,
+    projectAliasMembers,
   );
   // 普通项目目录也需要保留「所有会话都已单独置顶」的项目身份，供用户继续
   // 从 ProjectNode 菜单置顶整个项目；实际项目子行在渲染前仍会排除已置顶会话。
@@ -1624,6 +1645,7 @@ function ExpandedView({
       activityFilteredPersistentLocalProjects === visiblePersistentLocalProjects
       ? allProjectGroups
       : undefined,
+    projectAliasMembers,
   );
   const activeWorkingDirs = useMemo(
     () => allProjectGroups.projects.map((p) => p.projectKey),
@@ -1649,6 +1671,8 @@ function ExpandedView({
     true,
     persistentLocalProjects,
     localPlatform,
+    undefined,
+    projectAliasMembers,
   );
   // Visibility is a negative overlay only. Keep the raw universe above for
   // filter/manual-order GC, and expose a separate catalogue to sidebar UI.
@@ -1794,10 +1818,14 @@ function ExpandedView({
     [pinnedProjectKeys, localPlatform],
   );
 
-  const restorableProjectKeys = useMemo(
+  const provisionalProjectTaskId = useProvisionalDraftProjectTaskId();
+  // Only a restore operation needs this catalogue. Read current inputs after
+  // the awaited IPC instead of grouping twice on every sidebar update.
+  const getRestorableProjectKeys = useCallback(
     () =>
       collectRestorableProjectKeys({
         sessions: scopedSidebarSessions,
+        provisionalDraftTaskId: provisionalProjectTaskId,
         persistentLocalProjects: visiblePersistentLocalProjects,
         lastActivityCutoff: cutoffForLastActivity(filter.lastActivity),
         pinnedProjectKeys,
@@ -1806,6 +1834,7 @@ function ExpandedView({
       }),
     [
       filter.lastActivity,
+      provisionalProjectTaskId,
       localPlatform,
       pinnedProjectKeys,
       scopedSidebarSessions,
@@ -1813,8 +1842,8 @@ function ExpandedView({
       visiblePersistentLocalProjects,
     ],
   );
-  const restorableProjectKeysRef = useRef(restorableProjectKeys);
-  restorableProjectKeysRef.current = restorableProjectKeys;
+  const restorableProjectKeysRef = useRef(getRestorableProjectKeys);
+  restorableProjectKeysRef.current = getRestorableProjectKeys;
   const hiddenProjectComparisonKeys = useMemo(
     () => buildProjectKeyComparisonSet(hiddenProjectKeys, localPlatform),
     [hiddenProjectKeys, localPlatform],
@@ -1980,7 +2009,7 @@ function ExpandedView({
         waitingSessionIds: waiting,
       },
       [
-        ...visibleProjects.flatMap((project) => project.sessions),
+        ...allProjectGroups.projects.flatMap((project) => project.sessions),
         ...groups.bots.flatMap((bot) => bot.sessions),
         ...visibleDialogues,
         ...visibleUnclassified,
@@ -2015,10 +2044,27 @@ function ExpandedView({
     urgentSet,
     viewedSessionId,
     visibleDialogues,
-    visibleProjects,
+    allProjectGroups.projects,
     visibleUnclassified,
   ]);
   const projectPriorityContext = projectPriorityProjection.context;
+  // 只重排置顶项目的子任务；置顶项自身仍按用户的拖拽顺序排列。
+  const pinnedSortContext = filter.sortBy === 'priority' ? projectPriorityContext : undefined;
+  const sortedPinnedEntries = useMemo(
+    () => visiblePinnedEntries.map((entry) =>
+      entry.kind === 'project'
+        ? {
+            ...entry,
+            displaySessions: sortSessionsForMainList(
+              entry.displaySessions ?? entry.project.sessions,
+              filter.sortBy,
+              pinnedSortContext,
+            ),
+          }
+        : entry,
+    ),
+    [visiblePinnedEntries, filter.sortBy, pinnedSortContext],
+  );
 
   const visibleProjectsWithVendor = useMemo(() => {
     const unpinnedProjects = visibleProjects.filter(
@@ -2036,10 +2082,7 @@ function ExpandedView({
       )
         return [];
       return [
-        {
-          ...project,
-          sessions: matchingSessions.filter((session) => session.pinnedAt == null),
-        },
+        withProjectSessions(project, matchingSessions.filter((session) => session.pinnedAt == null)),
       ];
     });
     return sortProjectsForSidebar(
@@ -2737,7 +2780,7 @@ function ExpandedView({
             localPlatform,
           ),
           setProjectHidden,
-          getCurrentProjectKeys: () => restorableProjectKeysRef.current,
+          getCurrentProjectKeys: () => restorableProjectKeysRef.current(),
           ensureProjectIncluded: filter.ensureProjectIncluded,
           localPlatform,
         });
@@ -2920,7 +2963,7 @@ function ExpandedView({
         throw err;
       }
     },
-    [projectAliases, t],
+    [projectAliases.updateAlias, t],
   );
 
   const handleRemoveProjectFromSidebar = useCallback(
@@ -3008,7 +3051,7 @@ function ExpandedView({
         toast.error(t('ccAgent.sidebar.pinFailed'));
       }
     },
-    [filter, t],
+    [filter.removePin, filter.promotePin, t],
   );
 
   // Event-only state: metadata updates recreate the collapsed Set even when
@@ -3554,6 +3597,14 @@ function ExpandedView({
     viewedSessionId,
     navigate,
   });
+
+  const handleScheduleAction = useCallback(
+    (group: AutomationSessionGroup, action: AutomationScheduleAction) =>
+      action === 'archive-all'
+        ? archiveSessionGroup({ kind: 'automation', group, scheduleSessionIndex })
+        : handleAutomationScheduleAction(group, action),
+    [archiveSessionGroup, handleAutomationScheduleAction, scheduleSessionIndex],
+  );
   const handleArchiveAllInProject = useCallback(
     (project: ProjectNode) => archiveSessionGroup({ kind: 'project', project }),
     [archiveSessionGroup],
@@ -3807,7 +3858,7 @@ function ExpandedView({
                  * 同样不展示，继续使用本地与已缓存内容即可。
                  */}
                 <PinnedSection
-                  entries={visiblePinnedEntries}
+                  entries={sortedPinnedEntries}
                   allKnownProjects={visibleProjectUniverse}
                   renderProject={(
                     project,

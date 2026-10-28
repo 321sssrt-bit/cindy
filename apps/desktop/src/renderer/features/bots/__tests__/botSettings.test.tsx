@@ -631,9 +631,6 @@ describe('Bot settings unified autosave', () => {
     vi.useFakeTimers();
     const route = capabilities().modelChain[0]!;
     const view = renderSettings({ capabilities: capabilities({ modelChainOverride: [route] }) });
-    const details = view.container.querySelector('[data-testid="bot-model-chain-editor"] details')!;
-    (details as HTMLDetailsElement).open = true;
-    fireEvent(details, new Event('toggle'));
     fireEvent.click(screen.getByText('bots.model.restoreDefault'));
     await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
     expect(mocks.updateBotProfile.mock.lastCall?.[1]).toMatchObject({
@@ -790,6 +787,22 @@ describe('Bot settings unified autosave', () => {
     expect(mocks.updateBotProfile.mock.calls[0]?.[1]).toMatchObject({
       capabilities: expect.objectContaining({ memory: true }),
     });
+  });
+
+  it('edits what the teammate knows about its owner on the memory page and saves it as userContextSource', async () => {
+    vi.useFakeTimers();
+    Object.assign(window.electronAPI, {
+      localDb: { ...window.electronAPI.localDb, bots: { memory: { list: vi.fn(async () => []) } } },
+    });
+    renderSettings();
+    fireEvent.click(screen.getByRole('button', { name: 'bots.memory.title' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'bots.memory.aboutMe' }), {
+      target: { value: 'Prefers tea' },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(mocks.updateBotProfile.mock.calls[0]?.[1]).toEqual({ userContextSource: 'Prefers tea' });
   });
 });
 

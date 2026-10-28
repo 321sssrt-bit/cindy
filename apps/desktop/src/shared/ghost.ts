@@ -1547,7 +1547,7 @@ export interface GhostManifest {
    * 页用它避免抖动)。须与 settingsHtml 成对声明。
    */
   settingsHeight?: number;
-  /** 是否显示宿主「模型与任务」默认配置卡；缺省或 true 显示，false 仅隐藏卡片。 */
+  /** 本插件是否使用宿主默认配置卡；缺省/true 启用，false 隐藏且不读取该插件的卡片配置。 */
   showTaskPreferences?: boolean;
   /**
    * 卡片能力；空对象表示基础卡片渲染。
@@ -6564,7 +6564,7 @@ export const GHOST_ERRAND_MIN_INTERVAL_MS = 10_000;
 export const GHOST_ERRAND_SESSION_KEY_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /**
- * 插件新建任务与普通任务使用同一三档，由用户设置决定授权上限，缺省 ask。
+ * 插件新建任务与普通任务使用同一三档；显式参数优先，其次有效默认配置，缺省 ask。
  * plan / acceptEdits 仅保留旧配置及旧接口兼容，不自动升权或丢弃历史选择。
  */
 export const GHOST_ERRAND_PERMISSION_MODES = [...PLUGIN_TASK_PERMISSION_MODES, 'plan', 'acceptEdits'] as const;

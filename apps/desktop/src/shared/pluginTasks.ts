@@ -94,7 +94,7 @@ export type PluginTaskRequest = (
       /** Opt in to Host naming after the first accepted message; omit title. */
       autoTitle?: boolean;
       route?: PluginTaskRoute;
-      /** New task only; cannot exceed the user's current plugin permission policy. */
+      /** New task only; requires Host task approval and does not change plugin defaults. */
       permissionMode?: PluginTaskPermissionMode;
       isolatedWorkspace?: boolean;
       /** Requires `agent.hiddenTasks`; creates the task as a background task. */

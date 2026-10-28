@@ -214,7 +214,7 @@ const r = await cindy.agent.requestSchedule({
 
 - `list({targetKind:'project'|'task'|'bot'})`：返回 `{targets:[{kind,id,label,detail}]}`，只含本机可用目标的名称和目录/说明，不含消息历史。插件可自行搜索和展示列表，最近活动只用于排序。
 - `resolve({target:{kind,id}})`：复核已保存或本次选择的目标，返回最新 `{kind,id,label,detail}`。只查询，不创建任务、不打开 UI、不保存绑定；固定目标失效返回 TARGET_UNAVAILABLE，不自动替换。插件可将 `{kind,id}` 存入自己的配置。project 的 id 是 Cindy 已有项目目录，task/bot 的 id 是任务/伙伴标识。
-- `send({target:{kind,id},requestKey,text,context?,title?,autoTitle?,route?,permissionMode?,delivery?,attachments?})`：直接指定目标，Host 当次复核。project 在目录中新建普通任务，可传统一模型目录的 route 和已授权范围内的 permissionMode；task/bot 沿用接收方模型、权限、目录，不接受 route 或 permissionMode。`delivery` 为 `queue | steer`，缺省 queue；project 不接受 steer。steer 尝试同轮注入，不停止当前轮，空闲或插话暂不可用时入队。返回 `{taskId,accepted:true,delivery:"queue"|"steer"}` 表示实际接受路径，不表示执行完成。筛查拒绝返回 DELIVERY_REJECTED，不入队重试；ACK 未知返回 DELIVERY_UNCERTAIN，不得换键重发。不开放读取任意任务历史或改模。
+- `send({target:{kind,id},requestKey,text,context?,title?,autoTitle?,route?,permissionMode?,delivery?,attachments?})`：直接指定目标，Host 当次复核。project 在目录中新建普通任务，可传统一模型目录的 route 和本次 permissionMode；task/bot 沿用接收方模型、权限、目录，不接受 route 或 permissionMode。`delivery` 为 `queue | steer`，缺省 queue；project 不接受 steer。steer 尝试同轮注入，不停止当前轮，空闲或插话暂不可用时入队。返回 `{taskId,accepted:true,delivery:"queue"|"steer"}` 表示实际接受路径，不表示执行完成。筛查拒绝返回 DELIVERY_REJECTED，不入队重试；ACK 未知返回 DELIVERY_UNCERTAIN，不得换键重发。不开放读取任意任务历史或改模。
 - 同一次 send 重试沿用相同 requestKey、target、内容和 delivery（缺省与 queue 等价）；同键参数变化返回 REQUEST_KEY_CONFLICT。Host 在执行前持久保留投递回执，重启后已接受的请求返回原结果，未确定结果的请求返回 DELIVERY_UNCERTAIN，不再次创建或投递。回执不保存正文或附件字节。不要通过更换 requestKey 绕过未知结果，应先让用户在 Cindy 检查。
 - `cancel({requestKey})`：使本次请求及迟到的发送失效，仅撤回本插件该请求尚未执行的输入；不会停止接收方其他输入，也不保证撤销已经开始的工作。新操作使用新的 requestKey。
 - `tasks.send` 和 `targets.send` 均支持可选 `attachments:[{base64,name?}]`：只接收插件提供的图片字节，不接受本机路径、URL、媒体 URI 或自报 MIME。Host 检测 PNG/JPEG/WebP，最多 4 张、合计 20 MiB。先检查 `tasks.capabilities().messageAttachments.kinds` 包含 image；旧客户端不支持时停止，不静默丢图或改投临时路径。截图进既有 cindy-media，作为消息附件展示并进入模型输入；不需要额外声明 media.deposit。附件内容及名称参与幂等签名，更换附件不能复用同键。
@@ -257,19 +257,16 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 
 ### 新建任务的权限选择（可选）
 
-先检查 `tasks.capabilities().createPermissionMode === true`。`tasks.create` 和 project 的
-`targets.send` 可传 `permissionMode: 'ask' | 'auto' | 'bypassPermissions'`，分别对应默认权限、自动审批、完全访问，仅决定这一个新任务的权限，
-不修改插件默认设置。省略时仍使用用户的插件任务设置，未设置则为 ask。
+先检查 `tasks.capabilities().createPermissionMode === true`。Host 已批准任务能力后，`tasks.create` 和
+project 的 `targets.send` 可传 `permissionMode: 'ask' | 'auto' | 'bypassPermissions'`，对应默认权限、自动审批、完全访问。
+仅决定这一个新任务，不修改插件默认设置。省略时使用启用卡片的默认值，否则为 ask。
 
-参数不是授权凭证。Host 在创建前、异步准备后、投递及排队受理前按当前用户设置复核：ask 只允许 ask，
-auto 允许 ask/auto，bypassPermissions 允许上述三档；超出范围返回 PERMISSION_DENIED，
-不会静默降档或自动更改用户设置。完全访问须由用户在插件任务设置中选择；
-既有 `requestWriteAccess` 仍只支持 acceptEdits/auto，不能请求完全访问或降低用户已授权的上限。
-历史 plan/acceptEdits 设置原样保留，但不作为此新参数的可选值；历史 acceptEdits 上限只允许新参数选择 ask。
-不接受自报 confirmed；Plan Mode 不是此参数的权限档位。
-已有 task/bot 的投递不能携带 permissionMode，也不会改动接收方权限。
-权限选择参与幂等摘要，同键改变权限返回原有冲突错误；省略新字段的旧请求摘要及重放保持不变。
-旧 Host 未宣告支持时，不发送该参数，也不能悄悄忽略用户已经选择的权限。
+默认卡不是授权上限。每个插件自行声明 `showTaskPreferences:false` 后，其旧模型、目录和权限配置不再读取，
+不影响其它插件。Host 仍在创建、异步准备、投递和排队接受前复核能力批准、账号、任务归属与 Session/Plan。
+既有 `requestWriteAccess` 仍只支持 acceptEdits/auto，确认只修改目标 Session，不改默认卡或其它任务。
+历史 plan/acceptEdits 配置保留，但不是新参数选项。不接受自报 confirmed；Plan Mode 不是此参数的权限档位。
+已有 task/bot 不接受 permissionMode，也不改变接收方权限。同键改变权限仍返回冲突错误，省略字段的旧请求可重放。
+旧 Host 未宣告支持时不发送新参数；依赖隐藏后解耦的插件须使用实现此契约的 Host。
 
 原有 `cindy.tasks` 的归属限制不变。先调用 `capabilities()` 获取实际支持操作。当前仅支持本插件创建的本机普通任务：
 `models`、`create`、`get`、`setModel`、`list`、`send`、`getRun`、`listRuns`、`readMessages`、`cancel`、`setHidden`。
@@ -283,13 +280,13 @@ auto 允许 ask/auto，bypassPermissions 允许上述三档；超出范围返回
 卸载会撤销插件后续 API 控制，但不保证停止已派发的原生工作；需要停止时请使用任务停止入口。
 计划须在首次派发或创建 Worker 前登记，之后不可改写（包括补填 task）；需要不同范围时创建新任务。
 缺少该字段的存量计划继续可读，但 Host 不允许插件任务自动授权或普通 MCP 快捷放行，不会从 Agent 消息推导额外授权；进入 Host 的 Ask/acceptEdits 动作仍可沿原流程逐次确认。
-计划不授予目录权限。Worker 仅可使用宿主任务目录及解析后仍在其中的子目录、插件 AI 配置目录或用户亲选的确切目录；Library 绑定不自动变成 Agent 工作根。宿主在登记和创建时均复核。
+计划不授予目录权限。Worker 仅可使用宿主任务目录及解析后仍在其中的子目录或用户亲选的确切目录；Library 绑定不自动变成 Agent 工作根。宿主在登记和创建时均复核。
 插件自有主任务不支持用 `execution_device_id` 新建跨设备 Worker；本机目录授权不代表已授权另一台电脑的同名目录，登记团队计划也不改变此限制。
 这描述准入检查，不是持续的 OS 目录隔离保证。首版用于可信本地工作区；同权限进程在检查后恶意置换目录对象仍可能改变实际 cwd，不提供此类对抗性沙箱。
 
 `models()` 返回统一目录可选项的完整 route、efforts 和 supportsFastMode。用户明确选择后将 route 原样传给 create，或用 `setModel({taskId, expectedRevision, route})` 修改已有自有任务。运行中按普通任务的安全边界切换，不修改应用默认。两方法使用前检查 capabilities.operations。
 当 `capabilities().pluginDefaultModel === true` 时，持续复用任务的插件可在每次新输入前调用
-`setModel({taskId, expectedRevision, route:'plugin-default'})`。Host 当次读取本插件的任务模型设置，
+`setModel({taskId, expectedRevision, route:'plugin-default'})`。Host 当次读取本插件有效的任务模型默认值（隐藏卡片时忽略旧值），
 复用 create 的模型解析规则（未指定时采用当前新任务选择），只同步模型、来源、引擎、强度和 Fast，
 不改权限、目录或其它任务。返回 `{status,task}`；配置相同返回 unchanged，不反复切换。
 后续 send 使用返回 task.revision。须先处理已接受/结果不确定的旧请求，再同步下一次输入，
@@ -344,10 +341,9 @@ create/send 的 requestKey 持久去重；同键不同内容拒绝。删除后�
 新字段需该能力为 true 才发送，旧客户端不能假定支持；同 requestKey 的重放保留原创建结果。
 来源/模型/强度必须当前可用，派发前再次核对；失败引导改选或修复连接，不自动换模型或账号。
 已有普通任务保留自身配置，用户在任务内修复后继续使用原任务。
-工作目录由宿主分配，或沿用用户已在插件设置中选择的目录；不接受任意路径或超出已授权范围的权限。
-权限上限来自用户的插件任务设置；新建时可按上述参数选择更低档位，省略则沿用设置，未设置为 ask。工作区内行为及询问规则与所选
-Agent 的普通任务一致。用户可在插件设置中选择 ask / auto / bypassPermissions，
-不继承发起任务的权限。既有任务与显式历史 plan/acceptEdits 配置保留原行为，不自动提权；需要改变时由用户选择。
+工作目录由宿主分配，或沿用启用默认卡时用户已选择的目录；不接受任意路径。
+权限使用显式参数或有效默认值，缺省 ask；不继承发起任务权限。Host 能力批准与 Session 执行权限独立校验。
+工作区行为及询问规则与所选 Agent 的普通任务一致。已有任务和历史 plan/acceptEdits 值不自动改权。
 create 可传 `isolatedWorkspace:true`，使用宿主为该任务生成的独立空目录，忽略插件的项目目录偏好。
 返回 workingDir 仅属于本插件创建的任务，可交给插件 Node 进程放入候选项目；不接受插件自报任意目录。
 任务视图同时返回 permissionMode；按实际权限展示，不将历史 plan 值视作跨 Agent 的只读保证，不能暗中升级权限。

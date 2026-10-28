@@ -98,6 +98,29 @@ describe('shared runtime capability discovery', () => {
     expect(JSON.stringify(failed)).not.toContain('private-environment-secret');
   });
 
+  // #7636 review: an unrelated companion read can queue behind environment
+  // writes. Unit tier: only the full index may request every provider's status.
+  it.each(['requested', 'codex_apps', 'unknown'])('does not read unrelated availability for a direct query: %s', async (server) => {
+    let release!: (reason: null) => void;
+    const saving = new Promise<null>((resolve) => { release = resolve; });
+    const availability = vi.fn((provider: { name: string }) => provider.name === 'companion_connections' ? saving : null);
+    const read = vi.fn(async () => ({ state: 'connected' as const, tools: [{ name: 'fixture_tool' }] }));
+    const pending = readAgentCapabilityCatalog([{ name: 'requested' }, { name: 'companion_connections' }],
+      { ...context, agentKind: 'codex' }, { server }, availability, read);
+    const checked = availability.mock.calls.map(([provider]) => provider.name);
+    release(null);
+    const result = await pending;
+    expect(checked).toEqual(server === 'requested' ? ['requested'] : []);
+    if (server === 'unknown') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'UNKNOWN_CAPABILITY',
+        available: ['requested', 'companion_connections', 'codex_apps'] });
+      expect(read).not.toHaveBeenCalled();
+    } else {
+      expect(result).toMatchObject({ ok: true, tools: [{ name: 'fixture_tool' }] });
+      expect(read).toHaveBeenCalledWith(server);
+    }
+  });
+
   it('reads real schemas and builtin progressive metadata without executing business tools', async () => {
     const execute = vi.fn();
     const factory = () => {

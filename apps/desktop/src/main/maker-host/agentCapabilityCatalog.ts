@@ -40,10 +40,14 @@ export async function readAgentCapabilityCatalog(
   const declarations = [...await Promise.all(providers.filter((provider) => !harness.some((entry) => entry.name === provider.name)).map(async (provider) => {
     let reason: string | null = null;
     try {
-      const mounted = context.vendorOptions?.[RUNTIME_MCP_NAMES_KEY];
-      reason = Array.isArray(mounted) && !mounted.includes(provider.name)
-        ? 'not-mounted-in-current-runtime' : await availability(provider);
-      if (!reason && provider.isEnabled?.(context) === false) reason = 'provider-not-enabled-for-session';
+      // Only the index needs every status. Direct queries must not wait for
+      // unrelated environment reads; unknown queries still return all names.
+      if (!query.server || query.server === provider.name) {
+        const mounted = context.vendorOptions?.[RUNTIME_MCP_NAMES_KEY];
+        reason = Array.isArray(mounted) && !mounted.includes(provider.name)
+          ? 'not-mounted-in-current-runtime' : await availability(provider);
+        if (!reason && provider.isEnabled?.(context) === false) reason = 'provider-not-enabled-for-session';
+      }
     } catch { reason = 'provider-status-unavailable'; }
     return {
       server: provider.name,

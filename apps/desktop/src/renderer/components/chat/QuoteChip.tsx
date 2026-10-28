@@ -15,6 +15,8 @@ import { InlineReferenceChip } from './InlineReferenceChip';
 
 interface QuoteChipProps {
   quote: ChatQuote;
+  /** Static projections and parent-owned links must not gain a nested action. */
+  interactive?: boolean;
   selected?: boolean;
   className?: string;
   onEditComment?: (comment: string) => void;
@@ -24,6 +26,7 @@ interface QuoteChipProps {
 /** 草稿和历史共享引用摘要及详情，草稿操作由调用方提供。 */
 export function QuoteChip({
   quote,
+  interactive = true,
   selected = false,
   className,
   onEditComment,
@@ -61,7 +64,7 @@ export function QuoteChip({
       tooltip={tooltip}
       tooltipContentClassName="max-h-64 w-80 max-w-[70vw] overflow-y-auto whitespace-normal"
       ariaLabel={[quote.text, quote.comment].filter(Boolean).join('\n')}
-      onClick={() => setOpen(true)}
+      onClick={interactive ? () => setOpen(true) : undefined}
       selected={selected}
       className={className}
       // 刻意的例外:chip 上是把换行折叠成单行的**摘要**,不是引用原文。让它进
@@ -70,6 +73,8 @@ export function QuoteChip({
       textSelectable={false}
     />
   );
+  if (!interactive) return chip;
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild><span className="inline-flex min-w-0 max-w-full">{chip}</span></PopoverAnchor>

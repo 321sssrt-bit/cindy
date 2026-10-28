@@ -37,6 +37,7 @@ export interface PluginTargetAdapter {
   approvalRevision(pluginId: string): string | null;
   candidates(kind: PluginTargetKind): Promise<PluginTargetCandidate[]>;
   assertCreatePermission(pluginId: string, permissionMode: PluginTaskPermissionMode): void;
+  assertProjectDispatch(pluginId: string, taskId: string): Promise<void>;
   create(
     pluginId: string,
     project: string,
@@ -81,6 +82,9 @@ export class PluginTargetSlot {
   private inFlight = new Map<string, { hash: string; cancelled: boolean; result?: Promise<unknown> }>();
   /** Used by the existing queue acceptance boundary, including restored snapshots. */
   async assertQueuedDelivery(taskId: string, clientId: string): Promise<void> {
+    await this.assertTargetReceipt(taskId, clientId, 'dispatch');
+  }
+  private async assertTargetReceipt(taskId: string, clientId: string, phase: 'create' | 'dispatch'): Promise<void> {
     if (!this.adapter) fail('HOST_NOT_READY');
     const adapter = this.adapter!;
     const store = adapter.store();
@@ -94,6 +98,8 @@ export class PluginTargetSlot {
     const target = receipt!.target!;
     if (!(await adapter.candidates(target.kind)).some(item => item.id === target.id)) fail('TARGET_UNAVAILABLE');
     if (target.kind !== 'project' && await adapter.session(target.kind, target.id) !== taskId) fail('TARGET_UNAVAILABLE');
+    if (target.kind === 'project' && phase === 'dispatch')
+      await adapter.assertProjectDispatch(receipt!.pluginId, taskId);
     assertReceipt(await store.getById(clientId));
   }
   async handle(pluginId: string, raw: unknown, authorized: () => void): Promise<unknown> {
@@ -219,15 +225,18 @@ export class PluginTargetSlot {
           await this.assertQueuedDelivery(taskId, receipt.id);
           guard();
         };
-        await validateTarget();
         if (target.kind === 'project') {
+          // Validate the target before creation; task dispatch policy requires the
+          // created task and is rechecked below and at queue acceptance.
+          await this.assertTargetReceipt(taskId, receipt.id, 'create');
+          guard();
           const title = request.autoTitle ? DEFAULT_DRAFT_SESSION_TITLE : request.title || candidate.label;
           if (request.permissionMode !== undefined)
             await adapter.create(pluginId, target.id, taskId, title, route, guard, request.autoTitle || undefined, request.permissionMode);
           else if (request.autoTitle) await adapter.create(pluginId, target.id, taskId, title, route, guard, true);
           else await adapter.create(pluginId, target.id, taskId, title, route, guard);
         }
-        guard();
+        await validateTarget();
         const actualDelivery = await adapter.send(
           pluginId, taskId, receipt.id, request.text, guard, validateTarget, delivery, images,
           request.context ? { context: request.context } : undefined,

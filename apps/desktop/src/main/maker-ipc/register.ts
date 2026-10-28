@@ -14505,6 +14505,9 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (!isPluginTaskPermissionAllowed(permissionMode, clampPluginTaskPermissionMode(readPluginTaskConfig(pluginId).permissionMode)))
         throw new PluginTaskError('PERMISSION_DENIED', 'Requested permission exceeds plugin dispatch policy');
     },
+    assertProjectDispatch: async (pluginId, taskId) => {
+      await pluginTaskServiceForCurrentOwner!().assertDispatch(pluginId, taskId);
+    },
     create: async (pluginId, project, taskId, title, route, guard, autoTitle, permissionMode) => {
       guard();
       await pluginTaskServiceForCurrentOwner!().create(pluginId, {

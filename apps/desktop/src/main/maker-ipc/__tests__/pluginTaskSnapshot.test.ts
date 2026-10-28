@@ -81,7 +81,7 @@ it.each(['codex', 'cc'])('rechecks preferences after runtime admission waits for
 
 it.each(['auto', 'acceptEdits'])('exposes independent Plan Mode alongside stored %s permission', async permissionMode => {
   const start = source.indexOf('      readSession: async taskId =>');
-  const property = source.slice(start, source.indexOf('      dispatch:', start)).trim().replace(/,$/, '');
+  const property = source.slice(start, source.indexOf('      scheduleAutoTitle:', start)).trim().replace(/,$/, '');
   const row = {id:'task',source:'plugin',agentKind:'codex',status:'active',permissionMode,planModeEnabled:true};
   const query = {from:()=>query,where:()=>query,limit:async()=>[row]};
   const read = compile(`return ({${property}}).readSession;`, {assertCurrent:()=>{},snapshot:{client:{drizzle:{select:()=>query}}},sessions:{},eq:()=>true,pluginTaskConfigHash:createHash,readSessionRuntimeProfiles:async()=>null});
@@ -95,7 +95,7 @@ it.each(['auto', 'acceptEdits'])('exposes independent Plan Mode alongside stored
 
 it.each(['codex', 'claude-code'] as const)('keeps the accepted next-input route stable when a deferred %s switch settles', async agentKind => {
   const start = source.indexOf('      readSession: async taskId =>');
-  const property = source.slice(start, source.indexOf('      dispatch:', start)).trim().replace(/,$/, '');
+  const property = source.slice(start, source.indexOf('      scheduleAutoTitle:', start)).trim().replace(/,$/, '');
   const old = {agentKind:'codex',providerId:'old-provider',model:'old',effort:'medium',fastMode:false};
   const next = {agentKind,providerId:'selected-provider',model:'selected',effort:'high',fastMode:false};
   const row = {id:'task',source:'plugin',status:'active',permissionMode:'ask',planModeEnabled:false,...old};

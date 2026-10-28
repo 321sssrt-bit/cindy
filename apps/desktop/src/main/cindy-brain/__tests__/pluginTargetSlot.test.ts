@@ -54,12 +54,13 @@ describe('plugin target queries and delivery', () => {
     ]);
     const approvalRevision = vi.fn<PluginTargetAdapter['approvalRevision']>(() => 'approved-install');
     const assertCreatePermission = vi.fn();
-    slot.adapter = { store: () => store, approvalRevision, candidates, session: async () => 'chosen', send, create, withdraw, assertCreatePermission };
+    const assertProjectDispatch = vi.fn(async (_pluginId: string, _taskId: string) => {});
+    slot.adapter = { store: () => store, approvalRevision, candidates, session: async () => 'chosen', send, create, withdraw, assertCreatePermission, assertProjectDispatch };
     const guard = vi.fn();
     const call = (payload: unknown, plugin = 'plugin') => slot.handle(plugin, payload, guard);
     const request = { kind: 'send', target: { kind: 'task', id: 'chosen' },
       requestKey: 'send', text: 'context' };
-    return { slot, call, request, send, create, withdraw, candidates, guard, approvalRevision, assertCreatePermission };
+    return { slot, call, request, send, create, withdraw, candidates, guard, approvalRevision, assertCreatePermission, assertProjectDispatch };
   }
   // unit: a project is a new task, but task/bot sends must never change recipient
   // permissions. Prior tests did not cover a permission choice or its receipt.
@@ -96,6 +97,50 @@ describe('plugin target queries and delivery', () => {
     expect(receipts.size).toBe(0);
     expect(f.create).not.toHaveBeenCalled();
     await expect(f.call(request)).resolves.toMatchObject({ accepted: true });
+  });
+  // Unit regression for #7615: project inputs have target receipts, not tasks.send
+  // receipts. Both delivery and restored queue acceptance must use the current
+  // plugin dispatch policy; existing task/bot recipients keep their own policy.
+  it('rejects a project input when its permission is lowered after task creation', async () => {
+    const f = fixture();
+    f.assertProjectDispatch.mockImplementation(async () => {
+      const code = f.create.mock.calls.length ? 'PERMISSION_DENIED' : 'TASK_NOT_FOUND';
+      throw Object.assign(new Error(code), { code });
+    });
+    await expect(f.call({ ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode: 'bypassPermissions' }))
+      .rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+    expect(f.create).toHaveBeenCalledOnce();
+    expect(f.send).not.toHaveBeenCalled();
+    expect([...receipts.values()][0]?.status).toBe('pending');
+  });
+  it.each(['live', 'restored'] as const)('rechecks project permission before accepting a %s queued input', async phase => {
+    const f = fixture();
+    await f.call({ ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode: 'bypassPermissions' });
+    f.assertProjectDispatch.mockRejectedValue(Object.assign(new Error('Permission lowered'), { code: 'PERMISSION_DENIED' }));
+    const [, taskId, clientId, , , validateTarget] = f.send.mock.calls[0]!;
+    const restarted = new PluginTargetSlot();
+    restarted.adapter = f.slot.adapter;
+    await expect(phase === 'live' ? validateTarget() : restarted.assertQueuedDelivery(taskId, clientId))
+      .rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+    expect(f.send).toHaveBeenCalledOnce();
+  });
+  it.each(['task', 'bot'] as const)('keeps the recipient permission policy for an existing %s', async kind => {
+    const f = fixture();
+    f.assertProjectDispatch.mockRejectedValue(Object.assign(new Error('Plugin permission denied'), { code: 'PERMISSION_DENIED' }));
+    await expect(f.call({ ...f.request, target: { kind, id: 'chosen' } })).resolves.toMatchObject({ accepted: true });
+    const [, taskId, clientId] = f.send.mock.calls[0]!;
+    await expect(f.slot.assertQueuedDelivery(taskId, clientId)).resolves.toBeUndefined();
+    expect(f.assertProjectDispatch).not.toHaveBeenCalled();
+  });
+  it.each(['approval', 'cancelled'] as const)('rechecks the receipt when %s changes during project policy validation', async change => {
+    const f = fixture();
+    await f.call({ ...f.request, target: { kind: 'project', id: 'chosen' }, permissionMode: 'bypassPermissions' });
+    f.assertProjectDispatch.mockImplementationOnce(async () => {
+      if (change === 'approval') f.approvalRevision.mockReturnValue('replacement-install');
+      else await f.call({ kind: 'cancel', requestKey: f.request.requestKey });
+    });
+    const [, taskId, clientId] = f.send.mock.calls[0]!;
+    await expect(f.slot.assertQueuedDelivery(taskId, clientId)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   });
   // unit: actual target delivery must bind context to its receipt. Omitting the
   // new parameter previously made changed context replay as the same message.

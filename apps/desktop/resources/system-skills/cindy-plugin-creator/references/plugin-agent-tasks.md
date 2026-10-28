@@ -260,15 +260,8 @@ text 与 context 合计不超过 64000；tasks.send 的 text 上限仍为 32768�
 先检查 `tasks.capabilities().createPermissionMode === true`。`tasks.create` 和 project 的
 `targets.send` 可传 `permissionMode: 'ask' | 'auto' | 'bypassPermissions'`，分别对应默认权限、自动审批、完全访问，仅决定这一个新任务的权限，
 不修改插件默认设置。省略时仍使用用户的插件任务设置，未设置则为 ask。
-例如，用户已将插件权限设为 auto，插件可为某次任务选择 ask：
 
-```js
-const task = await cindy.tasks.create({
-  requestKey: 'inspect-42', title: 'Inspect the selected item', permissionMode: 'ask',
-});
-```
-
-参数不是授权凭证。Host 在创建前及异步准备后按当前用户设置复核：ask 只允许 ask，
+参数不是授权凭证。Host 在创建前、异步准备后、投递及排队受理前按当前用户设置复核：ask 只允许 ask，
 auto 允许 ask/auto，bypassPermissions 允许上述三档；超出范围返回 PERMISSION_DENIED，
 不会静默降档或自动更改用户设置。完全访问须由用户在插件任务设置中选择；
 既有 `requestWriteAccess` 仍只支持 acceptEdits/auto，不能请求完全访问或降低用户已授权的上限。

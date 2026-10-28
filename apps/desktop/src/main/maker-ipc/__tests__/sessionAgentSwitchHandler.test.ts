@@ -233,6 +233,22 @@ describe('same-harness native relocation', () => {
     expect(relocateNativeHistory).not.toHaveBeenCalled();
     expect(deps.applyAgentSwitchToDb).toHaveBeenCalledWith('s1', expect.objectContaining({ sdkSessionId: null }));
   });
+
+  it('restores the source before opening a native copy whose fallback boundary could not be saved', async () => {
+    const { deps } = makeDeps({
+      getSessionRow: vi.fn(async () => makeRow({ workingDir: '/project', sdkSessionId: 'source-native', agentDeviceId: 'source' })),
+      relocateNativeHistory: vi.fn(async () => 'transferred'),
+      insertBoundaryMessage: vi.fn(async () => { throw new Error('boundary write failed'); }),
+    });
+    await expect(relocateForFreshStart(deps, { sessionId: 's1', agentDeviceId: 'target', providerId: null }))
+      .rejects.toThrow('boundary write failed');
+    expect(deps.applyAgentSwitchToDb).toHaveBeenLastCalledWith('s1', expect.objectContaining({
+      sdkSessionId: 'source-native', agentDeviceId: 'source', providerId: 'xd',
+    }));
+    expect(deps.setSessionProvider).toHaveBeenLastCalledWith('s1', 'xd');
+    expect(deps.setPendingHandoff).not.toHaveBeenCalled();
+    expect(deps.bootstrapSwitchedSession).not.toHaveBeenCalled();
+  });
 });
 
 const orcaAgents = [

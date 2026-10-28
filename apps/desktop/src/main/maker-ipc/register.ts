@@ -9063,6 +9063,13 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     let nativeRelocation: Awaited<ReturnType<typeof relocateForFreshStart>> | undefined;
     while (!session) {
       try {
+        // Claude's ID is prefilled before the CLI accepts resume. Require its
+        // native initialization handshake for every transferred copy, including
+        // a copy chosen by the startup-failure loop. Fresh fallback removes it.
+        const vendorOptions = { ...o.vendorOptions };
+        delete vendorOptions._cindyRequireNativeResume;
+        if (nativeHistoryResume || nativeRelocation?.nativeId) vendorOptions._cindyRequireNativeResume = true;
+        o.vendorOptions = vendorOptions;
         session = await maker.createSession(o);
         if (nativeRelocation?.nativeId && session.sdkSessionId !== nativeRelocation.nativeId) {
           const opened = session;

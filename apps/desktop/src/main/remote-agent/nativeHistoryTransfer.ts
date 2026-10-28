@@ -94,6 +94,7 @@ export interface NativeHistoryStorage {
 
 /** Transfer handles are bound to the owner generation, device and task by the caller. */
 export function createNativeHistoryTransfer(root: string, storage: NativeHistoryStorage) {
+  let creating = 0;
   const transfers = new Map<string, {
     scope: string; file: string; manifest: NativeHistoryManifest; direction: 'export' | 'import';
     offset: number; touched: number; busy: boolean; assertOwner: () => void;
@@ -122,12 +123,14 @@ export function createNativeHistoryTransfer(root: string, storage: NativeHistory
       if (!entry.busy && Date.now() - entry.touched > TTL_MS) await remove(id);
     }
     if (command.action === 'export' || command.action === 'import') {
-      if (transfers.size >= 16) throw new Error('REMOTE_AGENT_BUSY');
-      await fs.mkdir(root, { recursive: true, mode: 0o700 });
-      const id = randomUUID();
-      const dir = await fs.mkdtemp(path.join(root, 'history-'));
-      const file = path.join(dir, 'history.jsonl');
+      if (transfers.size + creating >= 16) throw new Error('REMOTE_AGENT_BUSY');
+      creating += 1;
+      let dir: string | undefined;
       try {
+        const id = randomUUID();
+        await fs.mkdir(root, { recursive: true, mode: 0o700 });
+        dir = await fs.mkdtemp(path.join(root, 'history-'));
+        const file = path.join(dir, 'history.jsonl');
         let manifest: NativeHistoryManifest;
         if (command.action === 'export') {
           const source = await storage.locate(command.kind, command.nativeId);
@@ -148,8 +151,10 @@ export function createNativeHistoryTransfer(root: string, storage: NativeHistory
         renew(id);
         return { id, manifest };
       } catch (error) {
-        await fs.rm(dir, { recursive: true, force: true });
+        if (dir) await fs.rm(dir, { recursive: true, force: true });
         throw error;
+      } finally {
+        creating -= 1;
       }
     }
     const entry = transfers.get(command.id);

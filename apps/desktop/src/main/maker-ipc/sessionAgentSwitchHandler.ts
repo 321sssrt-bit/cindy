@@ -623,6 +623,18 @@ export async function relocateForFreshStart(
   try {
     boundaryId = await deps.insertBoundaryMessage(sessionId, boundaryContent);
   } catch (err) {
+    if (nativeId) {
+      // A native copy cannot be published without the boundary needed for an
+      // atomic fallback. Abort before opening it and retain the source identity.
+      assertCurrent();
+      await deps.applyAgentSwitchToDb(sessionId, {
+        agentKind: dbKind, model, providerId: fromProviderId,
+        sdkSessionId: row.sdkSessionId, agentDeviceId: fromAgentDeviceId,
+      });
+      assertCurrent();
+      deps.setSessionProvider(sessionId, fromProviderId);
+      throw err;
+    }
     deps.log.warn('agent-switch: boundary message insert failed on fresh-start relocation (degraded)', {
       sessionId,
       err: err instanceof Error ? err.message : String(err),

@@ -8,6 +8,9 @@
 每段至多 512 KiB，顺序与 SHA-256 完整性校验通过才导入；原生 ID 重新生成，源记录不修改。
 Pi 只改写副本首行的 session ID 与 cwd，使其指向接收端工作目录；消息、工具结果、分支与压缩记录保持原字节。
 临时转录放 userData/native-history-transfers 的私有目录，结束后清理，空闲 10 分钟回收。
+16 个传输的上限同时计算创建中的快照，创建失败释放名额。Claude 原生迁移通过已有 vendorOptions 传递内部
+`_cindyRequireNativeResume`：适配器等待 CLI 的初始化握手并拒绝静默新建，恢复失败交回宿主切换事务。
+该标记覆盖手动、配额均衡与启动失败换电脑；普通 Claude 无效会话自愈保持原语义。启动迁移无法保存原子回退所需的边界时，先还原源位置与 ID，再返回失败，不打开副本。
 这些命令不加入只读／断链自动重放名单。恢复失败回落已有的原子 resume fallback，不把切账号或清空历史当普通失败。
 边界消息增加可选 `nativeHistory: restored | fallback`，桌面与手机在 fallback 时显示「已用摘要接续」；旧客户端忽略新增字段，
 仍能读取原有 handoff/resumed。无服务端、数据库 schema、环境变量或 Mobile 原生配置变化。

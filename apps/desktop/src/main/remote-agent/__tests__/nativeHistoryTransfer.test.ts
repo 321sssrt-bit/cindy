@@ -51,6 +51,33 @@ describe('native history transfer', () => {
     expect(h.restore).not.toHaveBeenCalled();
   });
 
+  it('counts exports still being created and releases capacity after failed creation', async () => {
+    const h = setup();
+    await fs.writeFile(h.sourceFile, h.bytes);
+    let entered = 0;
+    let allEntered!: () => void;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { allEntered = resolve; });
+    const endpoint = createNativeHistoryTransfer(path.join(root, 'concurrent'), {
+      locate: async () => {
+        if (++entered === 16) allEntered();
+        await pending;
+        throw new Error('snapshot failed');
+      },
+      restore: h.restore,
+    });
+    const attempts = Array.from({ length: 16 }, () => endpoint('scope', { action: 'export', kind: 'codex', nativeId }, root, () => {}));
+    const settled = Promise.allSettled(attempts);
+    try {
+      await ready;
+      await expect(endpoint('scope', { action: 'import', manifest: h.manifest }, root, () => {})).rejects.toThrow('REMOTE_AGENT_BUSY');
+    } finally { release(); }
+    expect((await settled).every(result => result.status === 'rejected')).toBe(true);
+    const receipts = await Promise.all(Array.from({ length: 16 }, () => endpoint('scope', { action: 'import', manifest: h.manifest }, root, () => {}))) as Array<{ id: string }>;
+    await Promise.all(receipts.map(({ id }) => endpoint('scope', { action: 'release', id }, root, () => {})));
+  });
+
   it('binds handles to the original task and owner generation', async () => {
     const h = setup();
     let current = true;

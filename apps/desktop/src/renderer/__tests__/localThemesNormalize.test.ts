@@ -174,4 +174,25 @@ describe('normalizeLocalThemeColors', () => {
     expect(out['switch-track-off']).toBe('#555555');
     expect(out['switch-thumb-off']).toBe('#000000');
   });
+
+  describe('升级前导出的 login-* 默认值(2026-10-27 并入墨水口径)', () => {
+    it('丢弃等于旧默认值的 override,让新默认值生效;用户改过的值与非登录色原样保留', () => {
+      const out = normalizeLocalThemeColors({
+        surface: '#111111',
+        'login-panel-bg': '#fbfbfb', // 旧亮色面板(大小写不敏感)
+        'login-primary-button-bg': '#2A2828', // 旧亮色主按钮
+        'login-disabled-button-bg': '#2A2828', // 旧禁用底,与旧主按钮同色
+        'login-disabled-button-overlay': 'rgba(255, 255, 255, 0.7)',
+        'login-control-bg': '#123456', // 用户自己改过
+      });
+      expect(out).toEqual({ surface: '#111111', 'login-control-bg': '#123456' });
+    });
+
+    it('幂等,且没有可迁移项时返回同一个对象', () => {
+      const colors = { surface: '#111111', 'login-control-bg': '#123456' };
+      expect(normalizeLocalThemeColors(colors)).toBe(colors);
+      const once = normalizeLocalThemeColors({ 'login-panel-bg': '#FBFBFB', surface: '#111111' });
+      expect(normalizeLocalThemeColors(once)).toEqual(once);
+    });
+  });
 });

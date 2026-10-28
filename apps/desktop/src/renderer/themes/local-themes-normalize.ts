@@ -19,6 +19,7 @@
 import { parseCssColor, toHex, type Rgb } from '../../shared/theme-import/color';
 import { deriveUncheckedSwitchTrack } from '../../shared/theme-import/palette';
 import { colorRegistry } from './color-registry';
+import { dropLegacyLoginDefaults } from './loginLegacyDefaults';
 
 /** 旧的 per-surface placeholder alias —— 归一化后由 `--text-placeholder` slot 统一接管。 */
 const PER_SURFACE_PLACEHOLDER_KEYS = [
@@ -148,5 +149,5 @@ export function normalizeLocalThemeColors(
     }
   }
 
-  return normalizeUncheckedSwitchColors(normalized);
+  return dropLegacyLoginDefaults(normalizeUncheckedSwitchColors(normalized));
 }

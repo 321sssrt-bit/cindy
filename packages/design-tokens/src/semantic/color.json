@@ -1183,6 +1183,16 @@
           "$value": "{reference.defaults.login-primary-button-text.dark}"
         }
       },
+      "login-disabled-button-overlay": {
+        "light": {
+          "$type": "color",
+          "$value": "{reference.defaults.login-disabled-button-overlay.light}"
+        },
+        "dark": {
+          "$type": "color",
+          "$value": "{reference.defaults.login-disabled-button-overlay.dark}"
+        }
+      },
       "login-disabled-button-bg": {
         "light": {
           "$type": "color",

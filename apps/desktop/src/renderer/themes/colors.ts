@@ -561,6 +561,10 @@ const GENERATED_DEFAULTS = {
     "light": "#FCFCFC",
     "dark": "#151515"
   },
+  "login-disabled-button-overlay": {
+    "light": "rgba(0, 0, 0, 0.00)",
+    "dark": "rgba(255, 255, 255, 0.00)"
+  },
   "login-disabled-button-bg": {
     "light": "rgba(0, 0, 0, 0.05)",
     "dark": "rgba(255, 255, 255, 0.06)"
@@ -2498,6 +2502,9 @@ registerColor('login-secondary-text', GENERATED_DEFAULTS["login-secondary-text"]
 registerColor('login-primary-button-bg', GENERATED_DEFAULTS["login-primary-button-bg"], 'Login — 主按钮/第三方圆钮底(同主界面反相 CTA accent-cta-bg-pure:#3C3F43 / #EEEEEE;社交圆图标保品牌色)');
 registerColor('login-primary-button-border', GENERATED_DEFAULTS["login-primary-button-border"], 'Login — 主按钮/圆钮描边(与底同色,同主界面 CTA 不另描边)');
 registerColor('login-primary-button-text', GENERATED_DEFAULTS["login-primary-button-text"], 'Login — 主按钮文字(同主界面 accent-pure-cta-fg:#FCFCFC / #151515)');
+// 已退役(2026-10-27):禁用主按钮改为控件底 + 占位字,不再叠层。治理合同 §4:旧 Token ID 不删除——
+// 旧版「导出当前主题」已把它写进用户本地主题,保留 ID 与透明默认值,组件不再消费。
+registerColor('login-disabled-button-overlay', GENERATED_DEFAULTS["login-disabled-button-overlay"], 'Login — 已退役的禁用叠层(透明,仅为兼容旧本地主题保留 ID;组件不再消费)');
 registerColor('login-disabled-button-bg', GENERATED_DEFAULTS["login-disabled-button-bg"], 'Login — disabled 主按钮底(墨水填充 黑 5% / 白 6%,与输入框同档)');
 registerColor('login-disabled-button-text', GENERATED_DEFAULTS["login-disabled-button-text"], 'Login — disabled 主按钮文字(墨水占位档 黑 32% / 白 30%)');
 registerColor('login-inverted-button-border', GENERATED_DEFAULTS["login-inverted-button-border"], 'Login — 浅底钮白描边/区域徽标白字(两模式同值 #FFFFFF;推导,待 Figma 精确)');

@@ -1,6 +1,6 @@
 {
   "source": "apps/desktop/src/renderer/themes/colors.ts",
-  "count": 569,
+  "count": 570,
   "colors": [
     {
       "id": "surface",
@@ -766,6 +766,11 @@
       "id": "login-primary-button-text",
       "light": "#FCFCFC",
       "dark": "#151515"
+    },
+    {
+      "id": "login-disabled-button-overlay",
+      "light": "rgba(0, 0, 0, 0.00)",
+      "dark": "rgba(255, 255, 255, 0.00)"
     },
     {
       "id": "login-disabled-button-bg",

@@ -104,6 +104,27 @@ async function inputFiles(directory: string) {
 const message = { parts: [{ type: 'text', text: 'hello' }], effort: 'high' };
 
 describe('local client runtime lifecycle', () => {
+  // PR #7684: send persistence coverage did not exercise same-turn input.
+  // A failed image/database write must reject steer before provider delivery.
+  it('persists visible steer before delivery and never delivers a failed write', async () => {
+    const f = await fixture(true);
+    await f.runtime.call('send', { parts: message.parts });
+    const delivered = vi.fn();
+    f.first.steer.mockImplementation(async (...args: any[]) => {
+      await args[1]?.beforeProviderStart?.();
+      delivered();
+    });
+    f.host.persistInput.mockRejectedValueOnce(new Error('disk unavailable'));
+    await expect(f.runtime.call('steer', { parts: [image] })).rejects.toThrow('disk unavailable');
+    expect(delivered).not.toHaveBeenCalled();
+    expect(await inputFiles(f.directory)).toEqual([]);
+    f.host.persistInput.mockImplementationOnce(async () => {
+      expect(delivered).not.toHaveBeenCalled();
+    });
+    await f.runtime.call('steer', { parts: message.parts });
+    expect(delivered).toHaveBeenCalledOnce();
+  });
+
   // #7631 review P0: the existing visible-session tests only mock persistence.
   // A Cindy input must await close/handoff and fence all subsequent app input.
   // Minimal input: one live visible runtime followed by a host takeover (integration).
@@ -229,7 +250,7 @@ describe('local client runtime lifecycle', () => {
     expect(f.first.send).toHaveBeenCalledWith({
       type: 'user',
       content: [{ type: 'text', text: ' /workspace/example' }],
-    });
+    }, undefined);
   });
   it('keeps the app execution busy across a provider continuation until Session observes its final boundary', async () => {
     const f = await fixture();

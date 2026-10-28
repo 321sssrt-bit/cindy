@@ -496,15 +496,16 @@ export async function openLocalAgentRuntime(
         try {
           assertCurrent(current);
           if (!busy) throw new LocalAgentError('NOT_RUNNING', '当前没有正在运行的回答。');
-          await handle.steer(wireMessage(content));
-          if (visibleHost)
-            await visibleHost.persistInput(
-              sessionId,
-              content,
-              randomUUID(),
-              () => assertCurrent(current),
-              source!,
-            );
+          await handle.steer(wireMessage(content), visibleHost ? {
+            beforeProviderStart: () =>
+              visibleHost.persistInput(
+                sessionId,
+                content,
+                randomUUID(),
+                () => assertCurrent(current),
+                source!,
+              ),
+          } : undefined);
           turnInputs.push(content);
         } catch (error) {
           await discard(content);
@@ -541,21 +542,19 @@ export async function openLocalAgentRuntime(
         releaseInputs();
         turnInputs.push(sending);
         void (async () => {
-          const result = visibleHost
-            ? await handle.send(wireMessage(sending), {
-                onAccepted: (signal) =>
-                  visibleHost.persistInput(
-                    sessionId,
-                    sending,
-                    randomUUID(),
-                    () => {
-                      assertCurrent(current);
-                      signal?.throwIfAborted();
-                    },
-                    source!,
-                  ),
-              })
-            : await handle.send(sending);
+          const result = await handle.send(wireMessage(sending), visibleHost ? {
+            onAccepted: (signal) =>
+              visibleHost.persistInput(
+                sessionId,
+                sending,
+                randomUUID(),
+                () => {
+                  assertCurrent(current);
+                  signal?.throwIfAborted();
+                },
+                source!,
+              ),
+          } : undefined);
           if (!result.accepted) await discard(sending);
           assertSendDispatched(result, 'local-agent/send');
         })().catch(() => {

@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { AnchoredPullDownMenu } from "@/platform/chrome/AnchoredPullDownMenu";
 import { useTheme, type ThemeColors } from "@/theme";
+import { useNativeMenuReminderImage } from './useNativeMenuReminderImage';
 
 export type NativePullDownAction = {
   disabled?: boolean;
@@ -47,18 +48,23 @@ export function usesNativePullDownMenu(): boolean {
 function toMenuAction(
   action: NativePullDownAction,
   colors: ThemeColors,
+  reminderImage: string | undefined,
 ): MenuAction {
+  const showReminder = action.filterReminder && reminderImage !== undefined;
+  const image = showReminder ? reminderImage : action.image;
   return {
     id: action.id,
     title: action.title,
     // Fabric defaults the library's optional Int32 imageColor to transparent.
     // Always pair a symbol with a visible semantic color.
-    ...(action.image
+    ...(image
       ? {
-          image: action.image,
-          imageColor: action.destructive
-            ? colors.destructive
-            : colors.textPrimary,
+          image,
+          imageColor: showReminder
+            ? colors.statusAccent
+            : action.destructive
+              ? colors.destructive
+              : colors.textPrimary,
         }
       : {}),
     ...(action.subtitle ? { subtitle: action.subtitle } : {}),
@@ -79,7 +85,7 @@ function toMenuAction(
     ...(action.subactions?.length
       ? {
           subactions: action.subactions.map((item) =>
-            toMenuAction(item, colors),
+            toMenuAction(item, colors, reminderImage),
           ),
         }
       : {}),
@@ -105,9 +111,7 @@ function childDisabled(children: ReactNode): boolean {
   return (children.props as { disabled?: unknown }).disabled === true;
 }
 
-/** MenuView 只支持系统符号或原生资源，不能用 JS PNG 精确绘制 6pt 提示点。
- * 使用提醒字段的菜单复用已有自绘路径；false 也算，切换筛选时保持同一个呈现器。
- */
+/** Prepare the image even while off, so changing the filter needs no new load. */
 function usesFilterReminder(actions: readonly NativePullDownAction[]): boolean {
   return actions.some((action) =>
     action.filterReminder !== undefined ||
@@ -116,8 +120,7 @@ function usesFilterReminder(actions: readonly NativePullDownAction[]): boolean {
 }
 
 /**
- * 收起时完全是调用方原来的按钮/标题;iOS 一般用系统 UIMenu，带筛选提醒的菜单用
- * 现有自绘面板以保留 6pt 圆点；Android 用 Material 下拉菜单。
+ * 收起时完全是调用方原来的按钮/标题;iOS 用系统 UIMenu，Android 用 Material 下拉菜单。
  * iOS 尚未编进 MenuView 的包只渲染 children,
  * 由调用方继续走自绘面板。
  */
@@ -153,6 +156,7 @@ export function NativePullDownMenu({
   testID?: string;
 }) {
   const { colors } = useTheme();
+  const reminderImage = useNativeMenuReminderImage(usesFilterReminder(actions));
   if (disabled || childDisabled(children) || !usesNativePullDownMenu())
     return children;
   // 一项能点的都没有(空列表或全部禁用)时不挂菜单,触发控件也显示为禁用:
@@ -161,7 +165,7 @@ export function NativePullDownMenu({
     return isValidElement<{ disabled?: boolean }>(children)
       ? cloneElement(children, { disabled: true })
       : children;
-  if (Platform.OS === "android" || usesFilterReminder(actions)) {
+  if (Platform.OS === "android") {
     return (
       <AnchoredPullDownMenu
         accessibilityLabel={accessibilityLabel}
@@ -178,7 +182,7 @@ export function NativePullDownMenu({
   }
   return (
     <MenuView
-      actions={actions.map((action) => toMenuAction(action, colors))}
+      actions={actions.map((action) => toMenuAction(action, colors, reminderImage))}
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event) onAction(nativeEvent.event);
       }}

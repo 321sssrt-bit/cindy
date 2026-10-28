@@ -312,12 +312,13 @@ _Dark Mode text uses softened neutrals to reduce eye strain: **Soft Gray** (`#d4
 When the sidebar display-settings trigger shows the archived-view reminder, repeat
 the same static accent dot on the Task status submenu and its selected Archived
 option. Desktop and Mobile retain neutral labels and selection checkmarks. Active
-and All remove the whole reminder path. The native iOS toolbar menu uses its image
-slot for the dot. MenuView cannot display JS-bundled custom images, so display-settings
-menus outside the toolbar reuse the existing Cindy menu and shared 6pt inline dot,
-including when the reminder is off, keeping the presenter stable across selections.
-This extends the existing filter reminder registration without changing which
-settings light the entry indicator.
+and All remove the whole reminder path. Native iOS menus retain their system UIMenu
+and toolbar presenters and use the image slot for the dot. MenuView receives an
+absolute path to a temporary 1x copy of the bundled PNG: a 20pt canvas containing
+the same 6pt dot. Ordinary row icons and selection checkmarks remain available.
+Custom menus remain fallback paths and use the shared inline dot. This extends
+the existing filter reminder registration without changing which settings light
+the entry indicator.
 
 ## 3. Typography Rules
 

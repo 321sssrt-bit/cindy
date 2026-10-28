@@ -19,7 +19,11 @@ export function deviceLinkApiFetch<T>(
   opts: Omit<ApiFetchOptions, 'baseUrl' | 'token' | 'authorization'> = {},
 ): Promise<T> {
   const relay = activeSelfHostedRelay();
-  if (!relay) return serverApiFetch<T>(apiPath, { ...opts, baseUrl: resolveDeviceLinkApiBase });
+  if (!relay) return serverApiFetch<T>(apiPath, {
+    ...opts,
+    // 401 重试可随账号区域更新官方端点，不能随中转选择跨到自建地址。
+    baseUrl: () => getClientEndpoint('deviceLinkApiBaseUrl'),
+  });
   return serverApiFetch<T>(apiPath, {
     ...opts,
     baseUrl: relay.baseUrl,

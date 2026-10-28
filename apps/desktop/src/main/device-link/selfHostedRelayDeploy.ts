@@ -392,11 +392,14 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
   const busy = inspected.get('BUSY') ?? [];
   if (busy.length > 0) throw new RelayDeployError('PORT_BUSY', busy.join(', '));
   const state = first(inspected, 'STATE');
-  if (state && !params.replaceExisting) {
-    const [, relayId, ownerPublicKey] = state.split(' ');
+  const assertExistingIdentity = (existingState: string) => {
+    const [, relayId, ownerPublicKey] = existingState.split(' ');
     if (relayId !== params.init.relayId || ownerPublicKey !== params.init.ownerPublicKey) {
       throw new RelayDeployError('RELAY_MISMATCH');
     }
+  };
+  if (state && state !== 'unknown' && !params.replaceExisting) {
+    assertExistingIdentity(state);
   }
 
   params.onStep('runtime');
@@ -406,6 +409,14 @@ export async function deployRelayToServer(params: DeployParams): Promise<{ relay
     label: 'relay-deploy-runtime',
   });
   expectOk(runtime, 'DOWNLOAD_FAILED');
+
+  // 保留数据卸载会移除 Node。恢复运行环境后重读身份，上传和配置仍须等身份匹配。
+  if (state === 'unknown' && !params.replaceExisting) {
+    const restored = parseLines((await remote.root(INSPECT_SCRIPT, [], { label: 'relay-deploy-inspect' })).stdout);
+    const restoredState = first(restored, 'STATE');
+    if (!restoredState) throw new RelayDeployError('RELAY_MISMATCH');
+    assertExistingIdentity(restoredState);
+  }
 
   params.onStep('upload');
   const uploaded = expectOk(

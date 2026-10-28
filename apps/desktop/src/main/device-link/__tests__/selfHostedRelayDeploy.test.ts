@@ -153,6 +153,25 @@ describe('deployRelayToServer', () => {
     expect(configure.command).toContain(`'203.0.113.10' '0.0.0.0' 'https://203.0.113.10' '1'`);
   });
 
+  // #7722 discussion_r4402946293:保留数据卸载后 Node 已移除，初次检查无法读取身份。
+  // 先恢复运行环境再读取；匹配身份才能继续，其他主人或仍不可读时不能上传/写配置。tier: unit。
+  it.each([
+    [`2 ${init.relayId} ${init.ownerPublicKey}`, true],
+    [`2 ${init.relayId} ${'R'.repeat(43)}`, false],
+    ['unknown', false],
+  ])('rechecks retained data after restoring Node: %s', async (state, matches) => {
+    let inspections = 0;
+    mocks.responses['relay-deploy-inspect'] = () =>
+      ok(`STATE ${++inspections === 1 ? 'unknown' : state}\n`);
+    const { error } = await run();
+    expect(mocks.commands.some(c => c.label === 'relay-deploy-runtime')).toBe(true);
+    expect(inspections).toBe(2);
+    if (matches) expect(error).toBeNull();
+    else expect(error).toMatchObject({ code: 'RELAY_MISMATCH' });
+    expect(mocks.commands.some(c => c.label === 'relay-deploy-upload')).toBe(matches);
+    expect(mocks.commands.some(c => c.label === 'relay-deploy-configure')).toBe(matches);
+  });
+
   it('does not access another account’s SSH connection after the owner changes while connecting', async () => {
     let current = true;
     mocks.ensureReady.mockImplementationOnce(async () => { current = false; });

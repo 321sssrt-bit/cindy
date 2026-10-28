@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getAccessToken: vi.fn(() => 'account-access-token'),
   refresh: vi.fn(async () => true),
   invalidateSession: vi.fn(),
+  officialBase: 'https://device-link.official.invalid',
   relay: null as null | import('../selfHostedRelayRouting').ActiveSelfHostedRelay,
 }));
 
@@ -28,7 +29,7 @@ vi.mock('../../authManager', () => ({
 vi.mock('../../i18n.js', () => ({ getResolvedMainLocale: () => 'zh-CN' }));
 vi.mock('../../logger', () => ({ createLogger: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }) }));
 vi.mock('../../clientEndpointsService.js', () => ({
-  getClientEndpoint: () => 'https://device-link.official.invalid',
+  getClientEndpoint: () => mocks.officialBase,
 }));
 vi.mock('../index.js', () => ({ deviceLinkApiBase: () => 'http://192.168.1.20:47820', remoteBackgroundInvoke: vi.fn() }));
 vi.mock('../providerShareGuest.js', () => ({ getReceivedShares: () => [] }));
@@ -50,6 +51,7 @@ describe('deviceLinkApiFetch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.relay = null;
+    mocks.officialBase = 'https://device-link.official.invalid';
   });
 
   // /models 复用真实目录读取与 API 路由；旧 caller 直接用 serverApiFetch 会把官方 token 发到自建中转。
@@ -89,6 +91,33 @@ describe('deviceLinkApiFetch', () => {
     });
     expect(JSON.stringify(mocks.netFetch.mock.calls)).not.toContain('account-access-token');
     expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.invalidateSession).not.toHaveBeenCalled();
+  });
+
+  // #7722 discussion_r4402946273:刷新期间切到自建中转后，官方重试只能跟随官方区域，
+  // 不能把刷新后的账号 token 交给自建服务器。最小输入:官方 401 → 切中转/区域 → refresh 成功。
+  it('keeps an official retry on official endpoints when the selected relay changes during refresh', async () => {
+    mocks.netFetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 'TOKEN_EXPIRED' } }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ devices: [] }), { status: 200 }));
+    mocks.refresh.mockImplementationOnce(async () => {
+      mocks.relay = {
+        baseUrl: 'http://192.168.1.20:47820', credential: 'relay-credential', role: 'member',
+        relayId: 'r', name: 'Home', deviceId: 'pc', signingSeed: 'A'.repeat(43), ownerPublicKey: 'A'.repeat(43),
+      };
+      mocks.officialBase = 'https://device-link.new-region.invalid';
+      return true;
+    });
+
+    await expect(deviceLinkApiFetch('/api/device-link/devices')).resolves.toEqual({ devices: [] });
+
+    expect(mocks.netFetch.mock.calls.map(([url, init]) => ({
+      url, authorization: (init as { headers: Record<string, string> }).headers.Authorization,
+    }))).toEqual([
+      { url: 'https://device-link.official.invalid/api/device-link/devices', authorization: 'Bearer account-access-token' },
+      { url: 'https://device-link.new-region.invalid/api/device-link/devices', authorization: 'Bearer account-access-token' },
+    ]);
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
     expect(mocks.invalidateSession).not.toHaveBeenCalled();
   });
 

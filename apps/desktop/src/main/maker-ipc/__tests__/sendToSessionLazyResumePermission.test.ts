@@ -404,6 +404,7 @@ describe('idle forwarded request authorization', () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: 'new-child', autoReviewUserText: receipt }));
     expect(h.sendOptions).toHaveLength(0);
     expect(broadcast).toHaveBeenCalledWith('new-child');
+    expect(broadcast).toHaveBeenCalledTimes(1);
   });
   it.each([
     ['live', 'agent-request'], ['resumed', 'agent-request'],

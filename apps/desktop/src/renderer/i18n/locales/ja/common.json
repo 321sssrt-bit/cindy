@@ -5139,6 +5139,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "{{section}}を読み込み中…",
+        "retrying": "{{section}}を読み込めませんでした。自動で再試行中…",
+        "error": "{{section}}を読み込めませんでした。",
+        "retry": "設定を再読み込み",
+        "browserDetection": "ブラウザの検出結果"
+      },
       "title": "自動操作",
       "description": "エージェントがコンピュータと接続済みデバイスを使ってあなたの代わりに作業します。ブラウザ自動操作は独立したブラウザを使い、Android 自動操作は ADB を使い、コンピュータ自動操作はローカルドライバーに依存します。",
       "codexRefreshDeferred": "設定は保存されましたが、Codex が使用中です。アプリを再起動すると、新しい Codex セッションに反映されます。",

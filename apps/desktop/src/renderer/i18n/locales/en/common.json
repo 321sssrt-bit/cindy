@@ -5170,6 +5170,13 @@
       }
     },
     "computerUse": {
+      "configurationRead": {
+        "loading": "Loading {{section}}…",
+        "retrying": "Could not load {{section}}. Retrying automatically…",
+        "error": "Could not load {{section}}.",
+        "retry": "Reload Settings",
+        "browserDetection": "Browser detection"
+      },
       "title": "Automation",
       "description": "Let agents use your computer and connected devices to get things done for you. Browser automation uses an isolated browser; Android automation uses ADB; computer automation relies on a local driver.",
       "codexRefreshDeferred": "Setting saved, but Codex is busy. Restart the app to apply it to new Codex sessions.",

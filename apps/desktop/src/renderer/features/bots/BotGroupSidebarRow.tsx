@@ -26,6 +26,7 @@ import { BotGroupSidebarAvatar } from './BotGroupAvatars';
 import { isBotGroupLaneSession } from './botGroupLane';
 import {
   botGroupNoticeKey,
+  botGroupActivityAt,
   botGroupPreviewLine,
   botGroupSidebarPlanPreview,
   isRunningBotGroupSidebarPreview,
@@ -174,7 +175,7 @@ export function BotGroupSidebarRow({
   const mutedClass = selected ? 'opacity-70' : 'text-[var(--sidebar-list-muted)]';
   const unread = botGroupUnreadCount(group);
   const timestamp = formatBotListTimestamp(
-    !group.archived && group.speakingBotIds.length > 0 ? now : group.lastMessage?.createdAt ?? group.updatedAt,
+    !group.archived && group.speakingBotIds.length > 0 ? now : botGroupActivityAt(group),
     now,
     t,
   );

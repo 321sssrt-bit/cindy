@@ -10,7 +10,9 @@ describe('renderOrcaLeadSystemPrompt', () => {
   const channelDisclosureRule =
     'label every delegated task with its actual execution channel: Orca Worker or native subagent.';
   const toolSurfaceRule =
-    'Tools: get_workspace_info, create_worker, create_workers, send_to_worker, interrupt_worker, get_worker_queue_status, update_queued_message, cancel_queued_message, merge_queued_messages, update_worker.';
+    'Tools: get_workspace_info, create_worker, create_workers, send_to_worker, interrupt_worker, get_worker_queue_status, update_queued_message, cancel_queued_message, merge_queued_messages, steer_queued_message, move_queued_message, update_worker.';
+  const queueOrderRule =
+    'Queue order: the worker queue is FIFO, so a later order runs after the earlier ones. To run an order sooner: steer_queued_message inserts a queued message into the worker\'s current turn, move_queued_message moves it to position 0 (front), and a more urgent order you send while the worker is busy should go out with delivery=steer instead of queueing. merge_queued_messages combines related messages but keeps the earliest position and never reorders. QUEUE_CHANGED from merge_queued_messages means the queue moved under you: re-read get_worker_queue_status and retry.';
   const explicitCreationBoundary =
     'Use create_worker only when the user explicitly asks to open one new worker, and use create_workers only when the user explicitly asks to open multiple new workers.';
   const missingWorkerBoundary =
@@ -99,6 +101,7 @@ describe('renderOrcaLeadSystemPrompt', () => {
     const prompt = renderOrcaLeadSystemPrompt(null);
 
     expect(prompt).toContain(toolSurfaceRule);
+    expect(prompt).toContain(queueOrderRule);
     expect(prompt).toContain(sendDispatchSignals);
     expect(prompt).toContain(createDispatchSignals);
     expect(prompt).toContain(interruptDispatchSignals);

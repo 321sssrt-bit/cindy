@@ -5759,6 +5759,14 @@ export class PiAgent extends BaseAgent {
         transport,
         logger: this.deps.logger,
         onEvent: (event: PiRpcEvent) => {
+          // Native retries remain within one agent_start/settled lifecycle.
+          // A new start also recovers diagnostics if the previous turn omitted
+          // settled (abort/retry exhaustion), without changing turn execution.
+          if (event.type === 'agent_start') {
+            providerRequestObservedAt = undefined;
+            providerTurnObservedAt = undefined;
+            providerFirstOutputLogged = false;
+          }
           if (!remote && event.type === 'extension_ui_request' && event.method === 'notify' &&
               typeof event.message === 'string' && event.message.startsWith(CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX)) {
             const prefix = `${CINDY_PI_REQUEST_DIAGNOSTICS_PREFIX}${runtimeInstanceId}:`;

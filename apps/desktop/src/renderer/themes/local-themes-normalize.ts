@@ -20,6 +20,7 @@ import { parseCssColor, toHex, type Rgb } from '../../shared/theme-import/color'
 import { deriveUncheckedSwitchTrack } from '../../shared/theme-import/palette';
 import { colorRegistry } from './color-registry';
 import { dropLegacyLoginDefaults } from './loginLegacyDefaults';
+import type { ThemeType } from './types';
 
 /** 旧的 per-surface placeholder alias —— 归一化后由 `--text-placeholder` slot 统一接管。 */
 const PER_SURFACE_PLACEHOLDER_KEYS = [
@@ -113,6 +114,7 @@ function normalizeUncheckedSwitchColors(
 
 export function normalizeLocalThemeColors(
   colors: Record<string, string>,
+  type?: ThemeType,
 ): Record<string, string> {
   let normalized = colors;
   const legacyConnectedBadge = colors[CONNECTED_BADGE_KEY];
@@ -149,5 +151,7 @@ export function normalizeLocalThemeColors(
     }
   }
 
-  return dropLegacyLoginDefaults(normalizeUncheckedSwitchColors(normalized));
+  const result = normalizeUncheckedSwitchColors(normalized);
+  // 升级前的 login-* 默认值按主题模式比对;不知道模式时不猜,不迁移。
+  return type === undefined ? result : dropLegacyLoginDefaults(result, type);
 }

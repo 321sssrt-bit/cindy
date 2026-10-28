@@ -139,11 +139,13 @@ export class RichAnswerStream {
   private roots: string[] = [];
   private revision = 0;
   private issues = 0;
+  private failedFinalLine = false;
+  private sourceTooLong = false;
   update(source: string, complete = false): RichDocument {
-    // A terminal snapshot can precede the remaining text. If its unterminated
-    // last line was already consumed, replay the corrected snapshot rather than
-    // parsing just the suffix and retaining the earlier partial-line error.
-    const extendsFinalLine = source.length > this.source.length
+    // Replay only a failed final line. Extending a committed operation with a
+    // malformed suffix must not discard the content it already made readable.
+    const extendsFinalLine = this.failedFinalLine
+      && source.length > this.source.length
       && source.length <= MAX_SOURCE
       && this.offset === this.source.length
       && this.offset > 0
@@ -155,21 +157,27 @@ export class RichAnswerStream {
       this.nodes = new Map();
       this.roots = [];
       this.issues = 0;
+      this.failedFinalLine = false;
       this.revision++;
     }
     if (source.length > MAX_SOURCE) {
-      this.issues = Math.max(1, this.issues);
+      this.sourceTooLong = true;
       return this.snapshot();
     }
+    this.sourceTooLong = false;
     this.source = source;
     this.nodes = new Map(this.nodes);
     let end: number;
     while ((end = source.indexOf("\n", this.offset)) !== -1) {
       this.line(source.slice(this.offset, end));
+      this.failedFinalLine = false;
       this.offset = end + 1;
     }
     if (complete && this.offset < source.length) {
-      this.line(source.slice(this.offset));
+      const failed = !this.line(source.slice(this.offset));
+      // A suffix parsed after an earlier committed tail is not a whole line:
+      // replaying it would erase that earlier operation on the next snapshot.
+      this.failedFinalLine = failed && (this.offset === 0 || source[this.offset - 1] === "\n");
       this.offset = source.length;
     }
     return this.snapshot();
@@ -179,17 +187,17 @@ export class RichAnswerStream {
       nodes: this.nodes,
       roots: this.roots,
       revision: this.revision,
-      issues: this.issues,
+      issues: this.sourceTooLong ? Math.max(1, this.issues) : this.issues,
     };
   }
-  private line(line: string) {
-    if (!line.trim()) return;
+  private line(line: string): boolean {
+    if (!line.trim()) return true;
     try {
       const op: unknown = JSON.parse(line);
       if (!record(op) || !Number.isSafeInteger(op.seq) || Number(op.seq) < 1)
         throw Error("sequence");
       const seq = Number(op.seq);
-      if (seq <= this.seq) return;
+      if (seq <= this.seq) return true;
       // A malformed or absent line leaves a numbering gap: committed content stays,
       // the missing operations are reported, and later lines still apply.
       this.issues += Math.min(seq - this.seq - 1, MAX_NODES);
@@ -329,8 +337,10 @@ export class RichAnswerStream {
         }
       } else throw Error("operation");
       this.revision++;
+      return true;
     } catch {
       this.issues++;
+      return false;
     }
   }
   private props(v: unknown): Record<string, unknown> {

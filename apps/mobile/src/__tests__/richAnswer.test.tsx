@@ -83,3 +83,14 @@ it('replaces the incomplete notice with the late full answer without remounting'
   expect(container.textContent).toContain('Complete findings');
   expect(container.textContent).not.toContain('message.richAnswer.incomplete');
 });
+
+// Tier 1: malformed later suffixes must not erase text already on screen.
+it('keeps committed text visible while malformed suffixes grow without remounting', async () => {
+  const full = JSON.stringify({ version: 1, seq: 1, op: 'create', id: 'answer', kind: 'markdown', props: { text: 'Readable findings' } });
+  for (const suffix of ['', '{', '{"seq":', '{"seq":2']) {
+    await act(async () => root.render(createElement(SessionQuickSendProvider, { value: null },
+      createElement(RichAnswer, { source: full + suffix, stateKey: 'malformed-tail', complete: true, renderMarkdown: text => text }))));
+    expect(container.textContent).toContain('Readable findings');
+    if (suffix) expect(container.textContent).toContain('message.richAnswer.incomplete');
+  }
+});

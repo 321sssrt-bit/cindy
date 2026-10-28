@@ -62,6 +62,22 @@ describe('streaming answer documents', () => {
     expect(parser.update(full, true).nodes.get('answer')?.props.text).toBe('one two');
     expect(first.nodes.get('answer')?.props.text).toBe('one');
   });
+  it.each(['create', 'append', 'patch'])('preserves a committed %s tail when malformed suffixes keep growing', (operation) => {
+    const create = line(1, { op: 'create', id: 'answer', kind: 'text', props: { text: 'one' } });
+    const update = operation === 'create' ? create.trimEnd() : create + line(2, operation === 'append'
+      ? { op: 'append', id: 'answer', text: ' two' }
+      : { op: 'patch', id: 'answer', props: { text: 'one two' } }).trimEnd();
+    const expected = operation === 'create' ? 'one' : 'one two';
+    const parser = new RichAnswerStream();
+    const committed = parser.update(update, true);
+    for (const suffix of ['{', '{"seq":', '{"seq":3']) {
+      const next = parser.update(update + suffix, true);
+      expect(next.nodes.get('answer')?.props.text).toBe(expected);
+      expect(next.roots).toEqual(['answer']);
+      expect(next.issues).toBeGreaterThan(0);
+    }
+    expect(committed.nodes.get('answer')?.props.text).toBe(expected);
+  });
   it('preserves committed content when an extended finalized tail exceeds the source limit', () => {
     const create = line(1, { op: 'create', id: 'answer', kind: 'text', props: { text: 'Readable' } }).trimEnd();
     const parser = new RichAnswerStream();
@@ -78,6 +94,7 @@ describe('streaming answer documents', () => {
     const answer = line(1, { op: 'create', id: 'answer', kind: 'text', props: { text: 'Readable' } });
     const parser = new RichAnswerStream();
     expect(parser.update(prefix + answer.slice(0, -8), true).issues).toBe(2);
+    expect(parser.update(prefix + answer.slice(0, -8) + ' '.repeat(2_000_001), true).issues).toBe(2);
     const recovered = parser.update(prefix + answer, true);
     expect(recovered.nodes.get('answer')?.props.text).toBe('Readable');
     expect(recovered.issues).toBe(1);

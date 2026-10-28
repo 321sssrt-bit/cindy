@@ -2721,6 +2721,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
       const route = type === 'update' || type === 'archive' ? '' : type === 'member' ? '/members' : type === 'botAccess' ? '/bot-access' : `/${type}`;
       const asManager = type === 'update' || type === 'archive' || type === 'transfer' || (type === 'member' && !['leave', 'invite'].includes(action.action));
       const s = await groupSnapshot(target);
+      if (action.type === 'transfer') {
+        const recipient = s.members.find(member => member.id === action.actorId && member.state === 'joined');
+        if (!recipient) throw new Error('MEMBER_NOT_FOUND');
+        if (recipient.kind !== 'human') throw new Error('HUMAN_OWNER_REQUIRED');
+      }
       const actorId = asManager ? managementActor(s) : undefined;
       await api(`/conversations/${target}${route}`, type === 'update' || type === 'archive' ? 'PATCH' : 'POST', {
         operationId: randomUUID(), ...payload, ...(type === 'archive' ? { archived: action.archived } : {}),

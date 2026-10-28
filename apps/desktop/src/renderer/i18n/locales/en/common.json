@@ -7371,6 +7371,11 @@
       "confirm": {
         "dialogTitle": "Plugin “{{name}}” needs your confirmation"
       },
+      "modelPicker": {
+        "useConfiguration": "Use this configuration",
+        "title": "Choose a model for plugin “{{name}}”",
+        "unavailable": "This model configuration is unavailable. Choose again and confirm."
+      },
       "workspace": {
         "dialogTitle": "Choose a project folder",
         "dialogMessage": "Plugin “{{name}}” is asking you to choose a project folder to create a session in the sidebar"
@@ -10354,7 +10359,7 @@
           "removeAdmin": "Remove admin role",
           "transfer": "Transfer ownership",
           "transferTitle": "Transfer ownership to {{name}}?",
-          "transferHint": "They will become the owner and you will become an admin. Companions can also own groups.",
+          "transferHint": "They will become the owner and you will become an admin.",
           "removeTitle": "Remove {{name}} from this group?",
           "removeHint": "They will lose access to messages. Their companions will also leave.",
           "addCompanion": "Invite my companion",

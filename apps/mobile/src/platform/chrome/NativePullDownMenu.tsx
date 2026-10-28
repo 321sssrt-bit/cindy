@@ -15,6 +15,8 @@ export type NativePullDownAction = {
   disabled?: boolean;
   destructive?: boolean;
   displayInline?: boolean;
+  /** 跟随筛选入口的提醒点，标出当前收窄列表的选项。 */
+  filterReminder?: boolean;
   id: string;
   image?: MenuAction["image"];
   /** 与 iOS image 对应的跨平台菜单图标。 */
@@ -51,12 +53,14 @@ function toMenuAction(
     title: action.title,
     // Fabric defaults the library's optional Int32 imageColor to transparent.
     // Always pair a symbol with a visible semantic color.
-    ...(action.image
+    ...(action.image || action.filterReminder
       ? {
-          image: action.image,
-          imageColor: action.destructive
-            ? colors.destructive
-            : colors.textPrimary,
+          image: action.filterReminder ? "circle.fill" : action.image,
+          imageColor: action.filterReminder
+            ? colors.statusAccent
+            : action.destructive
+              ? colors.destructive
+              : colors.textPrimary,
         }
       : {}),
     ...(action.subtitle ? { subtitle: action.subtitle } : {}),

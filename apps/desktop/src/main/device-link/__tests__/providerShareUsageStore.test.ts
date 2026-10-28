@@ -19,6 +19,38 @@ describe('provider share usage store', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  // Unit, real ledger entry: personal ratios must isolate identity/provider/date and exclude cache.
+  // Existing range tests do not cover midnight recovery or a failed ledger becoming a false 0%.
+  it('reconstructs only one member/provider over seven local dates and advances at midnight', async () => {
+    let now = new Date(2026, 9, 22, 10).getTime();
+    const file = path.join(dir, 'usage.json');
+    const store = createProviderShareUsageStore(file, { now: () => now });
+    const write = (share: string, member: string, provider: string, model: string, tokens: number) =>
+      store.record(share, member, { kind: 'codex', providerId: provider, memberKey: 'local', samples: [{ ...sample(model, tokens, 0), cacheReadTokens: 99999 }] });
+    write('s', 'alice', 'p', 'new-model', 60);
+    write('s', 'bob', 'p', 'new-model', 900);
+    write('s', 'alice', 'another-provider', 'new-model', 900);
+    write('another-share', 'alice', 'p', 'new-model', 900);
+    now = new Date(2026, 9, 28, 10).getTime();
+    write('s', 'alice', 'p', 'other-model', 40);
+    const current = store.memberTokenSnapshot(new Set(['s']), 'p', 'alice');
+    expect(current).toMatchObject({ available: true, windowStart: '2026-10-22', windowEnd: '2026-10-28',
+      models: [{ model: 'new-model', tokens: 60 }, { model: 'other-model', tokens: 40 }] });
+    now = current.nextWindowAt;
+    expect(store.memberTokenSnapshot(new Set(['s']), 'p', 'alice')).toMatchObject({ windowStart: '2026-10-23', models: [{ model: 'other-model', tokens: 40 }] });
+    await store.flush();
+    expect(createProviderShareUsageStore(file, { now: () => now }).memberTokenSnapshot(new Set(['s']), 'p', 'alice').models).toEqual([{ model: 'other-model', tokens: 40 }]);
+  });
+  it('marks corrupt usage unavailable across subsequent writes and reloads', async () => {
+    const file = path.join(dir, 'usage.json');
+    fs.writeFileSync(file, '{broken');
+    const store = createProviderShareUsageStore(file);
+    expect(store.memberTokenSnapshot(new Set(['s']), 'p', 'alice').available).toBe(false);
+    store.record('s', 'alice', { kind: 'codex', providerId: 'p', memberKey: 'local', samples: [sample('model', 1, 0)] });
+    await store.flush();
+    expect(createProviderShareUsageStore(file).memberTokenSnapshot(new Set(['s']), 'p', 'alice').available).toBe(false);
+  });
+
   it('aggregates per member and model, filters by range and only returns requested shares', async () => {
     let now = new Date(2026, 9, 7, 12).getTime();
     const file = path.join(dir, 'usage.json');

@@ -154,6 +154,7 @@ export function createProviderShareUsageStore(filePath: string, options: { now?:
   const now = options.now ?? Date.now;
   let rows: Map<string, ProviderShareUsageRow> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let incomplete = false;
   let writing: Promise<void> = Promise.resolve();
 
   const keyOf = (row: Pick<ProviderShareUsageRow, 'day' | 'shareId' | 'memberId' | 'kind' | 'providerId' | 'model'>) =>
@@ -163,15 +164,18 @@ export function createProviderShareUsageStore(filePath: string, options: { now?:
     if (rows) return rows;
     rows = new Map();
     try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { version?: unknown; rows?: unknown };
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { version?: unknown; rows?: unknown; incomplete?: unknown };
+      incomplete = parsed.incomplete === true;
       if (parsed.version === FILE_VERSION && Array.isArray(parsed.rows)) {
         for (const raw of parsed.rows) {
           const row = parseRow(raw);
           if (row) rows.set(keyOf(row), row);
+          else incomplete = true;
         }
-      }
-    } catch {
-      // 没有文件或文件损坏：从空账本开始。
+      } else incomplete = true;
+    } catch (error) {
+      // A missing ledger is empty; unreadable/corrupt data must not become a measured 0%.
+      incomplete = (error as NodeJS.ErrnoException).code !== 'ENOENT';
     }
     return rows;
   }
@@ -187,7 +191,7 @@ export function createProviderShareUsageStore(filePath: string, options: { now?:
   async function writeNow(): Promise<void> {
     const map = load();
     prune(map);
-    const body = JSON.stringify({ version: FILE_VERSION, rows: [...map.values()] });
+    const body = JSON.stringify({ version: FILE_VERSION, rows: [...map.values()], ...(incomplete ? { incomplete: true } : {}) });
     const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
     try {
@@ -208,6 +212,21 @@ export function createProviderShareUsageStore(filePath: string, options: { now?:
   }
 
   return {
+    /** Same member/provider only, today's local calendar date plus six preceding dates. */
+    memberTokenSnapshot(shareIds: ReadonlySet<string>, providerId: string, memberId: string, at = now()) {
+      const start = providerShareUsageRangeStart('7d', at)!;
+      const end = localDay(at);
+      const date = new Date(at);
+      const totals = new Map<string, number>();
+      for (const row of load().values()) {
+        if (!shareIds.has(row.shareId) || row.memberId !== memberId || row.providerId !== providerId
+          || row.day < start || row.day > end) continue;
+        totals.set(row.model, (totals.get(row.model) ?? 0) + row.inputTokens + row.outputTokens);
+      }
+      return { available: !incomplete, windowStart: start, windowEnd: end,
+        nextWindowAt: new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime(),
+        models: [...totals].map(([model, tokens]) => ({ model, tokens })) };
+    },
     /** memberKey：这一轮在哪台组内电脑运行(本机为 `local`)。 */
     record(
       shareId: string,

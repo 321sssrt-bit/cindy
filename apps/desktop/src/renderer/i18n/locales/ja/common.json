@@ -22,6 +22,10 @@
     }
   },
   "localAgent": {
+    "createVisibleSessions": "Cindy に表示するセッションを作成",
+    "createVisibleSessionsHint": "今後このアプリが開くセッションに適用します。メッセージは Cindy に保存され、オフにしても既存のセッションは残ります。",
+    "saveFailed": "設定を保存できませんでした。もう一度お試しください。",
+    "messageSource": "ローカルアプリ「{{name}}」から送信",
     "title": "ローカルアプリの接続",
     "empty": "接続済みのアプリはありません",
     "description": "承認したローカルアプリが Cindy のモデルと実行機能を利用できます。認証情報は Cindy が管理します。",
@@ -12826,6 +12830,7 @@
       "pluginSent": "プラグインから送信",
       "pluginViewDetail": "プラグインを表示",
       "sourceIds": {
+        "localApp": "アプリ ID：{{id}}",
         "mcpApp": "$t(mcpApps.serverId)",
         "session": "セッション ID：{{id}}",
         "teammate": "仲間 ID：{{id}}",

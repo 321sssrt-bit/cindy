@@ -7340,6 +7340,10 @@
       "confirm": {
         "dialogTitle": "插件「{{name}}」请你确认"
       },
+      "modelPicker": {
+        "title": "为插件「{{name}}」选择模型",
+        "unavailable": "这个模型配置暂时不可用，请重新选择后确认。"
+      },
       "workspace": {
         "dialogTitle": "选择项目文件夹",
         "dialogMessage": "插件「{{name}}」请求你选择一个项目文件夹，用于在侧边栏创建任务"

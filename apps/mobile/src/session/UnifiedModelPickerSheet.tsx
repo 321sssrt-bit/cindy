@@ -1070,7 +1070,7 @@ export function UnifiedModelPickerSheet(
       title={
         favoriteEdit
           ? t("models.unified.editFavorite")
-          : (row?.entry.displayName ?? t("models.picker.title"))
+          : (row?.entry.displayName ?? p.title ?? t("models.picker.title"))
       }
       testID={p.testID ?? "modelSheet"}
       query={query}

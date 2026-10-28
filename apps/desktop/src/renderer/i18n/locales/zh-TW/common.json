@@ -7340,6 +7340,11 @@
       "confirm": {
         "dialogTitle": "插件「{{name}}」請你確認"
       },
+      "modelPicker": {
+        "useConfiguration": "使用此設定",
+        "title": "為插件「{{name}}」選擇模型",
+        "unavailable": "這個模型設定暫時無法使用，請重新選擇後確認。"
+      },
       "workspace": {
         "dialogTitle": "選擇專案資料夾",
         "dialogMessage": "插件「{{name}}」請求你選擇一個專案資料夾，用於在側邊欄建立任務"
@@ -10316,7 +10321,7 @@
           "removeAdmin": "取消管理員",
           "transfer": "轉讓群主",
           "transferTitle": "將群主轉讓給 {{name}}？",
-          "transferHint": "對方成為群主，你將成為管理員。夥伴也可以擔任群主。",
+          "transferHint": "對方成為群主，你將成為管理員。",
           "removeTitle": "將 {{name}} 移出群組？",
           "removeHint": "該成員將無法繼續查看或傳送訊息；其夥伴也會退出。",
           "addCompanion": "邀請我的夥伴",

@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ScreenshotErrorBoundary } from '../ScreenshotErrorBoundary';
 import { Magnifier } from '../Magnifier';
 import { bitmapToImageData, imageDataToBitmap } from '../bridge';
+import type { RegionScreenshotOverlayBridge } from '../bridge';
+import type { RegionCaptureFrame } from '../../../../shared/regionCapture';
+import { ScrollCaptureOverlay } from '../ScrollCaptureOverlay';
 
 vi.mock('@/lib/logger', () => ({ createLogger: () => ({ warn: vi.fn() }) }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -14,8 +17,47 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 describe('screenshot rendering recovery', () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+  // 用户反馈点击自动滚动立刻提示已停止。已有渲染测试未覆盖开关与在途帧的竞态。
+  // 最小输入：开启前发出的帧在开启成功后返回 false；下一帧的真实停止仍须显示。tier: unit。
+  it('ignores a pre-start frame but reports a fresh automatic scrolling failure', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('ImageData', class {
+      data: Uint8ClampedArray;
+      constructor(readonly width: number, readonly height: number) {
+        this.data = new Uint8ClampedArray(width * height * 4);
+      }
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      putImageData: vi.fn(), drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    const image = { width: 64, height: 64, data: new Uint8Array(64 * 64 * 4) };
+    let resolveFrame!: (frame: RegionCaptureFrame) => void;
+    const liveFrame = vi.fn(() => new Promise<RegionCaptureFrame>(resolve => { resolveFrame = resolve; }));
+    const bridge = {
+      liveFrame, autoScroll: vi.fn(async () => true), holdCapture: vi.fn(async () => {}),
+    } as unknown as RegionScreenshotOverlayBridge;
+    render(<ScrollCaptureOverlay token="capture" bridge={bridge} onEdit={vi.fn()} begin={{
+      mode: 'scroll', first: image, selection: { x: 10, y: 10, width: 64, height: 64 },
+      scrollLayout: {
+        viewport: { width: 800, height: 600 }, preview: { x: 100, y: 10, width: 64, height: 128 },
+        actions: { x: 100, y: 150, width: 128, height: 32 }, auto: { x: 10, y: 90, width: 128, height: 32 },
+      },
+    }} />);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(liveFrame).toHaveBeenCalledTimes(1);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'regionScreenshot.live.autoScroll' })); });
+    expect(screen.getByRole('button', { name: 'regionScreenshot.live.stopScroll' })).toBeTruthy();
+    await act(async () => { resolveFrame({ image, autoScrolling: false, keys: null, cursor: null }); });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'regionScreenshot.live.stopScroll' })).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    await act(async () => { resolveFrame({ image, autoScrolling: false, keys: null, cursor: null }); });
+    expect(screen.getByRole('alert').textContent).toBe('regionScreenshot.live.autoUnavailable');
+    expect(screen.getByRole('button', { name: 'regionScreenshot.live.autoScroll' })).toBeTruthy();
   });
   // Unit: packed-pixel conversion must preserve alpha, immutable input and byte
   // views from IPC. Existing geometry/rendering tests do not inspect these bytes.

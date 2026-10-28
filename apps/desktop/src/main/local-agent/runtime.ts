@@ -13,6 +13,9 @@ import {
   type UserMessage,
 } from '@cindy/maker-core';
 import { LocalAgentError, type LocalAgentOpen, type LocalAgentRuntime } from './server.js';
+import { LOCAL_AGENT_ROUTE } from './catalog.js';
+import { localAgentResumeId, readLocalAgentResumeId, type LocalAgentExecutionRoute, type LocalAgentRouteResolver } from './groupRoute.js';
+import type { LocalAgentLoadTracker } from './load.js';
 
 const object = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
@@ -203,12 +206,18 @@ export async function openLocalAgentRuntime(
   input: LocalAgentOpen,
   bridge: { url: string; token: string; emit(event: unknown): void },
   localize = (_code: string, fallback: string) => fallback,
+  resolveRoute?: LocalAgentRouteResolver,
+  trackLoad?: LocalAgentLoadTracker,
 ): Promise<LocalAgentRuntime> {
+  let resumeBinding: ReturnType<typeof readLocalAgentResumeId>;
+  try { resumeBinding = readLocalAgentResumeId(input.resume); }
+  catch { throw new LocalAgentError('RESUME_UNAVAILABLE', 'Cindy 原会话无法恢复，请在调用应用中开始新的任务。'); }
   let instructions = input.instructions;
   // The effort last applied by send.effort survives an instructions rebuild.
   let effort = input.effort;
   const sessionId = `local-agent-${randomUUID()}`;
   let handle: Session;
+  let notifyLoad = () => {};
   let closed = false,
     busy = false,
     preparing = false,
@@ -227,12 +236,35 @@ export async function openLocalAgentRuntime(
   await fs.mkdir(applicationDirectory, { recursive: true, mode: 0o700 });
   const temporary = await fs.mkdtemp(path.join(applicationDirectory, 'input-'));
   const projection = createEventProjection(bridge.emit, input.mcpName, localize);
+  // Pin the actual execution location across instruction rebuilds/native resume.
+  // A thread id must never be resumed on a newly selected group member.
+  let selectedRoute: Promise<LocalAgentExecutionRoute> | undefined;
+  let executionRoute: LocalAgentExecutionRoute;
+  // Only stable public remote codes cross the API, never peer diagnostics.
+  const remoteFailure = (error: unknown): never => {
+    const code = error instanceof Error ? /^\[(REMOTE_AGENT_PEER_TOO_OLD|REMOTE_AGENT_SHARE_PAUSED|REMOTE_AGENT_SHARE_REMOVED|REMOTE_AGENT_PROVIDER_NOT_ALLOWED|REMOTE_AGENT_UNAVAILABLE)\]/.exec(error.message)?.[1] : undefined;
+    if (code) throw new LocalAgentError(code, localize(code, '远程供应商暂不可用，请在 Cindy 中检查连接或更新远端版本。'));
+    throw error;
+  };
   const start = async (resume?: string, expected = epoch) => {
     assertCurrent(expected);
+    const initialRoute: LocalAgentExecutionRoute = {
+      providerId: input.model[LOCAL_AGENT_ROUTE]?.providerId ?? input.model.provider,
+      agentDeviceId: input.model[LOCAL_AGENT_ROUTE]?.deviceId,
+    };
+    const route = await (selectedRoute ??= resumeBinding.native
+      // A pre-group binding ran directly on its original source. Never assign
+      // a new location to an existing native thread, including legacy bindings.
+      ? Promise.resolve(resumeBinding.route ?? initialRoute)
+      : resolveRoute
+        ? resolveRoute({ ...initialRoute, sessionId, agentKind: input.model.engine, model: input.model.model })
+        : Promise.resolve(initialRoute)).catch(remoteFailure);
+    assertCurrent(expected);
+    executionRoute = route;
     const opts: StartSessionOptions = {
       sessionId,
       workingDir: input.cwd,
-      providerId: input.model.provider,
+      providerId: route.providerId,
       model: input.model.model,
       effort: effort as StartSessionOptions['effort'],
       userPrompt: instructions,
@@ -240,11 +272,13 @@ export async function openLocalAgentRuntime(
       permissionMode: 'bypassPermissions',
       resumeSessionId: resume,
       [LOCAL_AGENT_CLIENT]: {
+        ...(route.agentDeviceId ? { agentDeviceId: route.agentDeviceId } : {}),
+        ...(route.groupAssigned ? { groupAssigned: true } : {}),
         url: bridge.url,
         token: bridge.token,
         hostToolsOnly: input.access === 'none',
         mcpName: input.mcpName,
-        ...(input.legacyRuntime
+        ...(input.legacyRuntime && !input.model[LOCAL_AGENT_ROUTE]
           ? {}
           : { storageDirectory: path.join(applicationDirectory, input.model.engine) }),
       },
@@ -254,7 +288,7 @@ export async function openLocalAgentRuntime(
       },
     };
     resumed = Boolean(resume);
-    const next = await maker.startLocalAgentSession(input.model.engine, opts);
+    const next = await maker.startLocalAgentSession(input.model.engine, opts).catch(remoteFailure);
     try {
       assertCurrent(expected);
     } catch (error) {
@@ -269,8 +303,13 @@ export async function openLocalAgentRuntime(
       );
     }
     handle = next;
+    notifyLoad = trackLoad?.(sessionId, route, next) ?? (() => {});
     next.setInteractionListener(async (request) => {
       if (request.kind === 'permission') {
+        if (request.metadata?.hostOwnedConfirmation === 'shared_provider_credential') {
+          projection.failAtEnd(localize('INTERACTION_UNAVAILABLE', '分享供应商的凭据访问需要本人确认，当前应用无法接收。'));
+          return { kind: 'permission', behavior: 'deny', reason: 'host_interaction_unavailable' };
+        }
         const hostTool = input.tools.some((tool) =>
           [`mcp__${input.mcpName}__${tool.name}`, `mcp:${input.mcpName}:${tool.name}`].includes(
             request.toolName,
@@ -316,7 +355,7 @@ export async function openLocalAgentRuntime(
     return next;
   };
   try {
-    handle = await start(input.resume);
+    handle = await start(resumeBinding.native);
   } catch (error) {
     await fs.rm(temporary, { recursive: true, force: true });
     throw error;
@@ -388,7 +427,7 @@ export async function openLocalAgentRuntime(
   };
   return {
     get id() {
-      return handle.sdkSessionId;
+      return localAgentResumeId(handle.sdkSessionId, executionRoute);
     },
     get resumed() {
       return resumed;
@@ -401,6 +440,7 @@ export async function openLocalAgentRuntime(
         try {
           await handle.abort();
         } finally {
+          notifyLoad();
           if (epoch === interrupted) {
             busy = false;
             preparing = false;
@@ -464,7 +504,10 @@ export async function openLocalAgentRuntime(
         releaseInputs();
         turnInputs.push(sending);
         void (async () => {
-          const result = await handle.send(sending);
+          const sent = handle.send(sending);
+          // Session reserves the turn synchronously, even if the engine has no output yet.
+          notifyLoad();
+          const result = await sent.finally(() => notifyLoad());
           if (!result.accepted) await discard(sending);
           assertSendDispatched(result, 'local-agent/send');
         })().catch(() => {

@@ -243,6 +243,21 @@ function capabilitiesForSession(
   };
 }
 
+/** External applications use only this small Session surface. Remote handles
+ * enforce the peer's actual capabilities; no local binary is required. */
+function applicationHandleCapabilities(handle: AgentSessionHandle): Capabilities {
+  const no = { supported: false, reason: 'not-implemented' } as const;
+  const yes = { supported: true } as const;
+  return {
+    switchModel: no, availableModels: [], hasFastMode: false,
+    effort: handle.setEffort ? yes : no, effortLevels: [], reasoningDisplay: [],
+    permissionModes: [], setPermissionModeMidSession: no,
+    multimodal: { text: yes, image: yes, file: no },
+    fork: no, rewind: no, abort: yes, sameTurnSteer: yes,
+    memory: { supported: no }, extraDirs: no,
+  };
+}
+
 function canonicalPiRuntimePath(value: string): string {
   try {
     return fs.realpathSync(value);
@@ -1553,9 +1568,13 @@ export class Maker {
     if (!opts[LOCAL_AGENT_CLIENT] || opts.deviceHosted || opts.remoteHostId) {
       throw new Error('Local application sessions require a Main-process capability');
     }
-    const agent = this.requireAgent(kind);
+    const deviceId = opts[LOCAL_AGENT_CLIENT]!.agentDeviceId;
+    const agent = deviceId ? undefined : this.requireAgent(kind);
+    if (deviceId && !this.startDeviceAgentSession) throw new Error('Remote agent execution is unavailable');
     const creation = (async () => {
-      const handle = await agent.startSession(opts);
+      const handle = deviceId
+        ? await this.startDeviceAgentSession!({ agentKind: kind, deviceId, options: opts })
+        : await agent!.startSession(opts);
       if (this.shutdownStarted) {
         await handle.close({ reason: 'account-boundary' });
         throw new Error('Maker stopped before the local application session started');
@@ -1567,7 +1586,7 @@ export class Maker {
         handle,
         logger: this.logger,
         permissionMode: opts.permissionMode,
-        capabilities: capabilitiesForSession(kind, agent.capabilities, undefined, undefined, handle),
+        capabilities: deviceId ? applicationHandleCapabilities(handle) : capabilitiesForSession(kind, agent!.capabilities, undefined, undefined, handle),
         toolLoopReviewer: this.toolLoopReviewer,
       });
       this.localAgentSessions.add(session);

@@ -92,6 +92,14 @@ node scripts/examples/local-agent-client.mjs --connection-code "cindy-local:v1:<
 
 `models[].id` 唯一标识供应商 + 引擎 + 模型组合，客户端将其视为不透明值。`provider` 是稳定分组编号，`providerLabel` 是可选显示名，不从 label 解析路由；同名模型的不同来源不合并。目录来自当前已连接且可选的对话来源，不导出路由地址和凭据。空目录正常返回空数组，不悄悄更换来源。
 
+目录包含本机、允许远程调用的同账号在线电脑，以及当前有效的供应商分享；按来源、供应商、引擎和模型区分身份。远程供应商显示电脑名，分享供应商显示分享者；`XD Gateway` 的内置显示名称与 Cindy 选择器一致为 `Cindy AI`。远程目录使用现有授权投影与模型可见性，单个不可达来源不阻塞其他来源；账号切换后丢弃迟到结果。来源 ID 和路由只保留在 Main，不进入公共模型 JSON。
+
+选中远程来源后，Agent 通过既有 device-link 在该来源运行，客户端工具仍回到调用应用；不要求本机装有对应引擎，不回落到本机同名供应商。远端（包括供应商组的实际执行端）须声明 `localApplication: true`，否则返回 `REMOTE_AGENT_PEER_TOO_OLD` 并提示更新。旧端仍可能出现在目录中，其在线和已授权不代表支持外部应用执行。`client-only` 不收集本机项目/个人配置，反向入口拒绝文件与命令执行；原生存储按控制端、分享中转身份和应用授权隔离。分享凭据访问仍需主人确认，当前 API 无交互回执时明确拒绝。
+
+同账号远程来源有供应商组时，首次打开复用 `provider-group:remote` 选机并直连选中的组员（可为本机或分享来源），携带既有 `groupAssigned` 标记防止再次分组；组不可用或查询失败不直接落到组所在电脑。实际路由随原生线程封装在既有 owner/grant 恢复绑定中，修改指令及重新打开都回原组员，不重新选机；旧的裸线程绑定仍回原来源。该封装仅在 Main 存储，应用仍只收到不透明恢复句柄，不新增普通 Cindy 任务记录。实现见 `local-agent/groupRoute.ts`，回归见 `runtime.integration.test.ts` 与 `remote-agent/__tests__/roundtrip.test.ts`。
+
+应用会话的运行负载纳入既有供应商组统计：本机执行（包括组选回调用端本机）计入本机目录的 `runningTurns`；经远程组分配的会话保留组所在电脑和成员键，与普通任务合并为同一份 lease 快照，沿用 60 秒心跳和结束释放。注册表按账号隔离，账号切换后旧回调不进入新账号报告，恢复绑定保留原组归属。实现见 `local-agent/load.ts`，回归见 `local-agent/__tests__/load.test.ts` 与 `provider-group/__tests__/runtime.test.ts`。
+
 `sessionId` 是客户端自定的非空字符串，最多 128 字符；编号按授权隔离。`cwd` 为当前电脑上的现存绝对目录。`tools` 为至多 256 个 `{name,description,parameters}`，parameters 为 JSON Schema 对象；name 最多 64 字符，只含 `[A-Za-z0-9_-]` 且会话内唯一。新协议使用 `toolPolicy`：
 
 - `client-only`：仅调用该会话登记的客户端工具。它不代表工具本身只读，客户端仍负责业务确认和工具权限。

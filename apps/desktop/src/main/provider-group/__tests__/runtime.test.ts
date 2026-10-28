@@ -30,11 +30,33 @@ vi.mock('../bindings.js', () => ({ listProviderGroupBindings: () => ({}) }));
 vi.mock('../store.js', () => ({ readProviderGroup: io.group }));
 vi.mock('../coolingStore.js', () => ({ readProviderGroupCooling: () => ({}), writeProviderGroupCooling: vi.fn() }));
 
-const { getProviderGroupDirectory, getProviderGroupOwnerScope, getProviderGroupRouter, setProviderGroupClaudeUsageReader, setProviderGroupCodexUsageReader } = await import('../runtime.js');
+const { getProviderGroupDirectory, getProviderGroupOwnerScope, getProviderGroupRouter, setProviderGroupClaudeUsageReader, setProviderGroupCodexUsageReader,
+  getProviderGroupApplicationLoad, setProviderGroupApplicationLoadListener } = await import('../runtime.js');
 
 afterEach(() => { setProviderGroupClaudeUsageReader(null); setProviderGroupCodexUsageReader(null); io.group.mockReset(); vi.useRealTimers(); });
 
 describe('provider group runtime', () => {
+  it('follows login and account changes without re-registering IPC or accepting old application callbacks', () => {
+    owner = 'signed-out-load';
+    getProviderGroupApplicationLoad();
+    const changed = vi.fn();
+    setProviderGroupApplicationLoadListener(changed);
+    const native = { isTurnRunning: () => true, onEvent: () => () => {}, onStatusChange: () => () => {} };
+    owner = 'first-load-owner';
+    const first = getProviderGroupApplicationLoad();
+    first.track('first', { providerId: 'p' }, native);
+    expect(changed).toHaveBeenLastCalledWith('first');
+    expect(getProviderGroupApplicationLoad().runningProviders()).toEqual(['p']);
+    owner = 'second-load-owner';
+    expect(getProviderGroupApplicationLoad().runningProviders()).toEqual([]);
+    changed.mockClear();
+    first.track('late', { providerId: 'p' }, native);
+    expect(changed).not.toHaveBeenCalled();
+    getProviderGroupApplicationLoad().track('second', { providerId: 'q' }, native);
+    expect(changed).toHaveBeenCalledExactlyOnceWith('second');
+    expect(getProviderGroupApplicationLoad().runningProviders()).toEqual(['q']);
+    setProviderGroupApplicationLoadListener(() => {});
+  });
   it('keeps the affected model through the runtime facade', () => {
     owner = 'model-cooldown-owner';
     const router = getProviderGroupRouter();

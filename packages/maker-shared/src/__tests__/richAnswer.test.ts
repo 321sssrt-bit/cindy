@@ -391,3 +391,33 @@ describe('inline draft ids', () => {
     expect(doc.issues).toBe(0);
   });
 });
+
+// #7627 review: a draft that names itself keeps that id, and a bare string only
+// counts as text for the kinds that render `props.text`.
+describe('inline draft ids and text-only props', () => {
+  it('keeps an inline child id that the draft declares', () => {
+    const doc = new RichAnswerStream().update(
+      line(1, {
+        op: 'create',
+        id: 'tabs',
+        kind: 'details',
+        props: {
+          label: 'x',
+          children: [
+            { id: 'second', kind: 'markdown', text: 'two' },
+            { kind: 'markdown', text: 'three' },
+          ],
+        },
+      }),
+    );
+    expect(doc.issues).toBe(0);
+    expect(doc.nodes.get('tabs')?.children[0]).toBe('second');
+  });
+  it('drops a string props on a kind that never reads text', () => {
+    const doc = new RichAnswerStream().update(
+      line(1, { op: 'create', id: 'd', kind: 'details', props: 'plain string' }),
+    );
+    expect(doc.nodes.has('d')).toBe(false);
+    expect(doc.issues).toBe(1);
+  });
+});

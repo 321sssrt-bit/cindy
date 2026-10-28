@@ -65,6 +65,9 @@ const CONTAINER_KINDS = [
   "details",
   "tabs",
 ];
+
+/** Kinds that render `props.text`; only these can carry a bare string. */
+const TEXT_PROP_KINDS: RichAnswerKind[] = ["text", "markdown", "heading", "code"];
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const value = (v: unknown): v is RichValue =>
@@ -199,7 +202,7 @@ export class RichAnswerStream {
       if (op.version !== undefined && op.version !== 1) throw Error("version");
       if (typeof op.id !== "string" || !ID.test(op.id)) throw Error("id");
       const current = this.nodes.get(op.id);
-      const props = this.props(op.props);
+      const props = this.props(op.props, op.kind as RichAnswerKind);
       // Some real harness outputs place visual style beside props. Normalize once.
       if (record(op.style) && props.style === undefined)
         props.style = this.props(op.style);
@@ -358,12 +361,17 @@ export class RichAnswerStream {
       try {
         props = this.props(
           draft.props ?? (typeof draft.text === "string" ? { text: draft.text } : {}),
+          draft.kind as RichAnswerKind,
         );
       } catch {
         dropped();
         return;
       }
-      const id = this.inlineChildId(parentId, offset + 1);
+      // A draft may name itself (`{id:"second"}`); `tabs.props.default` points at
+      // that id, so a declared id wins while it is still free.
+      const declared =
+        typeof draft.id === "string" && ID.test(draft.id) && !this.nodes.has(draft.id);
+      const id = declared ? (draft.id as string) : this.inlineChildId(parentId, offset + 1);
       this.nodes.set(id, {
         id,
         kind: draft.kind as RichAnswerKind,
@@ -389,11 +397,14 @@ export class RichAnswerStream {
       if (!this.nodes.has(id)) return id;
     }
   }
-  private props(v: unknown): Record<string, unknown> {
+  private props(v: unknown, kind?: RichAnswerKind): Record<string, unknown> {
     if (v === undefined) return {};
     // Models write the text straight into props (`"props": "hello"`); the protocol
     // default keeps that block readable instead of dropping the whole node (#7627).
     if (typeof v === "string") {
+      // Only kinds that render `props.text` take a bare string; anywhere else the
+      // text would be stored and never shown, so the draft counts as unreadable.
+      if (kind && !TEXT_PROP_KINDS.includes(kind)) throw Error("props");
       // The limit is on the node that gets stored and replayed, which is the
       // object below: escaping can make it longer than the incoming string.
       const text = { text: v };

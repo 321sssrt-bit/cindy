@@ -191,6 +191,16 @@ describe('normalizeLocalThemeColors', () => {
       expect(out).toEqual({ surface: '#111111', 'login-control-bg': '#123456' });
     });
 
+    it('更早一代(2026-10-23 前)的登录文字实色也迁移,否则旧文字会压在新面板上', () => {
+      expect(
+        normalizeLocalThemeColors(
+          { 'login-secondary-text': '#6F6F6F', 'login-title-text': '#D4D4D4', 'login-panel-bg': '#312F2F' },
+          'dark',
+        ),
+      ).toEqual({});
+      expect(normalizeLocalThemeColors({ 'login-title-text': '#252222' }, 'light')).toEqual({});
+    });
+
     it('只比对本模式的旧值:深色主题里有意使用的历史亮色值不被丢弃,反之亦然', () => {
       const darkWithLightValue = { 'login-panel-bg': '#FBFBFB' };
       expect(normalizeLocalThemeColors(darkWithLightValue, 'dark')).toBe(darkWithLightValue);

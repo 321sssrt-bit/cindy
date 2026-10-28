@@ -1,5 +1,5 @@
 {
-  "_说明": "升级前(2026-10-27 之前)的 login-* 默认值 [light, dark]。用于 local-themes-normalize 在加载期识别旧版「导出当前主题」写进本地主题的过期 override。历史快照,不要随主题数值更新而改动;只含 2026-10-27 并入墨水口径时改值的 token。",
+  "_说明": "升级前的 login-* 默认值 [light, dark]。用于 local-themes-normalize 在加载期识别旧版「导出当前主题」写进本地主题的过期 override。含两批:2026-10-27 并入墨水口径时改值的 43 个 token(取自 0694ed7e00 的冻结快照),以及 2026-10-23 文字并入墨水阶梯前的 6 个文字 token 实色(取自 390f9d14b4 的父提交)。历史快照,不要随主题数值更新而改动。",
   "defaults": {
     "login-panel-border": [
       "#D4D4D4",
@@ -172,6 +172,30 @@
     "login-overlay-secondary-pressed": [
       "rgba(0, 0, 0, 0.1)",
       "rgba(0, 0, 0, 0.2)"
+    ],
+    "login-callback-body": [
+      "#6F6F6F",
+      "#6F6F6F"
+    ],
+    "login-callback-title": [
+      "#252222",
+      "#D4D4D4"
+    ],
+    "login-control-placeholder": [
+      "#D4D4D4",
+      "#6F6F6F"
+    ],
+    "login-control-text": [
+      "#252222",
+      "#EEEEEE"
+    ],
+    "login-secondary-text": [
+      "#6F6F6F",
+      "#6F6F6F"
+    ],
+    "login-title-text": [
+      "#252222",
+      "#D4D4D4"
     ]
   }
 }

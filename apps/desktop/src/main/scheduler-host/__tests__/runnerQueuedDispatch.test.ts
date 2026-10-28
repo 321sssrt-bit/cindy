@@ -120,6 +120,7 @@ import {
 } from '../runner';
 import { isHeadlessGhostSetupTurn } from '../../mcp-integrations/ghostSetupInteractionSurface';
 import { isUnattendedTurn } from '../../mcp-integrations/unattendedTurn';
+import { noteUnattendedPlanReviewDeclined } from '../../mcp-integrations/unattendedTurn';
 
 type SessionSendOptions = Parameters<Session['send']>[1];
 type SessionStatus = Parameters<Parameters<Session['onStatusChange']>[0]>[0];
@@ -1007,6 +1008,29 @@ describe('MakerScheduleRunner queued dispatch (busy bound session)', () => {
       expect(latestNotifiedRun(notifier)).toMatchObject({ status: 'success' });
     },
   );
+
+  it('reports a plan review it had to decline in the run result', async () => {
+    const harness = createSessionHarness(async () => ({ accepted: true }));
+    const queue = createQueueHarness({ busy: true });
+    const { runner } = createRunnerHarness(harness.session, queue.deps);
+
+    const fire = runner.fire(heartbeatSchedule(), createFireContext());
+    await vi.waitFor(() => expect(queue.enqueueCalls).toHaveLength(1));
+    await queue.accept();
+    await vi.waitFor(() => expect(harness.listenerCount()).toBe(1));
+    // 这轮在 plan 模式下被自动拒绝了一次计划审批。
+    noteUnattendedPlanReviewDeclined(SESSION_ID);
+    harness.emit({
+      type: 'text',
+      data: { text: 'plan: do the thing', isFinal: true },
+      source: 'claude-code',
+    });
+    harness.emit({ type: 'done', data: {}, source: 'claude-code' });
+
+    const result = await fire;
+    expect(result.resultText).toContain('plan: do the thing');
+    expect(result.resultText).toContain('[plan review declined]');
+  });
 
   it('releases the unattended mark when the turn ends, not when the run finishing notifying', async () => {
     const harness = createSessionHarness(async () => ({ accepted: true }));

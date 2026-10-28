@@ -14,7 +14,10 @@ import type {
   TurnPermissionOrigin,
 } from '@cindy/maker-core';
 import { createSharedPermission, type SharedPermission } from './sharedPermission';
-import { isUnattendedTurn } from '../mcp-integrations/unattendedTurn.js';
+import {
+  isUnattendedTurn,
+  noteUnattendedPlanReviewDeclined,
+} from '../mcp-integrations/unattendedTurn.js';
 
 export type TurnOrigin = TurnPermissionOrigin;
 
@@ -208,6 +211,9 @@ class SessionInteractionRouter {
         return { kind: 'ask_user_question', answers: {}, dismissed: true };
       }
       if (request.kind === 'plan_review') {
+        // Deny, not allow: plan mode means "act only after the owner approves".
+        // The runner surfaces this in the run result so the empty run is legible.
+        noteUnattendedPlanReviewDeclined(this.session.id);
         return { kind: 'plan_review', behavior: 'deny', dismissed: true, reason: 'unattended_scheduled_run' };
       }
     }

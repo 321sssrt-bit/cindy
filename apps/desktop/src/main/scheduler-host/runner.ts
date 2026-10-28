@@ -118,7 +118,10 @@ import type { SchedulerDrizzleDb } from './storage';
 import { backfillSessionMeta } from './runners/_shared';
 import { buildSkipResultText, executePreRunHook, formatPreRunHookFailure } from './pre-run-hook';
 import { beginHeadlessGhostSetupTurn } from '../mcp-integrations/ghostSetupInteractionSurface.js';
-import { beginUnattendedTurn } from '../mcp-integrations/unattendedTurn.js';
+import {
+  beginUnattendedTurn,
+  takeUnattendedPlanReviewDeclines,
+} from '../mcp-integrations/unattendedTurn.js';
 import { terminalErrorText } from '../im/shared/turnRetryNotice.js';
 import { isManagedScheduledTarget, restoreScheduledTarget } from './restore-target';
 
@@ -428,6 +431,13 @@ class RoutinePermissionMismatchError extends RoutineDispatchDeferredError {
  * 一两次可能是落库与运行态之间的正常先后差；连续三次（顺延间隔下约 3 分钟）已不是临时状态。
  */
 const PERSISTENT_PERMISSION_MISMATCH_FIRES = 3;
+
+/**
+ * Appended to the run result when a plan-mode fire had to decline its own plan
+ * review. Without it the run looks like it silently did nothing.
+ */
+const UNATTENDED_PLAN_REVIEW_DECLINED_NOTE =
+  '[plan review declined] This scheduled run is unattended, so its plan was not approved automatically and nothing was executed. The plan above is the result — approve it in the session to continue.';
 
 /** An ordinary session was stopped before vendor dispatch; never retry it. */
 class ScheduledDispatchStoppedError extends Error {}
@@ -3372,6 +3382,13 @@ export class MakerScheduleRunner implements ScheduleRunner {
     assistantText: string,
     finalTextMatchesStream: boolean,
   ): Promise<FireResult> {
+    const declinedPlanReviews = takeUnattendedPlanReviewDeclines(sessionId);
+    const streamedResultText = !runError && assistantText ? assistantText : undefined;
+    const resultText: string | undefined = runError
+      ? undefined
+      : declinedPlanReviews > 0
+        ? [streamedResultText?.trim(), UNATTENDED_PLAN_REVIEW_DECLINED_NOTE].filter(Boolean).join('\n\n')
+        : streamedResultText;
     const finalRun: ScheduleRun = {
       id: ctx.runId,
       scheduleId: schedule.id,
@@ -3381,7 +3398,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
       status: runError ? 'failed' : 'success',
       errorMsg: runError,
       // 仅 success 时落库 — 失败 run 的部分输出意义不大,errorMsg 已经覆盖原因
-      resultText: !runError && assistantText ? assistantText : undefined,
+      resultText,
     };
     // 静默 run:静默运行默认静默;若 agent 经 schedule_notify_current_run 主动上报,
     // scheduler.isRunSilenced 会变回 false,这里照常通知。
@@ -3488,7 +3505,7 @@ export class MakerScheduleRunner implements ScheduleRunner {
     }
     if (runError) throw new Error(runError);
     if (reportPersistFailed) throw new Error('Scheduled result could not be saved');
-    return { sessionId, resultText: assistantText || undefined };
+    return { sessionId, resultText: resultText || undefined };
   }
 
   /**
@@ -3915,7 +3932,7 @@ function buildScheduledRunContextInstruction(
     `firedAtUtc: ${new Date(ctx.firedAt).toISOString()}`,
     `firedAtInScheduleTimezone: ${firedAtInScheduleTimezone}`,
     'These timestamps identify when this run was triggered, not when a queued run started processing. Use the task instructions to determine the requested time range.',
-    'Unattended: nobody is watching this run. Do not call ask_user_question — decide with a stated default, finish the work, and list any open question in the final report.',
+    'Unattended: nobody is watching this run. Do not call ask_user_question — decide with a stated default and list any open question in the final report. In plan mode the plan review cannot be approved automatically: put the plan in the final report and leave execution to the owner.',
     ...buildTeammateTurnAuthorityLine(schedule),
   ].join('\n');
 }

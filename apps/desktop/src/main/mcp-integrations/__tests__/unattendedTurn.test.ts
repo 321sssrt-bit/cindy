@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { beginUnattendedTurn, isUnattendedTurn } from '../unattendedTurn';
+import {
+  beginUnattendedTurn,
+  isUnattendedTurn,
+  noteUnattendedPlanReviewDeclined,
+  takeUnattendedPlanReviewDeclines,
+} from '../unattendedTurn';
 
 describe('unattended turn marker', () => {
   it('is turn scoped, ref counted and idempotent on release', () => {
@@ -24,5 +29,20 @@ describe('unattended turn marker', () => {
       release();
     }
     expect(isUnattendedTurn('a')).toBe(false);
+  });
+
+  it('records declined plan reviews once per run and starts each turn clean', () => {
+    const first = beginUnattendedTurn('p');
+    noteUnattendedPlanReviewDeclined('p');
+    noteUnattendedPlanReviewDeclined('p');
+    expect(takeUnattendedPlanReviewDeclines('p')).toBe(2);
+    expect(takeUnattendedPlanReviewDeclines('p')).toBe(0);
+    first();
+
+    // 上一轮没收口的记录不能带进下一轮。
+    noteUnattendedPlanReviewDeclined('p');
+    const second = beginUnattendedTurn('p');
+    expect(takeUnattendedPlanReviewDeclines('p')).toBe(0);
+    second();
   });
 });

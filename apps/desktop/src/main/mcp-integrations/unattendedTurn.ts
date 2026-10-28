@@ -15,11 +15,20 @@
  */
 const unattendedDepthBySession = new Map<string, number>();
 
+/**
+ * Plan reviews this turn had to decline because no one could approve them.
+ * Denying is right (plan mode means "act only after I approve"), but a run that
+ * silently produces a plan and executes nothing looks broken — the runner reads
+ * this once per run and says so in the run result.
+ */
+const declinedPlanReviewBySession = new Map<string, number>();
+
 export function beginUnattendedTurn(sessionId: string): () => void {
-  unattendedDepthBySession.set(
-    sessionId,
-    (unattendedDepthBySession.get(sessionId) ?? 0) + 1,
-  );
+  const depth = (unattendedDepthBySession.get(sessionId) ?? 0) + 1;
+  unattendedDepthBySession.set(sessionId, depth);
+  // A turn starts with a clean record: an earlier fire that ended without
+  // finalizing must not leak its note into this run.
+  if (depth === 1) declinedPlanReviewBySession.delete(sessionId);
   let released = false;
   return () => {
     if (released) return;
@@ -32,4 +41,18 @@ export function beginUnattendedTurn(sessionId: string): () => void {
 
 export function isUnattendedTurn(sessionId: string): boolean {
   return (unattendedDepthBySession.get(sessionId) ?? 0) > 0;
+}
+
+export function noteUnattendedPlanReviewDeclined(sessionId: string): void {
+  declinedPlanReviewBySession.set(
+    sessionId,
+    (declinedPlanReviewBySession.get(sessionId) ?? 0) + 1,
+  );
+}
+
+/** Read-and-clear: the run reports the declines once, then the record is gone. */
+export function takeUnattendedPlanReviewDeclines(sessionId: string): number {
+  const count = declinedPlanReviewBySession.get(sessionId) ?? 0;
+  declinedPlanReviewBySession.delete(sessionId);
+  return count;
 }

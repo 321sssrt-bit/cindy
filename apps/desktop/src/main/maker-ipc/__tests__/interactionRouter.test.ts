@@ -11,6 +11,7 @@ import {
   type InteractionHandler,
 } from '../interactionRouter';
 import { beginUnattendedTurn } from '../../mcp-integrations/unattendedTurn';
+import { takeUnattendedPlanReviewDeclines } from '../../mcp-integrations/unattendedTurn';
 
 function permission(requestId: string): InteractionRequest {
   return {
@@ -62,6 +63,9 @@ describe('session interaction router', () => {
       )).resolves.toEqual({
         kind: 'plan_review', behavior: 'deny', dismissed: true, reason: 'unattended_scheduled_run',
       });
+      // 拒绝要能被 run 结果引用，否则 plan 模式的定时任务看起来就像“什么也没做”。
+      expect(takeUnattendedPlanReviewDeclines(host.session.id)).toBe(1);
+      expect(takeUnattendedPlanReviewDeclines(host.session.id)).toBe(0);
       expect(desktop).not.toHaveBeenCalled();
       // Permissions keep their own card and timeout semantics.
       await expect(requestHostInteraction(host.session, permission('perm-1'), new AbortController().signal))

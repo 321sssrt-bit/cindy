@@ -1066,15 +1066,17 @@ describe('path projection cost with many aliases', () => {
 
     workspace.setAliases([{ from: VIRTUAL + '/workspace', to: project }, { from: VIRTUAL + '/extra', to: later }]);
     expect(virtualOf(later)).toBe(VIRTUAL + '/extra/f.txt');
-    expect(workspace.mapTextFromAgent(VIRTUAL + '/extra/f.txt')).toBe(path.join(later, 'f.txt'));
+    // 正文沿用 Agent 的分隔符；Windows 上比较本机写法。
+    const localOf = (virtual: string) => path.normalize(workspace.mapTextFromAgent(virtual));
+    expect(localOf(VIRTUAL + '/extra/f.txt')).toBe(path.join(later, 'f.txt'));
 
     workspace.addAliases([{ from: VIRTUAL + '/added', to: added }]);
     expect(virtualOf(added)).toBe(VIRTUAL + '/added/f.txt');
-    expect(workspace.mapTextFromAgent(VIRTUAL + '/added/f.txt')).toBe(path.join(added, 'f.txt'));
+    expect(localOf(VIRTUAL + '/added/f.txt')).toBe(path.join(added, 'f.txt'));
 
     const [virtual] = workspace.virtualizeDirs([runtime]);
     expect(virtualOf(runtime)).toBe(virtual + '/f.txt');
-    expect(workspace.mapTextFromAgent(virtual + '/f.txt')).toBe(path.join(runtime, 'f.txt'));
+    expect(localOf(virtual + '/f.txt')).toBe(path.join(runtime, 'f.txt'));
     expect(workspace.agentPathPrefixes()).toContain(virtual);
   });
 
@@ -1089,10 +1091,12 @@ describe('path projection cost with many aliases', () => {
     catch { return skip(); }
     const workspace = new ExecutorWorkspace({ workingDir: project, aliases: [{ from: VIRTUAL + '/workspace', to: project }, { from: VIRTUAL + '/link', to: link }] });
     workspace.setVirtualRoot(VIRTUAL);
-    expect(workspace.mapTextForAgent(path.join(first, 'f.txt'))).toBe(VIRTUAL + '/link/f.txt');
+    // 按链接当前指向的真实路径(Windows 上为长文件名)写入，与 native realpath 的结果一致。
+    const real = (dir: string) => path.join(fs.realpathSync.native(dir), 'f.txt');
+    expect(workspace.mapTextForAgent(real(first))).toBe(VIRTUAL + '/link/f.txt');
     fs.unlinkSync(link);
     fs.symlinkSync(second, link, type);
     await tick();
-    expect(workspace.mapTextForAgent(path.join(second, 'f.txt'))).toBe(VIRTUAL + '/link/f.txt');
+    expect(workspace.mapTextForAgent(real(second))).toBe(VIRTUAL + '/link/f.txt');
   });
 });

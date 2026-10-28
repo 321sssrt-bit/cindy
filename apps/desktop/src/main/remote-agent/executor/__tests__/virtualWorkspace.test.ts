@@ -1078,18 +1078,20 @@ describe('path projection cost with many aliases', () => {
     expect(workspace.agentPathPrefixes()).toContain(virtual);
   });
 
-  it.skipIf(process.platform === 'win32')('follows a symlinked alias target that is retargeted between batches', async () => {
+  it('follows a symlinked alias target that is retargeted between batches', async ({ skip }) => {
     const project = path.join(root, 'work');
     const first = path.join(root, 'first');
     const second = path.join(root, 'second');
     const link = path.join(root, 'link');
+    const type = process.platform === 'win32' ? 'junction' : 'dir';
     for (const dir of [project, first, second]) fs.mkdirSync(dir);
-    fs.symlinkSync(first, link);
+    try { fs.symlinkSync(first, link, type); }
+    catch { return skip(); }
     const workspace = new ExecutorWorkspace({ workingDir: project, aliases: [{ from: VIRTUAL + '/workspace', to: project }, { from: VIRTUAL + '/link', to: link }] });
     workspace.setVirtualRoot(VIRTUAL);
     expect(workspace.mapTextForAgent(path.join(first, 'f.txt'))).toBe(VIRTUAL + '/link/f.txt');
     fs.unlinkSync(link);
-    fs.symlinkSync(second, link);
+    fs.symlinkSync(second, link, type);
     await tick();
     expect(workspace.mapTextForAgent(path.join(second, 'f.txt'))).toBe(VIRTUAL + '/link/f.txt');
   });

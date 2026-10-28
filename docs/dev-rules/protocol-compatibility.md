@@ -36,6 +36,16 @@ Pi 只改写副本首行的 session ID 与 cwd，使其指向接收端工作目�
 确认卡（`hostOwnedConfirmation: native_history_fallback`）询问，支持同账号远控回答；取消、超时保留原电脑与原生记录。
 旧客户端已支持 auto 和通用 permission 卡；共享来源仍沿用原来的 ask/记住偏好，不自动扩大授权。
 
+## 插件宿主模型选择器（新增接口，尚未发布）
+
+`PluginPagePoll` 新增可选 `modelPickers`，Host 绑定原插件安装与页面，手机及远程桌面
+设置页使用执行电脑的统一模型目录，只把用户确认的完整 route 通过原页面回传。
+远程设置的密封命令增量为 `answer-model-picker`；原有命令、权限、安装批准与账号凭证合同不变。
+未更新的控制端忽略可选字段，Host 在 90 秒后取消；新插件检查 `cindy.pickModel` 是否存在，
+不把目录读取或选模当成执行授权。两端都更新后才具备原生选模回执，不需要服务端变更。
+新增 Renderer IPC 仅本机宿主使用，不进入 device-link 通用 invoke/push 白名单；跨设备
+复用既有插件页面资源与密封设置链。正文详见 [插件规则](plugin-security-and-authoring.md#宿主统一模型选择器新增接口尚未发布)。
+
 ## 接受已保存的伙伴模型
 
 既有 `local-db:bots:update` 可选接收 `acceptSavedModelSelectionVersion`（读取到的正整数

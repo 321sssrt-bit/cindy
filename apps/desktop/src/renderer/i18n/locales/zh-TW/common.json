@@ -7340,6 +7340,11 @@
       "confirm": {
         "dialogTitle": "插件「{{name}}」請你確認"
       },
+      "modelPicker": {
+        "useConfiguration": "使用此設定",
+        "title": "為插件「{{name}}」選擇模型",
+        "unavailable": "這個模型設定暫時無法使用，請重新選擇後確認。"
+      },
       "workspace": {
         "dialogTitle": "選擇專案資料夾",
         "dialogMessage": "插件「{{name}}」請求你選擇一個專案資料夾，用於在側邊欄建立任務"

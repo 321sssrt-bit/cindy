@@ -7985,6 +7985,11 @@ function SessionScreenContent({ beforeSessionSwitchRef, newSessionActionRef }: S
     } else {
       discardQueueEditTransientAttachments(editing);
     }
+    // Rotate the editor document id now: late IME changes must not overwrite
+    // the restored draft while its React update waits for the next frame.
+    composerInputRef.current?.applyDocumentAndSetSelection(
+      editing.stashedDocument, composerDocumentProjectedText(editing.stashedDocument).length,
+    );
     applyComposerDocument(editing.stashedDocument);
     attachmentsRef.current = [...editing.stashedAttachments];
     setAttachments([...editing.stashedAttachments]);

@@ -123,6 +123,8 @@ DOM，保留输入法组字与光标。点击发送后，在发送防重锁内�
 显式传入的文档保持各自的快照来源，iOS 原生编辑器保留现有原生路径。
 快照回包在写回编辑器状态或草稿之前核对调用方作用域；不能只在 `await` 返回后检查，
 否则取消排队编辑与下一帧渲染之间到达的旧快照会覆盖已恢复的原草稿。
+取消排队编辑时同步向编辑器应用暂存的个人草稿，立即轮换文档标识；不能只等待下一帧
+传入新 props，否则迟到的普通 `change` 消息也可能写回旧内容。恢复不主动聚焦或弹出键盘。
 
 实现：`ComposerRichInput.tsx`、`composerRichInputHtml.ts` 与 `app/sessions/[sessionId].tsx`；
 回归：`composerRichInputLifecycle.test.tsx`、`composerRichInputHtml.test.ts`。Android 模拟器

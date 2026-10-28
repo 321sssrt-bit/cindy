@@ -53,14 +53,12 @@ function toMenuAction(
     title: action.title,
     // Fabric defaults the library's optional Int32 imageColor to transparent.
     // Always pair a symbol with a visible semantic color.
-    ...(action.image || action.filterReminder
+    ...(action.image
       ? {
-          image: action.filterReminder ? "circle.fill" : action.image,
-          imageColor: action.filterReminder
-            ? colors.statusAccent
-            : action.destructive
-              ? colors.destructive
-              : colors.textPrimary,
+          image: action.image,
+          imageColor: action.destructive
+            ? colors.destructive
+            : colors.textPrimary,
         }
       : {}),
     ...(action.subtitle ? { subtitle: action.subtitle } : {}),
@@ -107,9 +105,20 @@ function childDisabled(children: ReactNode): boolean {
   return (children.props as { disabled?: unknown }).disabled === true;
 }
 
+/** MenuView 只支持系统符号或原生资源，不能用 JS PNG 精确绘制 6pt 提示点。
+ * 使用提醒字段的菜单复用已有自绘路径；false 也算，切换筛选时保持同一个呈现器。
+ */
+function usesFilterReminder(actions: readonly NativePullDownAction[]): boolean {
+  return actions.some((action) =>
+    action.filterReminder !== undefined ||
+    (action.subactions !== undefined && usesFilterReminder(action.subactions)),
+  );
+}
+
 /**
- * 收起时完全是调用方原来的按钮/标题;iOS 点开是系统 UIMenu 下拉,Android 是 Material
- * 下拉菜单(AnchoredPullDownMenu.android)。iOS 尚未编进 MenuView 的包只渲染 children,
+ * 收起时完全是调用方原来的按钮/标题;iOS 一般用系统 UIMenu，带筛选提醒的菜单用
+ * 现有自绘面板以保留 6pt 圆点；Android 用 Material 下拉菜单。
+ * iOS 尚未编进 MenuView 的包只渲染 children,
  * 由调用方继续走自绘面板。
  */
 export function NativePullDownMenu({
@@ -152,7 +161,7 @@ export function NativePullDownMenu({
     return isValidElement<{ disabled?: boolean }>(children)
       ? cloneElement(children, { disabled: true })
       : children;
-  if (Platform.OS === "android") {
+  if (Platform.OS === "android" || usesFilterReminder(actions)) {
     return (
       <AnchoredPullDownMenu
         accessibilityLabel={accessibilityLabel}

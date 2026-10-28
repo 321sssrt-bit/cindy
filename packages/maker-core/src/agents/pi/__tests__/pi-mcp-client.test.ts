@@ -65,6 +65,49 @@ describe('Pi MCP request lifecycle', () => {
     expect(exact.tools[0].inputSchema.properties.value.type).toBe('string');
   });
 
+  it.each([false, true])('keeps structured data model-visible (isError=%s) without exposing private metadata', async (isError) => {
+    const structuredContent = { answer: 42, nextStep: 'retry-after-refresh' };
+    const { call } = gatewayWithFetch(vi.fn(async () => Response.json({ result: {
+      content: [], structuredContent, isError, _meta: { secret: 'client-only' },
+    } })));
+    const result = await call();
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(structuredContent) }]);
+    expect(result.details).toEqual(structuredContent);
+    expect(Boolean(result.isError)).toBe(isError);
+    expect(JSON.stringify(result)).not.toContain('client-only');
+  });
+
+  it('preserves ordered rich error content and appends missing structured data', async () => {
+    const content = [
+      { type: 'text', text: 'Failure screenshot follows' },
+      { type: 'image', data: 'fixture-image', mimeType: 'image/png' },
+      { type: 'text', text: 'The highlighted input needs correction' },
+    ];
+    const { call } = gatewayWithFetch(vi.fn(async () => Response.json({ result: {
+      content, structuredContent: { field: 'email' }, isError: true,
+    } })));
+    await expect(call()).resolves.toMatchObject({
+      isError: true, content: [...content, { type: 'text', text: '{"field":"email"}' }],
+    });
+  });
+
+  it('does not duplicate structured data already serialized in a text block', async () => {
+    const structuredContent = { answer: 42 };
+    const content = [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }];
+    const { call } = gatewayWithFetch(vi.fn(async () => Response.json({ result: { content, structuredContent } })));
+    await expect(call()).resolves.toEqual({ content, details: structuredContent });
+  });
+
+  it.each([
+    { content: [], expected: [{ type: 'text', text: '(empty result)' }] },
+    { content: [{ type: 'text', text: 'unchanged' }], expected: [{ type: 'text', text: 'unchanged' }] },
+    { content: [{ type: 'resource_link', uri: 'fixture://report', name: 'report' }],
+      expected: [{ type: 'text', text: '{"type":"resource_link","uri":"fixture://report","name":"report"}' }] },
+  ])('keeps the existing unstructured conversion for $content', async ({ content, expected }) => {
+    const { call } = gatewayWithFetch(vi.fn(async () => Response.json({ result: { content } })));
+    await expect(call()).resolves.toEqual({ content: expected, details: {} });
+  });
+
   it('waits for card interaction beyond five minutes with one explicit deadline', async () => {
     vi.useFakeTimers();
     let complete!: (response: Response) => void;
@@ -126,6 +169,8 @@ describe('Pi MCP request lifecycle', () => {
     const business = gatewayWithFetch(vi.fn(async () => Response.json({ result: {
       isError: true, content: [{ type: 'text', text: 'Plugin unavailable' }],
     } })));
-    await expect(business.call()).rejects.toThrow(/^Plugin unavailable$/);
+    await expect(business.call()).resolves.toMatchObject({
+      isError: true, content: [{ type: 'text', text: 'Plugin unavailable' }],
+    });
   });
 });

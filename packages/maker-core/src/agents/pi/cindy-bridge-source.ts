@@ -2847,7 +2847,7 @@ class McpHttpClient {
   }
 }
 
-function mcpContentToPi(content: unknown): Array<Record<string, unknown>> {
+function mcpContentToPi(content: unknown, structuredContent?: unknown): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   if (Array.isArray(content)) {
     for (const item of content) {
@@ -2861,6 +2861,17 @@ function mcpContentToPi(content: unknown): Array<Record<string, unknown>> {
         out.push({ type: 'text', text: JSON.stringify(rec) });
       }
     }
+  }
+  // Pi details are for rendering/state, not model input. Keep MCP's structured
+  // result visible without duplicating the JSON text supplied by many servers.
+  if (structuredContent !== undefined) {
+    const text = JSON.stringify(structuredContent);
+    const alreadyIncluded = out.some((item) => {
+      if (item.type !== 'text' || typeof item.text !== 'string') return false;
+      if (item.text === text) return true;
+      try { return JSON.stringify(JSON.parse(item.text)) === text; } catch { return false; }
+    });
+    if (!alreadyIncluded) out.push({ type: 'text', text });
   }
   if (out.length === 0) out.push({ type: 'text', text: '(empty result)' });
   return out;
@@ -3414,6 +3425,7 @@ class CindyMcpGateway {
   private async executeResolvedCall(resolved: ResolvedMcpGatewayCall, signal?: AbortSignal): Promise<{
     content: Array<Record<string, unknown>>;
     details: unknown;
+    isError?: boolean;
   }> {
     let result: any;
     try {
@@ -3429,17 +3441,11 @@ class CindyMcpGateway {
           ? '. Expected args schema: ' + schemaHint(resolved.tool.inputSchema) : ''),
       );
     }
-    const content = mcpContentToPi(result?.content);
-    if (result?.isError) {
-      const message = content
-        .map((item) => (typeof item.text === 'string' ? item.text : ''))
-        .join('\n')
-        .trim();
-      throw new Error(
-        message.length > 0 ? message : 'MCP tool returned an error',
-      );
-    }
-    return { content, details: result?.structuredContent ?? {} };
+    return {
+      content: mcpContentToPi(result?.content, result?.structuredContent),
+      details: result?.structuredContent ?? {},
+      ...(result?.isError ? { isError: true } : {}),
+    };
   }
 
   private async executeCall(params: unknown, signal?: AbortSignal, toolCallId?: string): Promise<{

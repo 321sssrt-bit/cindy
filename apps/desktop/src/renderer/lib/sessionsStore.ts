@@ -30,7 +30,7 @@ import { normalizeTaskTags, reconcileTaskTags } from '@cindy/maker-shared';
  *                                   archived 桶按业务永远不应包含新建项，跳过。
  *                                   保留旧 createSession 的"省一次 IPC"优化。
  *   - forceRefresh(filter)         单桶强制重拉，drop 桶 + 走 ensure。
- *   - forceRefreshAll()            重拉所有"已加载过"的桶，未加载桶不动。
+ *   - forceRefreshAll()            重拉已缓存或正在加载的桶，未访问桶不动。
  *                                   sessionsBus.onRefresh / sessionsPush.onCreated
  *                                   走这条。
  *
@@ -856,12 +856,13 @@ export const sessionsStore = {
   },
 
   /**
-   * 重拉所有"已加载过"的桶，未加载的桶不动。
+   * 重拉已缓存或正在加载的桶，未访问的桶不动。
    * sessionsBus.onRefresh / sessionsPush.onCreated 走这条 ——
    * 无完整 row 的列表成员变化（main 端新建等）需要让所有活跃订阅者同步刷新。
    */
   async forceRefreshAll(): Promise<void> {
-    const filters = Array.from(cache.keys());
+    // forceRefresh 会暂时移除缓存；这段窗口收到的新建通知仍需触发 fresh 读取。
+    const filters = Array.from(new Set([...cache.keys(), ...inflight.keys()]));
     if (filters.length === 0) return;
     await Promise.all(filters.map((f) => this.forceRefresh(f)));
   },

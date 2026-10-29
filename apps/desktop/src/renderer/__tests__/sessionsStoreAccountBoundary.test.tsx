@@ -90,12 +90,15 @@ import { emitRefresh } from '@/lib/sessionsBus';
 function deferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
 } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function session(id: string, partial: Partial<Session> = {}): Session {
@@ -148,6 +151,89 @@ describe('sessionsStore account boundaries', () => {
     // fresh is the existing IPC contract that bypasses Main's old in-flight read.
     expect(mocks.list).toHaveBeenLastCalledWith(1000, 'active', { fresh: true });
     expect(sessionsStore.getByFilter('archived')).toBeNull();
+  });
+
+  // PR #7749 review: initial hook -> bus / created push -> hook loading/error.
+  // The successful-response cases above miss replacement failures and stale errors.
+  // Unit: controlled reads settle in either order, including a still-pending old read.
+  it.each([true, false])('reports a replacement failure without waiting for the superseded read (oldFirst=%s)', async (oldFirst) => {
+    const oldRead = deferred<Session[]>();
+    const freshRead = deferred<Session[]>();
+    mocks.list.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(freshRead.promise);
+    const view = renderHook(() => useCCSessions());
+    act(() => emitRefresh());
+    const refresh = sessionsStore.ensureByFilter('active').catch((error: unknown) => error);
+    if (oldFirst) await act(async () => { oldRead.resolve([session('old')]); });
+    expect(view.result.current.isLoading).toBe(true);
+
+    const failure = new Error('replacement failed');
+    await act(async () => {
+      freshRead.reject(failure);
+      await refresh;
+    });
+    expect(view.result.current.isLoading).toBe(false);
+    expect(view.result.current.error).toBe(failure);
+    expect(view.result.current.sessions).toEqual([]);
+    if (!oldFirst) {
+      await act(async () => { oldRead.resolve([session('old')]); });
+      expect(view.result.current.error).toBe(failure);
+      expect(view.result.current.isLoading).toBe(false);
+    }
+  });
+
+  it.each([true, false])('ignores a superseded initial read failure around replacement success (oldFirst=%s)', async (oldFirst) => {
+    const oldRead = deferred<Session[]>();
+    const freshRead = deferred<Session[]>();
+    mocks.list.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(freshRead.promise);
+    const view = renderHook(() => useCCSessions());
+    act(() => emitRefresh());
+    const refresh = sessionsStore.ensureByFilter('active');
+    if (oldFirst) {
+      await act(async () => { oldRead.reject(new Error('superseded failure')); });
+      expect(view.result.current.error).toBeNull();
+      expect(view.result.current.isLoading).toBe(true);
+    }
+    await act(async () => {
+      freshRead.resolve([session('new')]);
+      await refresh;
+    });
+    if (!oldFirst) await act(async () => { oldRead.reject(new Error('superseded failure')); });
+    expect(view.result.current.sessions.map(({ id }) => id)).toEqual(['new']);
+    expect(view.result.current.isLoading).toBe(false);
+    expect(view.result.current.error).toBeNull();
+  });
+
+  it('keeps initial subscribers on the latest request across consecutive replacements', async () => {
+    setDataOwnerGeneration('owner-a', 1);
+    const oldRead = deferred<Session[]>();
+    const middleRead = deferred<Session[]>();
+    const latestRead = deferred<Session[]>();
+    mocks.list.mockReturnValueOnce(oldRead.promise)
+      .mockReturnValueOnce(middleRead.promise).mockReturnValueOnce(latestRead.promise);
+    const view = renderHook(() => [useCCSessions(), useCCSessions()]);
+    act(() => emitRefresh());
+    const firstRefresh = sessionsStore.ensureByFilter('active').catch((error: unknown) => error);
+    act(() => mocks.emitSessionCreated('new', { dataOwnerId: 'owner-a', ownerGeneration: 1 }));
+    const lastRefresh = sessionsStore.ensureByFilter('active').catch((error: unknown) => error);
+    const failure = new Error('latest read failed');
+    await act(async () => {
+      latestRead.reject(failure);
+      expect(await firstRefresh).toBe(failure);
+      expect(await lastRefresh).toBe(failure);
+    });
+    for (const hook of view.result.current) {
+      expect(hook.error).toBe(failure);
+      expect(hook.isLoading).toBe(false);
+    }
+    await act(async () => {
+      oldRead.resolve([session('old')]);
+      middleRead.reject(new Error('middle failure'));
+    });
+    for (const hook of view.result.current) {
+      expect(hook.error).toBe(failure);
+      expect(hook.sessions).toEqual([]);
+    }
+    expect(mocks.list).toHaveBeenCalledTimes(3);
   });
 
   it('refreshes cached and pending filters once each without loading untouched filters', async () => {

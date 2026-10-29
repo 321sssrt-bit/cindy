@@ -4935,6 +4935,11 @@ async function runColdStartRefreshFlow(
         realm: storedRealm,
         withTransientRetry: false,
       });
+      // Replacement recovery may have consumed a newer credential. Keep this
+      // attempt's deadline and failure history attached to the actual request,
+      // including when a paused flow resumes from that credential on disk.
+      storedToken = run.requestedToken;
+      retry.refreshToken = storedToken;
       // A successful rotation must become durable even when publication was
       // stopped while the request was in flight. Credential ownership is checked
       // inside the existing vault transaction below, separately from UI epochs.

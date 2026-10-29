@@ -384,6 +384,55 @@ describe('saved login recovery after startup network failure', () => {
     },
   );
 
+  // PR #7737 replacement-token regression (unit): existing deadline tests keep
+  // the same token. initialize must retain both Retry-After and failure history
+  // when A fails, another instance writes B, and the replacement request is limited.
+  it.each([
+    { status: 429, resume: false },
+    { status: 503, resume: true },
+  ])('keeps replacement-token backoff ($status, resume=$resume)', async ({ status, resume }) => {
+    const h = setup(0.5);
+    h.request
+      .mockResolvedValueOnce({ ok: false, status: 503, data: {} })
+      .mockImplementationOnce(async () => {
+        h.saved.session.refreshToken = 'test-replacement';
+        h.vault.resources['global:original'].refreshToken = 'test-replacement';
+        return { ok: false, status: 401, data: { error: { code: 'INVALID_REFRESH_TOKEN' } } };
+      })
+      .mockImplementationOnce(async () => ({
+        ok: false,
+        status,
+        data: {},
+        retryAt: Date.now() + 240_000,
+      }))
+      .mockResolvedValue(h.ok);
+    void h.start();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(h.request.mock.calls.map(([token]: unknown[]) => token)).toEqual([
+      'test-refresh',
+      'test-refresh',
+      'test-replacement',
+    ]);
+    if (resume) {
+      h.stop();
+      await vi.advanceTimersByTimeAsync(0);
+      const reset = h.reset();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await reset;
+      expect(h.loadProviders).not.toHaveBeenCalled();
+    }
+    // The second failure adds 60s of jitter after the 240s server deadline.
+    // Resetting the failure count would retry 30s early; retaining A's key retries now.
+    await vi.advanceTimersByTimeAsync(299_999 - (resume ? 20_000 : 0));
+    expect(h.request).toHaveBeenCalledTimes(3);
+    expect(h.saved.session.refreshToken).toBe('test-replacement');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.request).toHaveBeenLastCalledWith('test-replacement', 'global');
+    expect(h.state()).toMatchObject({ isAuthenticated: true, user: { id: 'original' } });
+    expect(h.saved.session.refreshToken).toBe('test-rotated');
+    expect(h.clear).not.toHaveBeenCalled();
+  });
+
   it('coalesces multiple retry clicks and runtime refresh behind the pending request', async () => {
     const h = setup();
     let resolve!: (value: unknown) => void;

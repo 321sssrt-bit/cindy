@@ -1654,7 +1654,10 @@ async function commitDesktopRefreshCredentials(
       const stillOwnsActiveSession =
         requestedTokenStillStored && (vault.activeAccountKey === key || canClaimUninitializedVault);
       const passportId = pair.membership.passportId;
-      if (passportId && (stillOwnsActiveSession || vault.resources[key])) {
+      if (
+        passportId &&
+        (stillOwnsActiveSession || vault.resources[key]?.refreshToken === requestedRefreshToken)
+      ) {
         // A passive stale refresh may still rotate account A's resource token
         // after the primary has committed account B. Preserve A for a future
         // explicit switch, but never let that late result reclaim activeAccountKey.
@@ -3371,17 +3374,20 @@ function scheduleNonXdOrgBetaDefault(input: {
 let coldStartAuthInFlight: Promise<AuthState> | null = null;
 // A newly mounted window must not restart recovery after the user took over.
 let coldStartRecoveryStopped = false;
+// The saved credential owns the deadline, not the login page/recovery invocation.
+// Returning to the page must keep both Retry-After and its random spread.
+type ColdStartRetryState = {
+  refreshToken: string;
+  realm: AuthRegion;
+  backoff: AuthRefreshBackoff;
+  failure?: AuthRefreshResult;
+};
+let coldStartRetryState: ColdStartRetryState | null = null;
 
 // Wakes only the delay between attempts, never aborts a rotating refresh request.
 let coldStartRetryWait: ((cancel?: boolean) => void) | null = null;
 
-function waitForColdStartRetry(
-  result: AuthRefreshResult,
-  backoff: AuthRefreshBackoff,
-): Promise<void> {
-  // The backoff belongs to this recovery flow, so startup UI fallback epochs
-  // cannot reset its failure count and synchronize clients again.
-  const retryAt = Date.now() + backoff.defer(0, result.retryAt);
+function waitForColdStartRetry(retry: ColdStartRetryState): Promise<void> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout>;
     const finish = () => {
@@ -3390,12 +3396,10 @@ function waitForColdStartRetry(
       resolve();
     };
     const wake = (cancel = false) => {
-      // Only an explicit retry of a transport failure can accelerate recovery.
-      // Server failures and their randomized cooldown must remain protected.
-      if (cancel || (result.status === 0 && !Number.isFinite(result.retryAt))) finish();
+      if (cancel || retry.backoff.remaining(0) === 0) finish();
     };
     const tick = () => {
-      const remaining = retryAt - Date.now();
+      const remaining = retry.backoff.remaining(0);
       if (remaining <= 0) finish();
       else {
         timer = setTimeout(tick, Math.min(remaining, 2_147_483_647));
@@ -3409,9 +3413,8 @@ function waitForColdStartRetry(
 
 function stopColdStartRecovery(): void {
   coldStartRecoveryStopped = true;
-  if (coldStartAuthInFlight === null) return;
-  authStateEpoch += 1;
-  coldStartTimeoutFallbacks.clear();
+  // Pause publication/retries without poisoning an in-flight rotation. A reset
+  // can resume that same request; actual login/logout still advance auth epochs.
   coldStartRetryWait?.(true);
 }
 
@@ -4784,6 +4787,9 @@ export async function initialize(options: AuthInitializeOptions = {}): Promise<A
   return awaitWithStartupTimeout(coldStartCompletion, {
     timeoutMs: COLD_START_AUTH_GATE_TIMEOUT_MS,
     onTimeout: async () => {
+      // A stopped recovery must not clear a newly opened manual login form,
+      // even if sibling windows previously recorded startup fallback epochs.
+      if (coldStartRecoveryStopped) return snapshotAuthState();
       options.onColdStartPending?.(coldStartCompletion);
       log.warn(
         `cold-start auth still pending after ${COLD_START_AUTH_GATE_TIMEOUT_MS}ms — recovering the account-free projection before startup continues`,
@@ -4859,6 +4865,7 @@ async function runColdStartRefreshFlow(
    */
   let flowAuthEpoch = epochAtStart;
   const epochChanged = (point: string): boolean => {
+    if (coldStartRecoveryStopped) return true;
     const resolution = commitColdStartRefreshIfCurrent({
       registry: coldStartTimeoutFallbacks,
       flowEpoch: flowAuthEpoch,
@@ -4878,7 +4885,6 @@ async function runColdStartRefreshFlow(
     return true;
   };
 
-  const backoff = new AuthRefreshBackoff();
   try {
     // Keep the shared recovery alive beyond the splash deadline. A network outage
     // must not turn a saved session into a fresh-login requirement. Each failed
@@ -4893,14 +4899,34 @@ async function runColdStartRefreshFlow(
         }
         storedToken = latest.refreshToken;
       }
+      if (
+        coldStartRetryState?.refreshToken !== storedToken ||
+        coldStartRetryState.realm !== storedRealm
+      ) {
+        coldStartRetryState = {
+          refreshToken: storedToken,
+          realm: storedRealm,
+          backoff: new AuthRefreshBackoff(),
+        };
+      }
+      const retry = coldStartRetryState;
+      await waitForColdStartRetry(retry);
+      if (epochChanged('after-recovery-wait')) return snapshotAuthState();
+      // Another shared-data instance may have rotated/switched while we waited.
+      // Re-enter admission with its current credential instead of sending the old one.
+      if (!ownershipRecovery.expectedActiveVaultAccountKey) {
+        const latest = readPersistedAuthSession();
+        if (latest?.realm !== storedRealm || latest.refreshToken !== storedToken) continue;
+      }
       try {
         // Realm discovery can fail while offline too. Never fall back to sending
         // a saved credential to a different realm's refresh endpoint.
         await loadClientEndpointsForRealm(storedRealm);
       } catch (error) {
+        retry.failure = { ok: false, status: 0, data: {} };
+        retry.backoff.defer(0);
         if (epochChanged('after-realm-discovery')) return snapshotAuthState();
         log.warn('persisted auth realm manifest unavailable; keeping session for retry', error);
-        await waitForColdStartRetry({ ok: false, status: 0, data: {} }, backoff);
         continue;
       }
       if (epochChanged('before-refresh')) return snapshotAuthState();
@@ -4909,24 +4935,42 @@ async function runColdStartRefreshFlow(
         realm: storedRealm,
         withTransientRetry: false,
       });
+      // A successful rotation must become durable even when publication was
+      // stopped while the request was in flight. Credential ownership is checked
+      // inside the existing vault transaction below, separately from UI epochs.
+      if (run.result.ok) break;
+      const transient =
+        run.failureAction?.kind === 'transient-failure' ||
+        run.failureAction?.kind === 'replacement-retry';
+      if (transient) {
+        retry.failure = run.result;
+        retry.backoff.defer(0, run.result.retryAt);
+      }
       if (epochChanged('after-recovery-attempt')) return snapshotAuthState();
-      if (
-        run.result.ok ||
-        (run.failureAction?.kind !== 'transient-failure' &&
-          run.failureAction?.kind !== 'replacement-retry')
-      )
-        break;
+      if (!transient) break;
       log.warn(
         `cold-start refresh failed status=${run.result.status} — keeping saved login and retrying in the background`,
       );
-      await waitForColdStartRetry(run.result, backoff);
     }
     const { result: refreshResult, attempts, failureAction, rejectedTokens, requestedToken } = run;
-    // 迟到守卫①:refresh 期间用户手动登录 / 登出过 → 丢弃结果。成功也丢
-    // (旧 token family 已被新登录取代);失败更不能把新登录的 token 删掉。
-    if (epochChanged('after-refresh')) {
-      return snapshotAuthState();
+    const credentialCommit = refreshResult.ok
+      ? await commitDesktopRefreshCredentials(
+          refreshResult.data as RefreshResponse,
+          storedRealm,
+          requestedToken,
+          {
+            allowUnclaimedVault: true,
+          },
+        )
+      : undefined;
+    if (
+      refreshResult.ok &&
+      coldStartRetryState?.refreshToken === storedToken &&
+      coldStartRetryState.realm === storedRealm
+    ) {
+      coldStartRetryState = null;
     }
+    if (epochChanged('after-cold-start-credential-commit')) return snapshotAuthState();
     const latestSession = readPersistedAuthSession();
     if (
       latestSession &&
@@ -5014,23 +5058,6 @@ async function runColdStartRefreshFlow(
 
     const refreshData = refreshResult.data as RefreshResponse;
     attemptedOwnershipTokens.add(requestedToken);
-    const credentialCommit = await commitDesktopRefreshCredentials(
-      refreshData,
-      storedRealm,
-      requestedToken,
-      {
-        allowUnclaimedVault: true,
-        validateBeforeWrite: () => {
-          if (epochChanged('before-cold-start-credential-commit')) {
-            throw new AuthApiError(
-              'AUTH_FLOW_SUPERSEDED',
-              409,
-              'Cold-start credential commit was superseded',
-            );
-          }
-        },
-      },
-    );
     if (credentialCommit !== 'active') {
       log.warn(
         `cold-start refresh lost active credential ownership (${credentialCommit}); preserved only the still-saved account token`,
@@ -5496,6 +5523,14 @@ async function runLoginAction(
         (coldStartAuthInFlight || credentialStoreHealth.unavailable || readPersistedAuthSession())
       ) {
         coldStartRecoveryStopped = false;
+        // Only a deliberate retry of a transport failure can release a deadline;
+        // returning to the page must never erase server cooldown or failure count.
+        if (
+          coldStartRetryState?.failure?.status === 0 &&
+          !Number.isFinite(coldStartRetryState.failure.retryAt)
+        ) {
+          coldStartRetryState.backoff.release(0);
+        }
         coldStartRetryWait?.();
         await initialize();
         // Startup may itself clear an obsolete owner generation. Its current

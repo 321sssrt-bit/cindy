@@ -837,7 +837,11 @@ describe('auth login-flow reset', () => {
     expect(coldRealmActivation).toBeGreaterThan(coldPolicyGuard);
     expect(coldBody).toContain('requestedToken,');
     expect(coldBody).toContain('allowUnclaimedVault: true');
-    expect(coldBody).toContain("epochChanged('before-cold-start-credential-commit')");
+    // Token rotation is durable before publication checks; stopping the UI must
+    // not lose the consumed credential. Ownership remains checked in the vault.
+    expect(coldBody.indexOf("epochChanged('after-cold-start-credential-commit')")).toBeGreaterThan(
+      coldCredentialCommit,
+    );
     expect(coldBody).toContain("credentialCommit !== 'active'");
     const inactiveCommit = coldBody.indexOf("credentialCommit !== 'active'");
     const activeCandidateRead = coldBody.indexOf(

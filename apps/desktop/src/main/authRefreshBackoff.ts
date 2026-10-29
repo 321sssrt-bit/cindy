@@ -27,6 +27,11 @@ export class AuthRefreshBackoff {
     return this.remaining(epoch);
   }
 
+  /** Explicit transport retry releases the wait without resetting the failure count. */
+  release(epoch: number): void {
+    if (this.epoch === epoch) this.retryAt = 0;
+  }
+
   clear(): void {
     this.epoch = -1;
     this.retryAt = 0;

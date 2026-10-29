@@ -25,6 +25,8 @@ const source = ts.createSourceFile(
 );
 const names = new Set([
   'apiFetch',
+  'commitDesktopRefreshCredentials',
+  'writeResourceSessionToVault',
   'initialize',
   'refresh',
   'runColdStartRefreshFlow',
@@ -38,13 +40,14 @@ const compiled = ts.transpileModule(
 let authStateEpoch = 0, loginFlowEpoch = 0, accessToken = null, currentUser = null;
 let activeAuthRealm = 'global', pendingAuthRealm = null, loginFlowState = null;
 let coldStartAuthInFlight = null, coldStartRetryWait = null, refreshTimer = null;
-let coldStartRecoveryStopped = false;
+let coldStartRecoveryStopped = false, coldStartRetryState = null;
 let lastAcceptedRefreshToken = null, persistedRefreshTokenNeedsIdentityCheck = false;
 let foreignDeviceLocalSignOut = false;
 const passiveLocalSignOut = false, settledLoginCommitCount = 0;
 const API_FETCH_TIMEOUT_MS = 15000;
 const AUTH_REGION = 'global', RUNTIME_REFRESH_RETRY_MS = 60000;
 const COLD_START_AUTH_GATE_TIMEOUT_MS = 20000;
+const LEGACY_RESOURCE_REFRESH_TOKEN_KEY = 'legacy-resource';
 const LEGACY_REFRESH_TOKEN_KEY = 'legacy', LEGACY_ACCOUNT_REFRESH_TOKEN_KEY = 'legacy-account';
 const REFRESH_TOKEN_REPLACEMENT_RETRY_LIMIT = 2;
 const COLD_START_REFRESH_TOKEN_REPLACEMENT_RECHECK_DELAYS_MS = [100, 250];
@@ -59,6 +62,7 @@ const hasPotentiallyPersistedAuthCredentials = () => !!saved.session;
 const assertLoginFlowCurrent = (epoch) => { if (epoch !== loginFlowEpoch) throw new Error('superseded'); };
 const finishColdStartSignedOut = async () => snapshotAuthState();
 const recoverAccountFreeOwnerAtStartup = async () => {
+  onStartupFallback();
   coldStartTimeoutFallbacks.record(authStateEpoch, authStateEpoch + 1);
   authStateEpoch++; loginFlowEpoch++;
 };
@@ -72,14 +76,28 @@ return {
   manualLogin: () => runLoginAction({ type: 'discover', identifier: 'test@example.invalid' }),
   state: snapshotAuthState,
   fallback: () => { coldStartTimeoutFallbacks.record(authStateEpoch, authStateEpoch + 1); authStateEpoch++; loginFlowEpoch++; },
-  changeOwner: () => { authStateEpoch++; accessToken = 'test-new-login'; currentUser = { id: 'other' }; },
+  changeOwner: () => {
+    authStateEpoch++; accessToken = 'test-new-login'; currentUser = { id: 'other' };
+    saved.session = { version: 1, realm: 'global', refreshToken: 'other-refresh' };
+    vault.activeAccountKey = 'global:other';
+    vault.resources['global:other'] = { realm: 'global', refreshToken: 'other-refresh' };
+  },
+  stop: stopColdStartRecovery,
+  logoutForTest: () => { stopColdStartRecovery(); authStateEpoch++; saved.session = null;
+    vault.resources = {}; vault.activeAccountKey = null; vault.signedOutAt = Date.now(); },
 };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 
 function setup(random = 0) {
-  const saved = { session: { version: 1, realm: 'global', refreshToken: 'test-refresh' } };
-  const membership = { id: 'original', kind: 'personal' };
+  const saved: { session: any } = {
+    session: { version: 1, realm: 'global', refreshToken: 'test-refresh' },
+  };
+  const membership = { id: 'original', kind: 'personal', passportId: 'passport-original' };
+  const vault: any = {
+    activeAccountKey: 'global:original',
+    resources: { 'global:original': { realm: 'global', refreshToken: 'test-refresh' } },
+  };
   const ok = {
     ok: true,
     status: 200,
@@ -89,15 +107,26 @@ function setup(random = 0) {
     .fn<(...args: unknown[]) => Promise<any>>()
     .mockResolvedValue({ ok: false, status: 0, data: null });
   const loadProviders = vi.fn(async () => ({ step: 'identifier' }));
-  const commit = vi.fn(async (data) => {
-    saved.session.refreshToken = data.refreshToken;
-    return 'active';
+  const transaction = vi.fn(async (mutate: any, afterPersist: any) => {
+    const result = mutate(vault);
+    await afterPersist(result);
+    return result;
   });
   const clear = vi.fn(async () => {
     saved.session.refreshToken = '';
   });
   const deps = {
     saved,
+    vault,
+    onStartupFallback: vi.fn(),
+    transactAuthAccountVault: transaction,
+    accountVaultKey: (realm: string, id: string) => `${realm}:${id}`,
+    loggedOutAccountKeySet: () => new Set(),
+    readSafe: () => null,
+    writePersistedAuthSessionOrThrow: (refreshToken: string, realm: string) => {
+      saved.session = { version: 1, realm, refreshToken };
+    },
+    metadataFromMembership: (membership: unknown) => membership,
     AuthRefreshBackoff: class extends AuthRefreshBackoff {
       constructor() {
         super(
@@ -131,7 +160,6 @@ function setup(random = 0) {
     clearConfirmedDeadRefreshTokens: clear,
     resetActiveAuthRealmToBuild: vi.fn(),
     isPassiveSharedUserDataInstance: () => false,
-    commitDesktopRefreshCredentials: commit,
     canRestoreAuthSessionForMembership: () => true,
     getActiveAppSession: () => ({ mode: 'signed-out', dataOwnerId: null }),
     withCloudOwnerCommit: async (options: any) => {
@@ -153,7 +181,7 @@ function setup(random = 0) {
     notifyAuthListeners: vi.fn(),
   };
   const main = new Function(...Object.keys(deps), compiled)(...Object.values(deps));
-  return { ...main, saved, request, ok, commit, clear, loadProviders, deps };
+  return { ...main, saved, vault, request, ok, transaction, clear, loadProviders, deps };
 }
 
 describe('saved login recovery after startup network failure', () => {
@@ -215,7 +243,7 @@ describe('saved login recovery after startup network failure', () => {
     expect(h.request).toHaveBeenCalledTimes(2);
   });
 
-  it('does not publish or persist an old successful response after an owner change', async () => {
+  it('preserves only the old saved account rotation after an owner change', async () => {
     const h = setup();
     let resolve!: (value: unknown) => void;
     h.request.mockImplementation(
@@ -229,8 +257,132 @@ describe('saved login recovery after startup network failure', () => {
     h.changeOwner();
     resolve(h.ok);
     await expect(pending).resolves.toMatchObject({ user: { id: 'other' } });
-    expect(h.commit).not.toHaveBeenCalled();
+    expect(h.saved.session.refreshToken).toBe('other-refresh');
+    expect(h.vault.resources['global:original'].refreshToken).toBe('test-rotated');
+    expect(h.vault.activeAccountKey).toBe('global:other');
+    expect(h.deps.notifyAuthListeners).not.toHaveBeenCalled();
   });
+
+  // PR #7737: stopping publication must not lose a rotating request's result or
+  // its server deadline. Existing tests only stopped a timer or changed owner.
+  // Minimal sequences below execute initialize/reset with an in-flight reply (unit).
+  it.each(['network', 'vault'])(
+    'keeps the rotation when manual login stops publication during %s',
+    async (phase) => {
+      const h = setup();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      if (phase === 'network')
+        h.request.mockImplementationOnce(async () => {
+          await gate;
+          return h.ok;
+        });
+      else {
+        h.request.mockResolvedValue(h.ok);
+        h.transaction.mockImplementationOnce(async (mutate: any, afterPersist: any) => {
+          await gate;
+          const result = mutate(h.vault);
+          await afterPersist(result);
+          return result;
+        });
+      }
+      const pending = h.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await h.manualLogin();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(h.deps.onStartupFallback).not.toHaveBeenCalled();
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      await pending;
+      expect(h.saved.session.refreshToken).toBe('test-rotated');
+      expect(h.state()).toMatchObject({ isAuthenticated: false });
+      expect(h.deps.notifyAuthListeners).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['logout', 'newer-token'])(
+    'does not resurrect or overwrite credentials after %s',
+    async (change) => {
+      const h = setup();
+      let resolve!: (value: unknown) => void;
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      );
+      const pending = h.start();
+      await vi.advanceTimersByTimeAsync(0);
+      if (change === 'logout') h.logoutForTest();
+      else {
+        h.stop();
+        h.saved.session.refreshToken = 'newer-refresh';
+        h.vault.resources['global:original'].refreshToken = 'newer-refresh';
+      }
+      resolve(h.ok);
+      await pending;
+      expect(h.saved.session?.refreshToken).toBe(change === 'logout' ? undefined : 'newer-refresh');
+      expect(h.vault.resources['global:original']?.refreshToken).toBe(
+        change === 'logout' ? undefined : 'newer-refresh',
+      );
+    },
+  );
+
+  it('continues a retry requested before the stopped request fails without offering new login', async () => {
+    const h = setup();
+    let resolve!: (value: unknown) => void;
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    void h.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await h.manualLogin();
+    const reset = h.reset();
+    resolve({ ok: false, status: 0, data: null });
+    h.request.mockResolvedValue(h.ok);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await reset;
+    expect(h.loadProviders).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(h.state()).toMatchObject({ isAuthenticated: true });
+  });
+
+  it.each([false, true])(
+    'retains the server deadline across stopping and restarting (late=%s)',
+    async (late) => {
+      const h = setup(0.5);
+      const failure = { ok: false, status: 503, data: {}, retryAt: Date.now() + 120_000 };
+      let resolve!: (value: unknown) => void;
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      );
+      void h.start();
+      await vi.advanceTimersByTimeAsync(0);
+      if (!late) {
+        resolve(failure);
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      h.stop();
+      if (late) resolve(failure);
+      await vi.advanceTimersByTimeAsync(0);
+      const reset = h.reset();
+      h.request.mockResolvedValue(h.ok);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await reset;
+      await vi.advanceTimersByTimeAsync(129_999);
+      expect(h.request).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.state()).toMatchObject({ isAuthenticated: true });
+    },
+  );
 
   it('coalesces multiple retry clicks and runtime refresh behind the pending request', async () => {
     const h = setup();
